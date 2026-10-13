@@ -229,13 +229,30 @@ def sub_transcript(p):
     return os.path.join(main[:-6], "subagents", f"agent-{safe(agent)}.jsonl")
 
 
-def measure(path):
+def harness(p):
+    """Which dialect the transcript is in. The payload says `client`; failing
+    that, the path does. An unknown payload keeps claude, the behaviour it
+    always had."""
+    c = str(p.get("client") or "").lower()
+    if c in ("claude", "codex", "pi", "omp"):
+        return c
+    path = str(p.get("transcript_path") or "")
+    if "/.omp/" in path:
+        return "omp"
+    if "/.pi/" in path:
+        return "pi"
+    if "/.codex/" in path:
+        return "codex"
+    return "claude"
+
+
+def measure(path, client="claude"):
     """Current context, weighted burn and reread share of a transcript."""
     if not path or not os.path.isfile(path):
         return None
     cx = ctx_lib()
     st = cx.blank()
-    cx.scan_claude(path, st)
+    cx.scan_session(client, path, st)
     if not st["req"]:
         return None
     c = cx.handoff_math(st["inp"], st["wr"], st["rd"], st["out"], st["ctx"])
@@ -244,12 +261,13 @@ def measure(path):
             "started": st["started"], "last": st["last"], "cwd": st["cwd"], "model": st["model"]}
 
 
-def fold(path, tok):
+def fold(path, tok, client="claude"):
     """Adds to `tok` only what was appended to the transcript since the last
     read (whole lines), so it costs the same on a 5 MB session or a 50 MB one."""
     for key in ("offset", "inp", "wr", "rd", "out", "ctx", "req"):
         tok.setdefault(key, 0)
     tok.setdefault("last", "")
+    tok.setdefault("model", "")
     try:
         size = os.path.getsize(path)
         if size < tok["offset"]:
@@ -265,13 +283,37 @@ def fold(path, tok):
     if cut < 0:
         return tok
     tok["offset"] += cut + 1
+    family = client in ("pi", "omp")
     for raw in blob[:cut].split(b"\n"):
-        if b'"usage"' not in raw:
+        # The pi family writes `message` records and a separate `model_change`;
+        # claude writes `assistant` records with a requestId.
+        if family:
+            if b'"usage"' not in raw and b'"model_change"' not in raw:
+                continue
+        elif b'"usage"' not in raw:
             continue
         try:
             rec = json.loads(raw)
             u = (rec.get("message") or {}).get("usage") or {}
         except (ValueError, AttributeError):
+            continue
+        if family:
+            if rec.get("type") == "model_change":
+                tok["model"] = rec.get("model") or rec.get("modelId") or tok["model"]
+                continue
+            m = rec.get("message") or {}
+            if rec.get("type") != "message" or m.get("role") != "assistant" or not u:
+                continue
+            key = rec.get("id") or ""
+            if key and key == tok["last"]:
+                continue
+            tok["last"] = key
+            tok["req"] += 1
+            tok["inp"] += u.get("input", 0)
+            tok["wr"] += u.get("cacheWrite", 0)
+            tok["rd"] += u.get("cacheRead", 0)
+            tok["out"] += u.get("output", 0)
+            tok["ctx"] = u.get("input", 0) + u.get("cacheRead", 0) + u.get("cacheWrite", 0)
             continue
         if rec.get("type") != "assistant" or not u:
             continue
@@ -289,12 +331,16 @@ def fold(path, tok):
     return tok
 
 
-def main_window(session):
-    """Window of the main session: SQUAD_WINDOW if set; otherwise 1M, or the one a status line
-    recorded if larger."""
+def main_window(session, client="claude"):
+    """Window of the main session: SQUAD_WINDOW if set; for the pi family the
+    model's known window when the transcript states one (post_tool passes it),
+    otherwise the family default; claude falls back to 1M, or the one a status
+    line recorded if larger."""
     w = env_int("SQUAD_WINDOW", 0)
     if w:
         return w
+    if client in ("pi", "omp"):
+        return ctx_lib().DEFAULT_WINDOW.get(client, 128_000)
     store = load(os.path.join(HOME, ".claude", "cache", "session-tokens", f"{safe(session)}.json"))
     try:
         return max(int(store.get("window") or 0), 1_000_000)
@@ -906,6 +952,7 @@ def post_tool(p):
     path = state_path(session, agent)
     st = load(path)
     tool = p.get("tool_name") or ""
+    client = harness(p)
     out = []
     if tool in MUTATING:
         st["calls"] = []          # the state changed: repeating a read/test makes sense again
@@ -937,10 +984,12 @@ def post_tool(p):
     now = time.time()
     if now - st.get("checked", 0) >= CHECK_EVERY:
         st["checked"] = now
-        tok = fold(sub_transcript(p) if agent else (p.get("transcript_path") or ""), st.get("tok") or {})
+        tok = fold(sub_transcript(p) if agent else (p.get("transcript_path") or ""),
+                   st.get("tok") or {}, client)
         st["tok"] = tok
         if tok["req"]:
-            window = 0 if agent else main_window(session)
+            window = 0 if agent else (ctx_lib().pi_family_window(tok.get("model"))
+                                      or main_window(session, client))
             c = ctx_lib().handoff_math(tok["inp"], tok["wr"], tok["rd"], tok["out"], tok["ctx"], window)
             ctx = tok["ctx"]
             st.update(ctx=ctx, burn=c["burn"], ratio=c["ratio"])
@@ -1028,7 +1077,7 @@ def subagent_stop(p):
     cx = ctx_lib()
     spath = state_path(session, agent)
     st = load(spath)
-    m = measure(sub_transcript(p))
+    m = measure(sub_transcript(p), harness(p))
     if not m:                     # internal agent, with no transcript of its own: nothing to measure
         try:
             os.remove(spath)

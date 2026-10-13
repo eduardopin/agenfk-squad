@@ -61,7 +61,7 @@ BURN_FULL_PCT = env_num("SQUAD_BURN_FULL", 50, 1, 100)
 CTX_BASE = env_num("SQUAD_CTX_BASE", 40_000, 1_000, 500_000)  # context of a new session with the handoff already read
 HANDOFF_OUT = 2_000        # output tokens needed to write the handoff
 IDLE_MIN = 90             # minutes without activity = idle
-DEFAULT_WINDOW = {"claude": 1_000_000, "codex": 258_400, "pi": 128_000}
+DEFAULT_WINDOW = {"claude": 1_000_000, "codex": 258_400, "pi": 128_000, "omp": 262_144}
 # Known windows; when the transcript does not state the window, use the
 # smallest one that fits the largest context seen in the session (shown as
 # "inferred").
@@ -304,7 +304,8 @@ def codex_sessions(hours):
 _PI_FAMILY_WINDOWS = {"glm-5.3-flash-exl3": 262_144}   # DGX Spark checkpoint
 
 
-def _pi_family_window(model):
+def pi_family_window(model):
+    """The window of a pi/omp model when it is known, else 0 (infer it)."""
     if not model:
         return 0
     return _PI_FAMILY_WINDOWS.get(str(model).split("/")[-1].lower(), 0)
@@ -322,7 +323,7 @@ def _scan_pi_family(path, st, model_keys):
         elif t == "model_change":
             model = next((d.get(k) for k in model_keys if d.get(k)), None)
             st["model"] = model or st["model"]
-            st["window"] = _pi_family_window(model) or st["window"]
+            st["window"] = pi_family_window(model) or st["window"]
         elif t == "message":
             m = d.get("message") or {}
             role = m.get("role")
@@ -358,6 +359,15 @@ def scan_pi(path, st):
 
 def scan_omp(path, st):
     _scan_pi_family(path, st, ("model", "modelId"))
+
+
+# One dialect per harness; the path or the payload says which. Default claude so
+# an unknown payload keeps the behaviour it always had.
+SCANNERS = {"claude": scan_claude, "codex": scan_codex, "pi": scan_pi, "omp": scan_omp}
+
+
+def scan_session(client, path, st):
+    SCANNERS.get(client, scan_claude)(path, st)
 
 
 def pi_sessions(hours):
@@ -427,7 +437,7 @@ def loops(calls):
 
 def analyse(client, sid, path, cwd_hint, now):
     st = blank()
-    {"claude": scan_claude, "codex": scan_codex, "pi": scan_pi, "omp": scan_omp}[client](path, st)
+    scan_session(client, path, st)
     if not st["req"]:
         return None
     st["cwd"] = st["cwd"] or cwd_hint

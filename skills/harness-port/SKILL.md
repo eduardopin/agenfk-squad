@@ -46,23 +46,28 @@ modelRoles:
 
 ## What omp enforces, and what it only advises
 
-Mechanically, through an extension:
+The extension is `extensions/squad-watch-omp.ts`; `install.sh` symlinks it into
+`~/.omp/agent/extensions/`. It maps each omp event and delegates every decision
+to `hooks/squad-watch-omp.py`, which writes the payload `hooks/squad-watch.py`
+expects (`client: omp`, so the watcher reads the omp transcript) and translates
+the verdict back. The arithmetic stays in the watcher.
 
-- **the write gate** — `tool_call` can block `edit`, `write` and the mutating
-  tools omp adds (`ast_edit`, `apply_patch`, `move`, `delete`, `notebook`,
-  `str_replace`), delegating the verdict to `~/.agenfk/bin/agenfk-gatekeeper.mjs`;
-- **the dispatch caps** — `before_subagent_spawn` fires once per child, so the
-  watcher's concurrency arithmetic can refuse a spawn;
-- **the handoff** — `session_stop` runs before the session settles, so the
-  proactive handoff can be written there.
+| omp event | watcher sees | what it enforces |
+|---|---|---|
+| `tool_call` | `PreToolUse` | the loop denial and the merge queue |
+| `before_subagent_spawn` | `PreToolUse` of `Task` | the dispatch caps; a denied brief is kept in `~/.claude/squad/handoffs/<session>-dispatches.md` |
+| `session_stop` | `Stop` | the proactive handoff |
+| `tool_result` / `prompt` | `PostToolUse` / `UserPromptSubmit` | the notes |
+
+The AgEnFK write gate is not here: it is the upstream pi extension, which omp
+loads and which now resolves a Node runtime (see below).
 
 Only advised, because there is no event to hang it on: the merge queue's
 "do not sync with main while you wait", and the judgment calls in `context`
 and `verifier`. Those stay prose in the agent body.
 
-The arithmetic stays in `hooks/squad-watch.py` (or `handoff_math` in
-`session-context`); the extension must call it and decide nothing on its own,
-the same way the pi extension delegates to the shared `.mjs` scripts.
+Point the extension at a bridge somewhere else (a checkout, not the installed
+hook) with `SQUAD_WATCH_OMP_BRIDGE`.
 
 ## AgEnFK parity on omp
 

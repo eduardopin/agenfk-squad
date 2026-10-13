@@ -48,12 +48,15 @@ link "$SQUAD/hooks/squad-turn.py" "$HOME/.local/bin/squad-turn" || rc=1
 # .claude/agents on purpose. Render the agents into its contract; see
 # skills/harness-port/SKILL.md for the tool and model mapping.
 if command -v omp >/dev/null 2>&1; then
+  mkdir -p "$HOME/.omp/agent/extensions"
+  # The watcher extension delegates every decision to hooks/squad-watch-omp.py.
+  link "$SQUAD/extensions/squad-watch-omp.ts" \
+       "$HOME/.omp/agent/extensions/squad-watch-omp.ts" || rc=1
   if python3 "$SQUAD/skills/harness-port/scripts/omp_agents.py" render \
        --src "$SQUAD/agents" --out "$HOME/.omp/agent/agents"; then
-    echo
-echo "omp agents rendered into $HOME/.omp/agent/agents."
-echo "Point omp's model roles at an allowed model (DGX or OpenRouter):"
-echo "  modelRoles: { default: dgx-spark/GLM-5.3-Flash-EXL3, smol: dgx-spark/GLM-5.3-Flash-EXL3 }"
+    echo "omp agents rendered into $HOME/.omp/agent/agents."
+    echo "Point omp's model roles at an allowed model (DGX or OpenRouter):"
+    echo "  modelRoles: { default: dgx-spark/GLM-5.3-Flash-EXL3, smol: dgx-spark/GLM-5.3-Flash-EXL3 }"
   else
     rc=1
   fi

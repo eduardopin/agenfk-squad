@@ -44,6 +44,23 @@ link "$SQUAD/hooks/squad-turn.py" "$CLAUDE/hooks/squad-turn.py" || rc=1
 mkdir -p "$HOME/.local/bin"       # the merge queue is called by name: `squad-turn request`
 link "$SQUAD/hooks/squad-turn.py" "$HOME/.local/bin/squad-turn" || rc=1
 
+# oh-my-pi (omp) reads a different agent dialect at ~/.omp/agent/agents, and skips
+# .claude/agents on purpose. Render the agents into its contract; see
+# skills/harness-port/SKILL.md for the tool and model mapping.
+if command -v omp >/dev/null 2>&1; then
+  if python3 "$SQUAD/skills/harness-port/scripts/omp_agents.py" render \
+       --src "$SQUAD/agents" --out "$HOME/.omp/agent/agents"; then
+    echo
+echo "omp agents rendered into $HOME/.omp/agent/agents."
+echo "Point omp's model roles at an allowed model (DGX or OpenRouter):"
+echo "  modelRoles: { default: dgx-spark/GLM-5.3-Flash-EXL3, smol: dgx-spark/GLM-5.3-Flash-EXL3 }"
+  else
+    rc=1
+  fi
+else
+  echo "note    omp not on PATH; skipped the oh-my-pi agent adapter"
+fi
+
 echo
 echo "New agents and skills only show up in sessions started after this step."
 echo "Hooks in settings.json (see docs/installation.md): squad-router.py on UserPromptSubmit;"

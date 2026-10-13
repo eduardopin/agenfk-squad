@@ -16,10 +16,15 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BRIDGE = os.path.join(ROOT, "hooks", "squad-watch-omp.py")
+WATCH = os.path.join(ROOT, "hooks", "squad-watch.py")
 
 _spec = importlib.util.spec_from_file_location("squad_watch_omp", BRIDGE)
 br = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(br)
+
+_wspec = importlib.util.spec_from_file_location("squad_watch", WATCH)
+sw = importlib.util.module_from_spec(_wspec)
+_wspec.loader.exec_module(sw)
 
 MODEL = "dgx-spark/GLM-5.3-Flash-EXL3"
 SID = "01a136aa-1111-2222-3333-444455556666"
@@ -70,6 +75,21 @@ def test_payload_maps_every_event():
     assert br.payload(base) is None
 
 
+def test_omp_tool_names_reach_the_watcher_brakes_in_its_dialect():
+    base = {"event": "tool_call", "session_id": SID, "transcript_path": "/t.jsonl"}
+    for omp_name, claude_name in (("bash", "Bash"), ("edit", "Edit"), ("write", "Write"),
+                                  ("ast_edit", "Edit"), ("apply_patch", "Edit"),
+                                  ("notebook", "NotebookEdit"), ("task", "Task"),
+                                  ("read", "Read")):
+        assert br.payload({**base, "tool_name": omp_name, "tool_input": {}})["tool_name"] == claude_name, omp_name
+    assert br.payload({**base, "tool_name": "weird", "tool_input": {}})["tool_name"] == "weird"
+
+    # the translation is what the watcher's brakes key on
+    assert "Write" in sw.MUTATING and "Edit" in sw.MUTATING
+    merge = br.payload({**base, "tool_name": "bash", "tool_input": {"command": "gh pr merge 99"}})
+    assert sw.turn_kind(merge) == ("merge", "99"), sw.turn_kind(merge)
+
+
 def test_payload_carries_client_omp_and_the_agent():
     p = br.payload({"event": "tool_call", "session_id": SID, "agent_id": "a1",
                     "agent_transcript_path": "/sub.jsonl", "agent_type": "developer"})
@@ -90,6 +110,28 @@ def test_verdict_reads_deny_block_and_context():
     assert br.verdict(note) == {"context": "ctx 600k"}
     assert br.verdict("a plain note") == {"context": "a plain note"}
     assert br.verdict("") == {}
+
+
+def test_own_handoff_reads_an_omp_transcript():
+    import hashlib
+    with tempfile.TemporaryDirectory() as home:
+        d = os.path.join(home, "proj", ".claude", "handoffs")
+        os.makedirs(d)
+        written = os.path.join(d, "20261013-000000-x.md")
+        content = "# Handoff\n\nreal content\n"
+        with open(written, "w") as fh:
+            fh.write(content)
+        transcript = os.path.join(home, "s.jsonl")
+        rec = {"type": "message", "id": "m9", "message": {
+            "role": "assistant",
+            "content": [{"type": "toolCall", "name": "write",
+                         "arguments": {"path": written, "content": content}}]}}
+        with open(transcript, "w") as fh:
+            fh.write(json.dumps(rec) + "\n")
+        assert sw.own_handoff(transcript, 0, "omp") == \
+            (written, hashlib.sha256(content.encode()).hexdigest())
+        # the claude parser does not read the same record
+        assert sw.own_handoff(transcript, 0, "claude") is None
 
 
 def test_post_tool_reaches_the_watcher_and_writes_state():

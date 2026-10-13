@@ -34,6 +34,22 @@ EVENTS = {
     "prompt": "UserPromptSubmit",
 }
 
+# omp tool names are lowercase; the watcher's brakes are keyed on the Claude
+# dialect (MUTATING, DISPATCH, turn_kind's "Bash", the post-cut git escape).
+# Translate once, here, so the watcher keeps one vocabulary.
+TOOL_NAMES = {
+    "bash": "Bash", "read": "Read", "edit": "Edit", "write": "Write",
+    "ast_edit": "Edit", "apply_patch": "Edit", "multiedit": "MultiEdit",
+    "notebook": "NotebookEdit", "grep": "Grep", "glob": "Glob",
+    "task": "Task", "webfetch": "WebFetch", "websearch": "WebSearch",
+}
+
+
+def claude_tool(name):
+    """The Claude-dialect name the watcher keys on, or the name unchanged."""
+    name = str(name or "")
+    return TOOL_NAMES.get(name.lower(), name)
+
 
 def payload(event):
     """The Claude Code hook payload squad-watch.py reads, from one omp event."""
@@ -63,7 +79,7 @@ def payload(event):
             "subagent_type": event.get("agent") or event.get("subagent_type") or "",
         }
     else:
-        p["tool_name"] = event.get("tool_name") or ""
+        p["tool_name"] = claude_tool(event.get("tool_name"))
         p["tool_input"] = event.get("tool_input") or {}
     return p
 

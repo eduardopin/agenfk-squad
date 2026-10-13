@@ -1133,7 +1133,7 @@ def subagent_stop(p):
 HANDOFF_PATH = re.compile(r"[A-Za-z0-9_./-]+/handoffs/[A-Za-z0-9_.-]+\.md")
 
 
-def own_handoff(transcript, since):
+def own_handoff(transcript, since, client="claude"):
     """The handoff THIS session wrote: its last Write to .../handoffs/*.md, a
     regular file owned by the user, written after the alert, and whose content
     on disk is byte for byte what the session wrote (returns path and sha256).
@@ -1148,21 +1148,43 @@ def own_handoff(transcript, since):
             lines = fh.read().split(b"\n")
     except OSError:
         return None
+    family = client in ("pi", "omp")
+    marker = b'"toolCall"' if family else b'"Write"'
     for raw in reversed(lines):
-        if b"handoffs/" not in raw or b'"Write"' not in raw:
+        if b"handoffs/" not in raw or marker not in raw:
             continue
         try:
             rec = json.loads(raw)
-            if rec.get("type") != "assistant" or rec.get("isSidechain") is not False:
-                continue
-            blocks = (rec.get("message") or {}).get("content") or []
+            if family:
+                msg = rec.get("message") or {}
+                if rec.get("type") != "message" or msg.get("role") != "assistant":
+                    continue
+                blocks = msg.get("content") or []
+            else:
+                if rec.get("type") != "assistant" or rec.get("isSidechain") is not False:
+                    continue
+                blocks = (rec.get("message") or {}).get("content") or []
         except (ValueError, AttributeError):
             continue
         for b in blocks:
-            if not (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Write"):
+            if not isinstance(b, dict):
                 continue
-            path = str((b.get("input") or {}).get("file_path") or "")
-            content = (b.get("input") or {}).get("content")
+            if family:
+                if b.get("type") != "toolCall" or str(b.get("name") or "").lower() != "write":
+                    continue
+                inp = b.get("arguments") if isinstance(b.get("arguments"), dict) else {}
+                path = str(inp.get("path") or inp.get("file_path") or "")
+                content = inp.get("content")
+                if path.startswith("local://"):
+                    path = path[len("local://"):]
+                if path and not os.path.isabs(path):
+                    path = os.path.abspath(path)
+            else:
+                if b.get("type") != "tool_use" or b.get("name") != "Write":
+                    continue
+                inp = b.get("input") or {}
+                path = str(inp.get("file_path") or "")
+                content = inp.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
             if not HANDOFF_PATH.fullmatch(path) or not os.path.isabs(path) or ".." in path.split("/"):
@@ -1284,7 +1306,7 @@ def early_handoff(p, path, st):
     threshold. Sends the work back, once per request."""
     if p.get("stop_hook_active") or st.get("early_block") or st.get("asked_stop") or not st.get("prompt_ts"):
         return
-    if not own_handoff(str(p.get("transcript_path") or ""), st["prompt_ts"]):
+    if not own_handoff(str(p.get("transcript_path") or ""), st["prompt_ts"], harness(p)):
         return
     st["early_block"] = True
     save(path, st)
@@ -1314,7 +1336,7 @@ def stop(p):
         st["alert_ts"] = time.time()
         save(path, st)
     since = st["alert_ts"]
-    ho = own_handoff(str(p.get("transcript_path") or ""), since)
+    ho = own_handoff(str(p.get("transcript_path") or ""), since, harness(p))
     if not ho:
         if not st.get("nudges") or (not p.get("stop_hook_active") and st["nudges"] < 2):
             st["nudges"] = st.get("nudges", 0) + 1

@@ -25,8 +25,8 @@ worktree where another live session has edited recently, deny the first edit
 and say which session holds the tree and how to get a worktree of its own.
 
 ### Other harnesses
-The agents are Markdown and the session report already reads Codex and pi
-transcripts. The hooks speak only Claude Code's hook protocol.
+The agents are Markdown and the session report already reads Codex, pi and
+oh-my-pi transcripts. The hooks speak only Claude Code's hook protocol.
 
 *Wanted:* the watcher's rules ported to Codex, pi, Gemini CLI or OpenCode. The
 arithmetic (`handoff_math`) is harness-neutral; the event plumbing is not. A

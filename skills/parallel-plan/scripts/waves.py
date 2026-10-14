@@ -171,19 +171,20 @@ def _cycle(cards, pending):
 
 
 def _topo(cards, pending):
-    order, seen = [], set()
-
-    def visit(cid):
-        if cid in seen:
-            return
-        seen.add(cid)
-        for d in cards[cid]["depends_on"]:
+    """Dependencies before dependents, in input order where free. Iterative, so a
+    long chain cannot hit the recursion limit."""
+    waiting = {c: sum(d in pending for d in cards[c]["depends_on"]) for c in cards if c in pending}
+    dependents = {c: [] for c in waiting}
+    for c in waiting:
+        for d in cards[c]["depends_on"]:
             if d in pending:
-                visit(d)
-        order.append(cid)
-
-    for cid in pending:
-        visit(cid)
+                dependents[d].append(c)
+    order = [c for c in waiting if not waiting[c]]
+    for c in order:
+        for n in dependents[c]:
+            waiting[n] -= 1
+            if not waiting[n]:
+                order.append(n)
     return order
 
 

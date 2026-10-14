@@ -143,9 +143,12 @@ def load(data, parent=None):
             children[c["parent"]].append(c["id"])
 
     def leaves(cid):
-        out, stack = [], [cid]
+        out, stack, seen = [], [cid], set()
         while stack:
             n = stack.pop()
+            if n in seen:          # parent links that loop, only possible in hand-written JSON
+                continue
+            seen.add(n)
             if children.get(n):
                 stack += reversed(children[n])
             elif n != cid:
@@ -173,7 +176,8 @@ def load(data, parent=None):
                     where = "" if holder is c else f" (written on {holder['id']})"
                     raise PlanError(f"card {c['id']} waits on {ref}, which contains it{where}")
                 deps += [d for d in expanded if d not in deps]
-            touches += [t for t in holder["touches"] if t not in touches]
+            if not touches:        # a task's own files beat the story's, which list every task's
+                touches = list(holder["touches"])
         c["depends_on"], c["touches"] = deps, touches
     if parent:
         known = ids + sorted({c["parent"] for c in cards.values() if c["parent"] and c["parent"] not in cards})

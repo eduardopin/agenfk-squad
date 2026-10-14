@@ -341,6 +341,27 @@ def test_a_block_on_an_epic_binds_every_card_under_it():
     assert "e1e1e1e1" not in sum(r["waves"], []), "a container is never scheduled"
 
 
+def test_a_block_reaches_grandchildren_and_a_task_keeps_its_own_files():
+    items = [item("x0x0x0x0"), item("e1e1e1e1", "Depends on: x0x0x0x0"),
+             item("s1s1s1s1", "Touches: a.py, b.py", parent="e1e1e1e1"),
+             item("t1t1t1t1", "Touches: a.py", parent="s1s1s1s1"),
+             item("t2t2t2t2", "Touches: b.py", parent="s1s1s1s1"),
+             item("t3t3t3t3", parent="s1s1s1s1")]
+    cards = waves.load(items)
+    assert cards["t1t1t1t1"]["depends_on"] == ["x0x0x0x0"], "the epic's wait reaches a grandchild"
+    assert cards["t3t3t3t3"]["touches"] == ["a.py", "b.py"], "a task with no files takes the story's"
+    r = waves.plan(cards)
+    assert r["waves"] == [["x0x0x0x0"], ["t1t1t1t1", "t2t2t2t2"], ["t3t3t3t3"]], r["waves"]
+
+
+def test_parent_links_that_loop_do_not_hang():
+    items = [item("aaaaaaaa", parent="bbbbbbbb"), item("bbbbbbbb", parent="aaaaaaaa"),
+             item("cccccccc", "Depends on: aaaaaaaa")]
+    p = subprocess.run([sys.executable, SCRIPT, "-"], input=json.dumps(items),
+                       capture_output=True, text=True, timeout=10)
+    assert p.returncode in (0, 2), p.stderr
+
+
 def test_a_card_waiting_on_its_own_container_is_named():
     try:
         waves.load([item("51515151"), item("t1t1t1t1", "Depends on: 51515151", parent="51515151")])

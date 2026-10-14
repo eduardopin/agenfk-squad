@@ -66,6 +66,8 @@ Append the block to the card's description, keeping the text that is there and
 replacing an older block if one exists. Ids may be shortened to 6 characters
 or more. A block on a story or an epic binds every task under it: write it
 there when the whole story waits, and on the task when only that task does.
+Put `Touches` on the tasks: a task with no `Touches` of its own takes its
+story's, and a story listing every task's files would keep its tasks apart.
 
 ```text
 Depends on: a1b2c3d4 (consumes the billing schema), e5f6a7b8

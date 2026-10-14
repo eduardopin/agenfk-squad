@@ -134,6 +134,33 @@ def test_own_handoff_reads_an_omp_transcript():
         assert sw.own_handoff(transcript, 0, "claude") is None
 
 
+def test_a_translated_write_clears_the_loop_counter_like_a_mutation():
+    """The behavioural guard for the tool-name translation: the watcher only
+    clears the loop counter when it sees a MUTATING name, so an omp `write`
+    that reaches it untranslated would keep the counter and false-fire LOOP."""
+    with tempfile.TemporaryDirectory() as home:
+        path = omp_session(home)
+        watch = os.path.join(home, ".claude", "squad", "watch")
+        os.makedirs(watch)
+        state_file = os.path.join(watch, f"{SID}.main.json")
+        base = {"event": "tool_result", "session_id": SID, "transcript_path": path,
+                "cwd": "/work/proj"}
+
+        with open(state_file, "w") as fh:
+            json.dump({"calls": ["stale-hash"]}, fh)
+        r = run(home, {**base, "tool_name": "write", "tool_input": {"path": "a.py"}})
+        assert r.returncode == 0, r.stderr
+        assert state(home)["calls"] == [], state(home)
+
+        # a read is not mutating: the entry survives and the call is appended
+        with open(state_file, "w") as fh:
+            json.dump({"calls": ["stale-hash"]}, fh)
+        r = run(home, {**base, "tool_name": "read", "tool_input": {"path": "a.py"}})
+        assert r.returncode == 0, r.stderr
+        calls = state(home)["calls"]
+        assert calls and calls[0] == "stale-hash" and len(calls) == 2, calls
+
+
 def test_post_tool_reaches_the_watcher_and_writes_state():
     with tempfile.TemporaryDirectory() as home:
         path = omp_session(home)

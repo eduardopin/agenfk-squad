@@ -8,6 +8,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 | Request / flow step | Agent | Writes? |
 |---|---|---|
 | Start a feature or epic, prioritise, "how much is left", break down into cards | `product` | no (creates cards in TODO) |
+| A plan with more than ~5 cards; "what can run in parallel", critical path; a card closed and the next wave is needed | `scheduler` | no (a `Depends on` / `Touches` block on each card) |
 | More than one agent or session in the same repo; branch/worktree per card; PR stack; "can I merge" | `github` | worktree claim only |
 | IMPLEMENT / IN_PROGRESS: a card becomes code (backend, logic, API, data) | `developer` | yes, 1 card = 1 branch = 1 worktree |
 | Screen, component, landing page, dashboard, design system, tokens, motion, Figma → code, art, poster, banner | `frontend` | yes, same regime |
@@ -28,7 +29,9 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 2. **All code work goes through an AgenFK card.** Pass the card id to
    every agent that writes; it calls `agenfk gatekeeper --item-id <id>` before
    editing. No card: `product` (or `/agenfk`) creates one first.
-3. **Parallelise by disjoint files, and `github` lays out the geometry.** Before
+3. **Parallelise by disjoint files: `scheduler` picks the cards, `github` lays out the
+   geometry.** For a plan with more than a handful of cards, `scheduler` returns the
+   waves first, and wave 1 is what gets dispatched; ask it again when a card closes. Before
    dispatching two or more agents in the same repo, `github` delivers the map
    (session → worktree → branch → card), the table of fronts and the path of each
    worktree. One `developer`/`frontend` per card, in the same message, each

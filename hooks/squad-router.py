@@ -35,6 +35,14 @@ RULES = [
      r"|competitor|positioning|first customers|ideal customer|how to sell|sales approach|outreach|prospect)",
      "go-to-market -> `gtm` agent (drafts only; never sends or publishes)."),
 
+    # before `product` and `github`: "epic" and "paraleliz" also match those two, and a
+    # request about the whole plan's ordering belongs here first.
+    (r"\b(caminho critico|grafo de dependencia|dependencias entre (os )?(cards|tarefas|etapas)|ondas? de (cards|trabalho|despacho|dispatch)"
+     r"|o que (da|pode) (para |pra )?(rodar |andar |ir )?(em )?paralel|paralelizar (as |os |o |a )?(tarefas|cards|etapas|atividades|projeto|plano|epico|epic)|projeto longo"
+     r"|critical path|dependency graph|dependencies between (the )?(cards|tasks)|waves? of (cards|work)|into waves|what can run in parallel"
+     r"|paralleli[sz]e (the )?(tasks|cards|steps|plan|project|epic))",
+     "plan ordering -> `scheduler` agent (dependency graph, waves of cards that run together, critical path; recompute when a card closes)."),
+
     (r"\b(quanto falta|proximo bloco|proximo passo do projeto|priorizar|prioridade|replanejar|roadmap|decompor|epico|epic\b|planejar a semana|em qual projeto"
      r"|how much is left|next block|next step (of|for) the project|prioriti[sz]e|priority|replan|break down into cards|decompose|plan the week|which project)",
      "product -> `product` agent (real state of the repo, smallest increment, cards in AgenFK)."),

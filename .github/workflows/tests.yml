@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Compile hooks and scripts
-        run: python -m py_compile hooks/*.py skills/session-context/scripts/session_context.py
+        run: python -m py_compile hooks/*.py skills/session-context/scripts/session_context.py skills/parallel-plan/scripts/waves.py
       - name: Vendor lock and install guard
         run: python tests/test_vendor.py
       - name: Agent standing-order sections
@@ -30,6 +30,8 @@ jobs:
         run: bash -n install.sh
       - name: Watcher test suite
         run: python tests/test_watch.py
+      - name: Scheduler test suite
+        run: python tests/test_scheduler.py
       # Node is the same on every Python leg: run the helper tests once.
       - uses: actions/setup-node@v4
         if: matrix.python == '3.12'

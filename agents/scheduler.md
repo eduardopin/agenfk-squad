@@ -63,7 +63,9 @@ may know something the repository does not.
 ## 3. Record the block on each card
 
 Append the block to the card's description, keeping the text that is there and
-replacing an older block if one exists. Ids may be the first 8 characters.
+replacing an older block if one exists. Ids may be shortened to 6 characters
+or more. A block on a story or an epic binds every task under it: write it
+there when the whole story waits, and on the task when only that task does.
 
 ```text
 Depends on: a1b2c3d4 (consumes the billing schema), e5f6a7b8
@@ -80,19 +82,21 @@ Markdown carries backticks and `$`. Never paste it inside double quotes on a
 command line, where the shell would run it. Go through a file:
 
 ```bash
-agenfk get <card> --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["description"])' > /tmp/<card>.old
-cp /tmp/<card>.old /tmp/<card>.new
-cat >> /tmp/<card>.new <<'EOF'
+old=$(mktemp); new=$(mktemp)
+agenfk get <card> --json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("description") or "")' > "$old"
+cp "$old" "$new"
+cat >> "$new" <<'EOF'
 
 Depends on: ...
 Touches: ...
 Size: ...
 EOF
-diff /tmp/<card>.old /tmp/<card>.new      # only the block may differ
-agenfk update <card> --description "$(cat /tmp/<card>.new)"
+diff "$old" "$new"                     # only the block may differ
+agenfk update <card> --description "$(cat "$new")"
 ```
 
-If an older block is in the description, remove it from `/tmp/<card>.new`
+If an older block is in the description, remove it from `$new`
 before appending, and check the diff again.
 
 This block is the only thing you write. You never change a card's scope,

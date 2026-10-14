@@ -25,7 +25,7 @@ Size: 2
 
 | Line | Format | Matching |
 |---|---|---|
-| `Depends on:` | ids separated by commas, spaces or `and`, any unique prefix; text in `( )` is a comment; `none` for nothing | an unknown or ambiguous id, or a word that is not an id, stops the script |
+| `Depends on:` | ids separated by commas, spaces or `and`, any unique prefix of 6+ characters; text in `( )` is a comment; `none` for nothing | an unknown or ambiguous id, or a word that is not an id, stops the script |
 | `Touches:` | comma-separated paths, directories ending in `/`, globs, or `kind:name`; text in `( )` is a comment | paths overlap by equality, directory prefix, glob match, or a glob whose fixed part meets a directory or another glob; `kind:name` only by equality |
 | `Size:` | whole number, default 1 | weight on the critical path; 1 = one session |
 
@@ -54,8 +54,10 @@ Exit 0 prints the plan. Exit 2 names the problem: a `dependency cycle: a -> b
 -> a`, an id that is not in the plan, an ambiguous prefix, a `Depends on`
 word that is not an id, a `--parent` that matches nothing, bad JSON.
 
-A card with children is a container: only leaf cards are scheduled, and
-depending on a story means depending on its tasks.
+A card with children is a container: only leaf cards are scheduled. A block
+on a story or an epic is inherited by every leaf under it, and depending on a
+container means depending on all its leaves. A shortened id needs at least 6
+characters, so a short word in prose is never read as one.
 
 ## 3. Read the output
 
@@ -63,7 +65,7 @@ depending on a story means depending on its tasks.
 |---|---|
 | `Wave 1 (ready now)` | brief these cards to the main session; `github` opens one worktree each |
 | `Critical path (length N)` | the longest chain of dependencies, a floor on how long the plan takes; collisions can add waves. Its cards get reviewers first |
-| `Blocked by an open card outside this plan` | close or schedule that card first, or drop the dependency if it is convention |
+| `Blocked` | close or schedule that card first, or drop the dependency if it is convention |
 | `Kept apart by a shared resource` | if the shared file is a changelog, registry or lockfile, one card owns it and the others hand back text |
 | `No Touches line` | those cards were not checked for collisions; fill the line before dispatching them alongside others |
 

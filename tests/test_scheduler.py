@@ -159,9 +159,9 @@ def test_an_ambiguous_short_id_is_refused():
     try:
         waves.load([{"id": "abcd0001", "title": "x", "description": ""},
                     {"id": "abcd0002", "title": "y", "description": ""},
-                    {"id": "zzzz0000", "title": "z", "description": "Depends on: abcd"}])
+                    {"id": "zzzz0000", "title": "z", "description": "Depends on: abcd00"}])
     except waves.PlanError as e:
-        assert "abcd" in str(e) and "ambiguous" in str(e)
+        assert "abcd00" in str(e) and "ambiguous" in str(e)
     else:
         raise AssertionError("an ambiguous id was accepted")
 
@@ -184,6 +184,7 @@ def item(cid, desc="", status="TODO", parent=None, title=None):
 
 def test_dependency_lines_written_as_markdown_are_read():
     for line in ("- Depends on: aaaa0000", "* Depends on: aaaa0000", "**Depends on:** aaaa0000",
+                 "1. Depends on: aaaa0000", "2) Depends on: aaaa0000",
                  "Depends on: aaaa0000 (consumes the schema, and the API)"):
         cards = waves.load([item("aaaa0000"), item("bbbb0000", line)])
         assert cards["bbbb0000"]["depends_on"] == ["aaaa0000"], line
@@ -307,6 +308,73 @@ def test_a_large_card_starts_before_a_small_one_when_width_is_short():
 def test_cards_that_depend_on_each_other_are_not_reported_as_colliding():
     r = plan([card("a", touches=["x.py"]), card("b", deps=["a"], touches=["x.py"])])
     assert r["conflicts"] == [], r["conflicts"]
+
+
+def test_a_short_word_is_never_taken_for_an_id_prefix():
+    try:
+        waves.load([item("be0000aa"), item("cccc0000", "Depends on: be")])
+    except waves.PlanError as e:
+        assert "be" in str(e) and "at least 6" in str(e), e
+    else:
+        raise AssertionError("'be' was read as a prefix of be0000aa")
+
+
+def test_a_block_on_a_story_binds_its_tasks():
+    items = [item("e1e1e1e1"), item("51515151", parent="e1e1e1e1"),
+             item("52525252", "Depends on: 51515151\nTouches: api/", parent="e1e1e1e1"),
+             item("t1t1t1t1", parent="51515151"), item("t2t2t2t2", parent="52525252"),
+             item("t3t3t3t3", "Touches: api/routes.py", parent="52525252")]
+    cards = waves.load(items, parent="e1e1e1e1")
+    assert cards["t2t2t2t2"]["depends_on"] == ["t1t1t1t1"], cards["t2t2t2t2"]
+    assert cards["t2t2t2t2"]["touches"] == ["api/"]
+    r = waves.plan(cards)
+    assert r["waves"] == [["t1t1t1t1"], ["t2t2t2t2"], ["t3t3t3t3"]], r["waves"]   # t2, t3 share api/
+    r = waves.plan(waves.load(items))                                              # no --parent: same
+    assert r["waves"] == [["t1t1t1t1"], ["t2t2t2t2"], ["t3t3t3t3"]], r["waves"]
+
+
+def test_a_block_on_an_epic_binds_every_card_under_it():
+    items = [item("x0x0x0x0"), item("e1e1e1e1", "Depends on: x0x0x0x0"),
+             item("a1a1a1a1", parent="e1e1e1e1"), item("b1b1b1b1", parent="e1e1e1e1")]
+    r = waves.plan(waves.load(items))
+    assert r["waves"] == [["x0x0x0x0"], ["a1a1a1a1", "b1b1b1b1"]], r["waves"]
+    assert "e1e1e1e1" not in sum(r["waves"], []), "a container is never scheduled"
+
+
+def test_a_card_waiting_on_its_own_container_is_named():
+    try:
+        waves.load([item("51515151"), item("t1t1t1t1", "Depends on: 51515151", parent="51515151")])
+    except waves.PlanError as e:
+        assert "t1t1t1t1" in str(e) and "contains it" in str(e), e
+    else:
+        raise AssertionError("a task waiting on its own story was accepted")
+
+
+def test_a_parent_id_that_exists_wins_over_a_longer_one():
+    items = [item("e1"), item("e10"), item("a", parent="e1"), item("b", parent="e10")]
+    assert waves.plan(waves.load(items, parent="e1"))["waves"] == [["a"]]
+
+
+def test_blocked_cards_say_which_wait_is_outside_and_are_not_reported_done():
+    items = [item("o0o0o0o0", parent="e0e0e0e0"),
+             item("t1t1t1t1", "Depends on: o0o0o0o0", parent="e1e1e1e1"),
+             item("t2t2t2t2", "Depends on: t1t1t1t1", parent="e1e1e1e1")]
+    p = cli(items, "--parent", "e1e1e1e1")
+    assert p.returncode == 0, p.stderr
+    assert "every card is done" not in p.stdout, p.stdout
+    assert "o0o0o0o0 (outside, open)" in p.stdout and "t1t1t1t1 (blocked)" in p.stdout, p.stdout
+    r = waves.plan(waves.load(items, parent="e1e1e1e1"))
+    assert r["blocked"][1] == {"card": "t2t2t2t2", "waiting_on": ["t1t1t1t1"], "outside": [False]}
+
+
+def test_a_parent_with_no_cards_under_it_is_an_error():
+    p = cli([item("a", parent="e1"), item("b", parent="e1")], "--parent", "a")
+    assert p.returncode == 2 and "no cards to plan" in p.stderr, (p.returncode, p.stderr)
+
+
+def test_an_id_of_zero_is_an_id():
+    r = waves.plan(waves.load({"cards": [{"id": 0}, {"id": 1, "depends_on": [0]}]}))
+    assert r["waves"] == [["0"], ["1"]], r["waves"]
 
 
 # --- the router --------------------------------------------------------------

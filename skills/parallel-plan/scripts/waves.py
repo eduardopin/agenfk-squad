@@ -48,7 +48,8 @@ class PlanError(Exception):
 # --- reading -----------------------------------------------------------------
 
 PLACEHOLDERS = {"none", "nothing", "n/a", "na", "-", "nenhum", "nenhuma"}
-BLOCK_LINE = re.compile(r"\s*(?:[-*+>]\s+)?(depends on|touches|size)\s*:\s*(.*)$", re.I)
+BLOCK_LINE = re.compile(r"\s*(?:(?:[-*+>]|\d+[.)])\s+)?(depends on|touches|size)\s*:\s*(.*)$", re.I)
+MIN_PREFIX = 6   # a shorter word on a Depends on line is more likely prose than an id
 REASON = re.compile(r"\([^)]*\)")
 
 
@@ -152,11 +153,28 @@ def load(data, parent=None):
         return out
 
     for c in cards.values():
-        resolved = []
-        for d in c["depends_on"]:
-            d = resolve(ids, d, c["id"])
-            resolved += leaves(d) if children[d] else [d]   # waiting on a story = waiting on its tasks
-        c["depends_on"] = resolved
+        c["refs"] = [resolve(ids, d, c["id"]) for d in c["depends_on"]]
+
+    # A block written on a story or an epic binds every task under it: the leaf
+    # inherits its ancestors' dependencies and touched files. Waiting on a
+    # container means waiting on every leaf under it.
+    for c in cards.values():
+        if children[c["id"]]:
+            continue
+        chain, node = [c], c
+        while node["parent"] in cards and len(chain) <= len(cards):
+            node = cards[node["parent"]]
+            chain.append(node)
+        deps, touches = [], []
+        for holder in chain:
+            for ref in holder["refs"]:
+                expanded = leaves(ref) if children[ref] else [ref]
+                if c["id"] in expanded:
+                    where = "" if holder is c else f" (written on {holder['id']})"
+                    raise PlanError(f"card {c['id']} waits on {ref}, which contains it{where}")
+                deps += [d for d in expanded if d not in deps]
+            touches += [t for t in holder["touches"] if t not in touches]
+        c["depends_on"], c["touches"] = deps, touches
     if parent:
         known = ids + sorted({c["parent"] for c in cards.values() if c["parent"] and c["parent"] not in cards})
         hits = [i for i in known if i == parent] or [i for i in known if i.startswith(parent)]
@@ -178,6 +196,9 @@ def load(data, parent=None):
 def resolve(ids, ref, owner):
     if ref in ids:
         return ref
+    if len(ref) < MIN_PREFIX:
+        raise PlanError(f"card {owner} depends on {ref}, which is not in the plan "
+                        f"(a shortened id needs at least {MIN_PREFIX} characters)")
     hits = [i for i in ids if i.startswith(ref)]
     if not hits:
         raise PlanError(f"card {owner} depends on {ref}, which is not in the plan")
@@ -349,7 +370,8 @@ def plan(cards, max_width=4, done=None):
         "critical_path": path,
         "critical_length": head[path[-1]] if path else 0,
         "conflicts": conflicts,
-        "blocked": [{"card": cid, "waiting_on": blocked[cid]} for cid in open_ if cid in blocked],
+        "blocked": [{"card": cid, "waiting_on": blocked[cid],
+                     "outside": [d not in in_open for d in blocked[cid]]} for cid in open_ if cid in blocked],
         "unplaced_touches": [f"{c[:8]} {cards[c]['title']}".rstrip() for c in pending if not cards[c]["touches"]],
         "done": [cid for cid in scope if cid in done_ids],
     }
@@ -369,9 +391,10 @@ def render(cards, result):
         out.append(f"Critical path (length {result['critical_length']}): "
                    + " -> ".join(short(c) for c in result["critical_path"]))
     if result["blocked"]:
-        out.append("Blocked by an open card outside this plan:")
+        out.append("Blocked (waits on an open card outside this plan, directly or through another):")
         out += [f"  {short(b['card'])}  {cards[b['card']]['title']}  waits on "
-                + ", ".join(short(d) for d in b["waiting_on"]) for b in result["blocked"]]
+                + ", ".join(f"{short(d)} ({'outside, open' if o else 'blocked'})"
+                            for d, o in zip(b["waiting_on"], b["outside"])) for b in result["blocked"]]
     if result["conflicts"]:
         out.append("Kept apart by a shared resource:")
         out += [f"  {short(x['cards'][0])}, {short(x['cards'][1])}: {x['resource']}" for x in result["conflicts"]]

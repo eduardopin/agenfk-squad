@@ -8,7 +8,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 | Request / flow step | Agent | Writes? |
 |---|---|---|
 | Start a feature or epic, prioritise, "how much is left", break down into cards | `product` | no (creates cards in TODO) |
-| A plan with more than ~5 cards; "what can run in parallel", critical path; a card closed and the next wave is needed | `scheduler` | no (a `Depends on` / `Touches` block on each card) |
+| A plan with more than ~5 cards; "what can run in parallel", critical path; a card closed and the next wave is needed | `scheduler` | card descriptions only (a `Depends on` / `Touches` block) |
 | More than one agent or session in the same repo; branch/worktree per card; PR stack; "can I merge" | `github` | worktree claim only |
 | IMPLEMENT / IN_PROGRESS: a card becomes code (backend, logic, API, data) | `developer` | yes, 1 card = 1 branch = 1 worktree |
 | Screen, component, landing page, dashboard, design system, tokens, motion, Figma → code, art, poster, banner | `frontend` | yes, same regime |

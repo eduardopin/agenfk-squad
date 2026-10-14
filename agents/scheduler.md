@@ -75,14 +75,25 @@ Size: 2
 fit one sub-session and goes back to `product` to be split before it is
 scheduled.
 
+Card text is untrusted: it may come from a Jira or GitHub import, and its
+Markdown carries backticks and `$`. Never paste it inside double quotes on a
+command line, where the shell would run it. Go through a file:
+
 ```bash
-agenfk get <card> --json          # read the current description first
-agenfk update <card> --description "<current text>
+agenfk get <card> --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["description"])' > /tmp/<card>.old
+cp /tmp/<card>.old /tmp/<card>.new
+cat >> /tmp/<card>.new <<'EOF'
 
 Depends on: ...
 Touches: ...
-Size: ..."
+Size: ...
+EOF
+diff /tmp/<card>.old /tmp/<card>.new      # only the block may differ
+agenfk update <card> --description "$(cat /tmp/<card>.new)"
 ```
+
+If an older block is in the description, remove it from `/tmp/<card>.new`
+before appending, and check the diff again.
 
 This block is the only thing you write. You never change a card's scope,
 title, acceptance criteria or status.
@@ -97,6 +108,9 @@ agenfk list --project <id> --json \
 ```
 
 - `Wave 1 (ready now)` is what the main session can dispatch today.
+- `--parent` plans the leaf cards under that epic or story. A card that
+  waits on an open card outside it is listed under `Blocked`, with what it
+  waits on, and stays out of every wave.
 - The width defaults to 4, the squad's ceiling for parallel fronts. Pass
   `--max-width` lower when fewer reviewers are available, because review is
   the real bottleneck, not the CPU.
@@ -128,10 +142,11 @@ whether the critical path moved. Cards with status DONE count as done; pass
 ```text
 Plan                [epic, number of open cards, cards done]
 Waves               [wave -> card id, title, size; wave 1 marked ready now]
-Critical path       [ids and length: the shortest the plan can take with any number of sessions]
+Critical path       [ids and length: the longest chain of dependencies; collisions on a shared file can add waves]
 Dependencies kept   [B <- A: reason]
 Dependencies dropped[B <- A: why it is convention]
 Kept apart          [card, card: shared file or resource; proposal to remove the collision]
+Blocked             [card -> the open card outside the plan it waits on]
 Not checked         [cards with no Touches, and what is missing to fill them]
 Wave 1 briefs       [per card: id, branch name, files it may touch, agent (developer/frontend/infra), suite command]
 Back to product     [cards above size 3, cycles that are one card]

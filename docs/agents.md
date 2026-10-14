@@ -19,7 +19,7 @@ is advice; an agent with no `Edit` and no `Write` cannot edit files. Read the
 | Agent | Flow step | Tools | Writes? | Model |
 |---|---|---|---|---|
 | [`product`](#product) | TODO | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (creates cards through `agenfk`) | inherit |
-| [`scheduler`](#scheduler) | TODO, and each time a card closes | Read, Grep, Glob, Bash | No (a block on each card's description) | inherit |
+| [`scheduler`](#scheduler) | TODO, and each time a card closes | Read, Grep, Glob, Bash | Card descriptions only (a dependency block) | inherit |
 | [`github`](#github) | before IMPLEMENT, at VERIFY | Read, Grep, Glob, Bash, Write | Worktree claims only | inherit |
 | [`developer`](#developer) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes | inherit |
 | [`frontend`](#frontend) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch | Yes | inherit |

@@ -25,12 +25,13 @@ Size: 2
 
 | Line | Format | Matching |
 |---|---|---|
-| `Depends on:` | comma-separated ids, any unique prefix; text after the id is a comment | an unknown or ambiguous id stops the script |
-| `Touches:` | comma-separated paths, directories ending in `/`, globs, or `kind:name` | paths overlap by equality, directory prefix or glob; `kind:name` only by equality |
+| `Depends on:` | ids separated by commas, spaces or `and`, any unique prefix; text in `( )` is a comment; `none` for nothing | an unknown or ambiguous id, or a word that is not an id, stops the script |
+| `Touches:` | comma-separated paths, directories ending in `/`, globs, or `kind:name`; text in `( )` is a comment | paths overlap by equality, directory prefix, glob match, or a glob whose fixed part meets a directory or another glob; `kind:name` only by equality |
 | `Size:` | whole number, default 1 | weight on the critical path; 1 = one session |
 
-The `scheduler` agent writes the block. Section 2 of `agents/scheduler.md`
-says which dependencies are real.
+A line may start with a list marker (`-`, `*`) or be in bold. The
+`scheduler` agent writes the block; section 2 of `agents/scheduler.md` says
+which dependencies are real.
 
 ## 2. Run
 
@@ -41,7 +42,7 @@ python3 scripts/waves.py --json --max-width 3 --done a1b2c3d4 plan.json
 
 | Option | Effect |
 |---|---|
-| `--parent <id>` | only the cards whose `parentId` starts with this id |
+| `--parent <id>` | only the leaf cards under this epic or story; a card waiting on an open card outside it is reported as blocked |
 | `--max-width N` | at most N cards per wave (default 4, the squad's front ceiling) |
 | `--done a,b` | treat these ids as done (merged, not yet closed on the board) |
 | `--json` | waves, ready, critical path, conflicts, cards without `Touches`, as JSON |
@@ -50,14 +51,19 @@ The input can also be `{"cards": [{"id", "title", "depends_on", "touches",
 "size", "status"}]}` for a plan that is not on a board yet.
 
 Exit 0 prints the plan. Exit 2 names the problem: a `dependency cycle: a -> b
--> a`, an id that is not in the plan, an ambiguous prefix, bad JSON.
+-> a`, an id that is not in the plan, an ambiguous prefix, a `Depends on`
+word that is not an id, a `--parent` that matches nothing, bad JSON.
+
+A card with children is a container: only leaf cards are scheduled, and
+depending on a story means depending on its tasks.
 
 ## 3. Read the output
 
 | Section | What to do |
 |---|---|
 | `Wave 1 (ready now)` | brief these cards to the main session; `github` opens one worktree each |
-| `Critical path (length N)` | the shortest the plan can take with any number of sessions; its cards get reviewers first |
+| `Critical path (length N)` | the longest chain of dependencies, a floor on how long the plan takes; collisions can add waves. Its cards get reviewers first |
+| `Blocked by an open card outside this plan` | close or schedule that card first, or drop the dependency if it is convention |
 | `Kept apart by a shared resource` | if the shared file is a changelog, registry or lockfile, one card owns it and the others hand back text |
 | `No Touches line` | those cards were not checked for collisions; fill the line before dispatching them alongside others |
 

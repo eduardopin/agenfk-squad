@@ -175,16 +175,159 @@ def test_cli_prints_json_that_round_trips():
     assert p.returncode == 0 and "Wave 1" in p.stdout and "Critical path" in p.stdout, p.stdout
 
 
+def item(cid, desc="", status="TODO", parent=None, title=None):
+    d = {"id": cid, "title": title or cid, "status": status, "description": desc}
+    if parent:
+        d["parentId"] = parent
+    return d
+
+
+def test_dependency_lines_written_as_markdown_are_read():
+    for line in ("- Depends on: aaaa0000", "* Depends on: aaaa0000", "**Depends on:** aaaa0000",
+                 "Depends on: aaaa0000 (consumes the schema, and the API)"):
+        cards = waves.load([item("aaaa0000"), item("bbbb0000", line)])
+        assert cards["bbbb0000"]["depends_on"] == ["aaaa0000"], line
+
+
+def test_every_id_on_a_dependency_line_counts():
+    for line in ("Depends on: aaaa0000 and cccc0000", "Depends on: aaaa0000 cccc0000",
+                 "Depends on: aaaa0000; cccc0000"):
+        cards = waves.load([item("aaaa0000"), item("cccc0000"), item("bbbb0000", line)])
+        assert cards["bbbb0000"]["depends_on"] == ["aaaa0000", "cccc0000"], line
+        r = waves.plan(cards)
+        assert r["waves"] == [["aaaa0000", "cccc0000"], ["bbbb0000"]], (line, r["waves"])
+
+
+def test_placeholders_mean_no_dependency_and_no_resource():
+    for line in ("Depends on: none", "Depends on: N/A", "Depends on: -", "Depends on: nothing"):
+        assert waves.load([item("aaaa0000", line)])["aaaa0000"]["depends_on"] == [], line
+    cards = waves.load([item("a", "Touches: none"), item("b", "Touches: none")])
+    assert waves.plan(cards)["waves"] == [["a", "b"]], "'none' is not a shared resource"
+
+
+def test_an_unreadable_dependency_line_stops_the_plan():
+    try:
+        waves.load([item("aaaa0000"), item("bbbb0000", "Depends on: aaaa0000/v2")])
+    except waves.PlanError as e:
+        assert "bbbb0000" in str(e) and "aaaa0000/v2" in str(e), e
+    else:
+        raise AssertionError("a dependency that is not an id was dropped in silence")
+
+
+def test_a_comment_on_a_touches_entry_is_ignored():
+    cards = waves.load([item("a", "Touches: hooks/x.py (router)"), item("b", "Touches: ./hooks/x.py")])
+    assert cards["a"]["touches"] == ["hooks/x.py"]
+    assert len(waves.plan(cards)["waves"]) == 2
+
+
+def test_a_directory_and_a_glob_overlap_when_their_fixed_parts_meet():
+    for x, y in (("docs/", "**/*.md"), ("src/", "*.py"), ("a/b/", "a/*/c.py"), ("docs/*.md", "docs/a*.md")):
+        assert waves.overlap(x, y) and waves.overlap(y, x), (x, y)
+    for x, y in (("src/a", "src/ab.py"), ("docs/", "src/*.py"), ("contract:a*", "contract:ab")):
+        assert not waves.overlap(x, y) and not waves.overlap(y, x), (x, y)
+
+
+def test_parent_plans_the_leaves_under_an_epic():
+    items = [item("e1"), item("s1", parent="e1"), item("t1", parent="s1"), item("t2", parent="s1"),
+             item("s2", "Depends on: s1", parent="e1"), item("other", parent="e2")]
+    cards = waves.load(items, parent="e1")
+    r = waves.plan(cards)
+    assert r["waves"] == [["t1", "t2"], ["s2"]], r["waves"]   # s2 waits on story s1 = on its tasks
+
+
+def test_parent_accepts_a_done_dependency_in_another_epic():
+    items = [item("aaaa0000", status="DONE", parent="e0e0e0e0"),
+             item("bbbb0000", "Depends on: aaaa0000", parent="e1e1e1e1")]
+    p = cli(items, "--parent", "e1e1e1e1", "--json")
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["waves"] == [["bbbb0000"]]
+
+
+def test_an_open_dependency_outside_the_epic_blocks_the_card_and_its_dependents():
+    items = [item("aaaa0000", parent="e0e0e0e0"),
+             item("bbbb0000", "Depends on: aaaa0000", parent="e1e1e1e1"),
+             item("cccc0000", "Depends on: bbbb0000", parent="e1e1e1e1"),
+             item("dddd0000", parent="e1e1e1e1")]
+    r = waves.plan(waves.load(items, parent="e1e1e1e1"))
+    assert r["waves"] == [["dddd0000"]], r["waves"]
+    assert [b["card"] for b in r["blocked"]] == ["bbbb0000", "cccc0000"], r["blocked"]
+    assert r["blocked"][0]["waiting_on"] == ["aaaa0000"]
+
+
+def test_a_parent_that_matches_nothing_is_an_error_not_an_empty_plan():
+    for args in (("--parent", "zzzz"), ("--parent", "e")):
+        p = cli([item("a", parent="e1"), item("b", parent="e2")], *args)
+        assert p.returncode == 2 and "--parent" in p.stderr, (args, p.returncode, p.stdout, p.stderr)
+    p = cli([])
+    assert p.returncode == 2 and "no cards" in p.stderr, p.stderr
+    p = cli([item("a", status="DONE")])
+    assert p.returncode == 0 and "every card is done" in p.stdout
+
+
+def test_bad_cards_are_refused():
+    for cards, words in (([card("a"), card("a")], "twice"), ([card("a", size=0)], "at least 1"),
+                         ([card("a", size="big")], "whole number")):
+        try:
+            plan(cards)
+        except waves.PlanError as e:
+            assert words in str(e), (words, e)
+        else:
+            raise AssertionError(f"accepted: {cards}")
+    try:
+        plan([card("a")], max_width=0)
+    except waves.PlanError:
+        pass
+    else:
+        raise AssertionError("width 0 was accepted")
+    r = waves.plan(waves.load({"cards": [{"id": 1, "depends_on": [2]}, {"id": 2}]}))
+    assert r["waves"] == [["2"], ["1"]], "numeric ids are read as text"
+
+
+def test_the_cycle_named_is_the_cycle_even_after_a_tail():
+    try:
+        plan([card("d", deps=["a"]), card("a", deps=["b"]), card("b", deps=["a"])])
+    except waves.PlanError as e:
+        assert str(e) == "dependency cycle: a -> b -> a", e
+    else:
+        raise AssertionError("cycle accepted")
+
+
+def test_the_critical_path_follows_the_heavier_branch():
+    r = plan([card("light"), card("heavy", size=4), card("join", deps=["light", "heavy"])])
+    assert r["critical_path"] == ["heavy", "join"] and r["critical_length"] == 5, r
+
+
+def test_a_large_card_starts_before_a_small_one_when_width_is_short():
+    r = plan([card("small"), card("large", size=5)], max_width=1)
+    assert r["waves"] == [["large"], ["small"]], r["waves"]
+    r = plan([card("small"), card("large", size=5)])
+    assert r["waves"] == [["small", "large"]], "inside a wave, cards keep the plan's order"
+
+
+def test_cards_that_depend_on_each_other_are_not_reported_as_colliding():
+    r = plan([card("a", touches=["x.py"]), card("b", deps=["a"], touches=["x.py"])])
+    assert r["conflicts"] == [], r["conflicts"]
+
+
 # --- the router --------------------------------------------------------------
 
 def test_the_owners_request_routes_to_the_scheduler_first():
     hints = route("Precisamos paralelizar as tarefas para entregar mais coisas ao mesmo tempo")
     assert hints and "`scheduler`" in hints[0], hints
     for prompt in ("qual o caminho crítico desse epic?", "monta o grafo de dependências dos cards",
-                   "what can run in parallel in this plan?", "show me the critical path",
-                   "parallelise the epic into waves"):
+                   "what can run in parallel in this plan?", "show me the critical path of this plan",
+                   "parallelise the epic into waves", "quais cards podem rodar em paralelo?",
+                   "which cards can run in parallel?", "what can we run in parallel?",
+                   "o que podemos paralelizar?"):
         hints = route(prompt)
         assert hints and "`scheduler`" in hints[0], (prompt, hints)
+
+
+def test_the_scheduler_ignores_graphs_and_paths_that_are_not_a_plan():
+    for prompt in ("show the npm dependency graph", "dependency graph of this python package",
+                   "critical path of the request latency", "critical path rendering in the browser",
+                   "é um projeto longo, quanto falta?"):
+        assert not any("`scheduler`" in h for h in route(prompt)), prompt
 
 
 def test_the_scheduler_does_not_steal_github_or_product_requests():

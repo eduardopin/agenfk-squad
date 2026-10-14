@@ -21,8 +21,14 @@ Input is JSON, from a file or `-` for stdin, in one of two shapes:
     agenfk list --project <id> --json | waves.py --parent <epic-id> -
     waves.py --json --max-width 3 --done a1b2c3d4 plan.json
 
+A card with children (an epic, a story with tasks) is a container: only leaf
+cards are scheduled, and depending on a container means depending on its
+leaves. A card that waits on an open card outside `--parent` is reported as
+blocked, never put in a wave.
+
 Exit codes: 0 plan printed, 2 the input cannot be planned (a cycle, an unknown
-or ambiguous id, bad JSON). Standard library only.
+or ambiguous id, a dependency line that cannot be read, no cards in scope, bad
+JSON). Standard library only.
 """
 import argparse
 import fnmatch
@@ -41,24 +47,48 @@ class PlanError(Exception):
 
 # --- reading -----------------------------------------------------------------
 
+PLACEHOLDERS = {"none", "nothing", "n/a", "na", "-", "nenhum", "nenhuma"}
+BLOCK_LINE = re.compile(r"\s*(?:[-*+>]\s+)?(depends on|touches|size)\s*:\s*(.*)$", re.I)
+REASON = re.compile(r"\([^)]*\)")
+
+
 def _split(value):
     if isinstance(value, str):
         value = value.split(",")
-    return [v.strip().strip("`").strip() for v in value or [] if v and v.strip().strip("`").strip()]
+    out = []
+    for v in value or []:
+        v = REASON.sub(" ", str(v)).strip().strip("`").strip()
+        if v and v.lower() not in PLACEHOLDERS:
+            out.append(v)
+    return out
 
 
-def _block(description):
+def _depends(value, cid):
+    """Every id on a `Depends on:` line. A word that is not an id stops the
+    plan: a dependency read wrong would put a card in a wave too early."""
+    text = REASON.sub(" ", value)
+    if text.strip().lower() in PLACEHOLDERS:
+        return []
+    ids = []
+    for token in re.split(r"[,;\s]+", text):
+        token = token.strip("`")
+        if not token or token.lower() in ("and", "e", "&") or token.lower() in PLACEHOLDERS:
+            continue
+        if not re.fullmatch(r"[\w-]+", token):
+            raise PlanError(f"card {cid}: cannot read {token!r} in 'Depends on: {value.strip()}'")
+        ids.append(token)
+    return ids
+
+
+def _block(description, cid):
     deps, touches, size = [], [], 1
     for line in (description or "").splitlines():
-        m = re.match(r"\s*(depends on|touches|size)\s*:\s*(.*)$", line, re.I)
+        m = BLOCK_LINE.match(line.replace("**", "").replace("__", ""))
         if not m:
             continue
         key, value = m.group(1).lower(), m.group(2)
         if key == "depends on":
-            for token in _split(value):
-                word = re.match(r"[\w-]+", token)
-                if word and word.group(0).lower() not in ("none", "nothing"):
-                    deps.append(word.group(0))
+            deps += _depends(value, cid)
         elif key == "touches":
             touches += _split(value)
         else:
@@ -77,7 +107,10 @@ def _size(value, cid):
 
 
 def load(data, parent=None):
-    """Return {id: card} with every dependency resolved to a full id."""
+    """Return {id: card}. Every dependency is resolved against the whole list,
+    so a card may wait on one outside the planned scope. The scope is every
+    leaf card (a card with children is a container, not work), or only the leaf
+    descendants of `parent`."""
     if isinstance(data, dict):
         items = data.get("cards", data.get("items"))
         native = "cards" in data
@@ -87,23 +120,58 @@ def load(data, parent=None):
         raise PlanError("expected a list of cards, or {\"cards\": [...]}")
     cards = {}
     for item in items:
-        if not isinstance(item, dict) or not item.get("id"):
+        if not isinstance(item, dict) or item.get("id") in (None, ""):
             raise PlanError(f"every card needs an id: {item!r}")
         cid = str(item["id"])
-        if parent and not str(item.get("parentId") or "").startswith(parent):
-            continue
+        if cid in cards:
+            raise PlanError(f"card {cid} appears twice")
         if native:
             deps, touches, size = _split(item.get("depends_on")), _split(item.get("touches")), item.get("size", 1)
         else:
-            deps, touches, size = _block(item.get("description"))
-        if cid in cards:
-            raise PlanError(f"card {cid} appears twice")
+            deps, touches, size = _block(item.get("description"), cid)
         cards[cid] = {"id": cid, "title": str(item.get("title") or ""), "depends_on": deps,
                       "touches": touches, "size": _size(size, cid),
+                      "parent": str(item.get("parentId") or "") or None,
                       "done": str(item.get("status") or "").upper() in DONE_STATUSES}
+    if not cards:
+        raise PlanError("the plan has no cards")
     ids = list(cards)
+    children = {cid: [] for cid in ids}
     for c in cards.values():
-        c["depends_on"] = [resolve(ids, d, c["id"]) for d in c["depends_on"]]
+        if c["parent"] in children:
+            children[c["parent"]].append(c["id"])
+
+    def leaves(cid):
+        out, stack = [], [cid]
+        while stack:
+            n = stack.pop()
+            if children.get(n):
+                stack += reversed(children[n])
+            elif n != cid:
+                out.append(n)
+        return out
+
+    for c in cards.values():
+        resolved = []
+        for d in c["depends_on"]:
+            d = resolve(ids, d, c["id"])
+            resolved += leaves(d) if children[d] else [d]   # waiting on a story = waiting on its tasks
+        c["depends_on"] = resolved
+    if parent:
+        known = ids + sorted({c["parent"] for c in cards.values() if c["parent"] and c["parent"] not in cards})
+        hits = [i for i in known if i == parent] or [i for i in known if i.startswith(parent)]
+        if not hits:
+            raise PlanError(f"no card matches --parent {parent}")
+        if len(hits) > 1:
+            raise PlanError(f"--parent {parent} is ambiguous ({', '.join(hits)})")
+        root = hits[0]
+        scope = set(leaves(root)) if root in cards else {
+            leaf for c in cards.values() if c["parent"] == root
+            for leaf in (leaves(c["id"]) if children[c["id"]] else [c["id"]])}
+    else:
+        scope = {cid for cid in ids if not children[cid]}
+    for cid, c in cards.items():
+        c["scope"] = cid in scope
     return cards
 
 
@@ -120,8 +188,14 @@ def resolve(ids, ref, owner):
 
 # --- arithmetic --------------------------------------------------------------
 
+def _stem(entry):
+    return WILDCARD.split(entry, 1)[0]
+
+
 def overlap(a, b):
-    """True when two Touches entries can name the same thing."""
+    """True when two Touches entries can name the same thing. Paths overlap by
+    equality, a directory (`dir/`) over what is inside it, or a glob over what
+    it can match; `kind:name` resources only by equality."""
     a, b = a.removeprefix("./"), b.removeprefix("./")
     if a == b:
         return True
@@ -133,9 +207,11 @@ def overlap(a, b):
         if WILDCARD.search(x):
             if fnmatch.fnmatchcase(y, x):
                 return True
-            stem = WILDCARD.split(x, 1)[0]
-            if WILDCARD.search(y) and (y.startswith(stem) or stem.startswith(WILDCARD.split(y, 1)[0])):
-                return True
+            if WILDCARD.search(y) or y.endswith("/"):
+                # two patterns, or a pattern and a directory: overlap unless their fixed parts diverge
+                sx, sy = _stem(x), _stem(y)
+                if sx.startswith(sy) or sy.startswith(sx):
+                    return True
     return False
 
 
@@ -148,7 +224,9 @@ def shared(c1, c2):
 
 
 def _cycle(cards, pending):
-    state = {}
+    """Refuse a dependency cycle and name it. `pending` is walked in input
+    order, so the same plan always names the same cycle."""
+    members, state = set(pending), {}
     for start in pending:
         if state.get(start):
             continue
@@ -156,7 +234,7 @@ def _cycle(cards, pending):
         state[start] = 1
         while stack:
             node, deps = stack[-1]
-            nxt = next((d for d in deps if d in pending), None)
+            nxt = next((d for d in deps if d in members), None)
             if nxt is None:
                 state[node] = 2
                 stack.pop()
@@ -195,9 +273,26 @@ def plan(cards, max_width=4, done=None):
     for ref in done or ():
         done_ids.add(resolve(list(cards), ref, "--done"))
     rank = {cid: i for i, cid in enumerate(cards)}
-    pending = [cid for cid in cards if cid not in done_ids]
+    scope = [cid for cid in cards if cards[cid].get("scope", True)]
+    if not scope:
+        raise PlanError("no cards to plan in this scope")
+    open_ = [cid for cid in scope if cid not in done_ids]
+    _cycle(cards, open_)
+
+    # a card waiting on an open card outside the scope cannot start, nor can what waits on it
+    in_open = set(open_)
+    blocked = {cid: [d for d in cards[cid]["depends_on"] if d not in in_open and d not in done_ids]
+               for cid in open_}
+    blocked = {cid: ext for cid, ext in blocked.items() if ext}
+    grew = True
+    while grew:
+        grew = False
+        for cid in open_:
+            if cid not in blocked and any(d in blocked for d in cards[cid]["depends_on"]):
+                blocked[cid] = [d for d in cards[cid]["depends_on"] if d in blocked]
+                grew = True
+    pending = [cid for cid in open_ if cid not in blocked]
     pending_set = set(pending)
-    _cycle(cards, pending_set)
     order = _topo(cards, pending_set)
     deps = {cid: [d for d in cards[cid]["depends_on"] if d in pending_set] for cid in pending}
 
@@ -254,8 +349,9 @@ def plan(cards, max_width=4, done=None):
         "critical_path": path,
         "critical_length": head[path[-1]] if path else 0,
         "conflicts": conflicts,
+        "blocked": [{"card": cid, "waiting_on": blocked[cid]} for cid in open_ if cid in blocked],
         "unplaced_touches": [f"{c[:8]} {cards[c]['title']}".rstrip() for c in pending if not cards[c]["touches"]],
-        "done": sorted(done_ids, key=lambda c: rank[c]),
+        "done": [cid for cid in scope if cid in done_ids],
     }
 
 
@@ -267,11 +363,15 @@ def render(cards, result):
     for i, wave in enumerate(result["waves"], 1):
         out.append(f"Wave {i}" + (" (ready now)" if i == 1 else ""))
         out += [f"  {short(c)}  {cards[c]['title']}" for c in wave]
-    if not result["waves"]:
+    if not result["waves"] and not result["blocked"]:
         out.append("Nothing left to schedule: every card is done.")
     if result["critical_path"]:
         out.append(f"Critical path (length {result['critical_length']}): "
                    + " -> ".join(short(c) for c in result["critical_path"]))
+    if result["blocked"]:
+        out.append("Blocked by an open card outside this plan:")
+        out += [f"  {short(b['card'])}  {cards[b['card']]['title']}  waits on "
+                + ", ".join(short(d) for d in b["waiting_on"]) for b in result["blocked"]]
     if result["conflicts"]:
         out.append("Kept apart by a shared resource:")
         out += [f"  {short(x['cards'][0])}, {short(x['cards'][1])}: {x['resource']}" for x in result["conflicts"]]
@@ -286,7 +386,7 @@ def main(argv=None):
     ap.add_argument("path", help="JSON file, or - for stdin")
     ap.add_argument("--max-width", type=int, default=4, help="most cards in one wave (default 4)")
     ap.add_argument("--done", default="", help="comma-separated ids to treat as done")
-    ap.add_argument("--parent", help="keep only the cards whose parentId starts with this id")
+    ap.add_argument("--parent", help="plan only the leaf cards under this epic or story (any unique id prefix)")
     ap.add_argument("--json", action="store_true", help="print the plan as JSON")
     args = ap.parse_args(argv)
     try:

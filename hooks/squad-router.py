@@ -37,10 +37,15 @@ RULES = [
 
     # before `product` and `github`: "epic" and "paraleliz" also match those two, and a
     # request about the whole plan's ordering belongs here first.
-    (r"\b(caminho critico|grafo de dependencia|dependencias entre (os )?(cards|tarefas|etapas)|ondas? de (cards|trabalho|despacho|dispatch)"
-     r"|o que (da|pode) (para |pra )?(rodar |andar |ir )?(em )?paralel|paralelizar (as |os |o |a )?(tarefas|cards|etapas|atividades|projeto|plano|epico|epic)|projeto longo"
-     r"|critical path|dependency graph|dependencies between (the )?(cards|tasks)|waves? of (cards|work)|into waves|what can run in parallel"
-     r"|paralleli[sz]e (the )?(tasks|cards|steps|plan|project|epic))",
+    (r"\b(caminho critico (do|desse|deste|da|dessa|no|nesse) (plano|epico|epic|projeto|roadmap|backlog)"
+     r"|grafo de dependencias? (dos|das|do|da|entre) (cards|tarefas|etapas|atividades|plano|epico|projeto)"
+     r"|dependencias entre (os |as )?(cards|tarefas|etapas|atividades)|ondas? de (cards|trabalho|despacho|dispatch)"
+     r"|(o que|quais (cards|tarefas|etapas|atividades)) (da|pode|podem|podemos) (para |pra )?(rodar |andar |ir )?(em )?paralel"
+     r"|paralelizar (as |os |o |a )?(tarefas|cards|etapas|atividades|projeto|plano|epico|epic)"
+     r"|critical path (of|for|in) (the |this |our )?(plan|epic|project|roadmap|backlog|cards)"
+     r"|dependency graph (of|for|between) (the |this |our )?(cards|tasks|plan|epic|project)"
+     r"|dependencies between (the )?(cards|tasks)|waves? of (cards|work)|into waves"
+     r"|(what|which (cards|tasks)) can (we )?run in parallel|paralleli[sz]e (the )?(tasks|cards|steps|plan|project|epic))",
      "plan ordering -> `scheduler` agent (dependency graph, waves of cards that run together, critical path; recompute when a card closes)."),
 
     (r"\b(quanto falta|proximo bloco|proximo passo do projeto|priorizar|prioridade|replanejar|roadmap|decompor|epico|epic\b|planejar a semana|em qual projeto"

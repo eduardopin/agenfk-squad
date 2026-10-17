@@ -60,9 +60,9 @@ def state(home, sid):
 def test_harness_payload_then_path():
     assert sw.harness({"client": "omp"}) == "omp"
     assert sw.harness({"client": "PI"}) == "pi"
-    assert sw.harness({"transcript_path": "/home/u/.omp/agent/sessions/p/s.jsonl"}) == "omp"
-    assert sw.harness({"transcript_path": "/home/u/.pi/agent/sessions/p/s.jsonl"}) == "pi"
-    assert sw.harness({"transcript_path": "/home/u/.claude/projects/p/s.jsonl"}) == "claude"
+    assert sw.harness({"transcript_path": "/tmp/u/.omp/agent/sessions/p/s.jsonl"}) == "omp"
+    assert sw.harness({"transcript_path": "/tmp/u/.pi/agent/sessions/p/s.jsonl"}) == "pi"
+    assert sw.harness({"transcript_path": "/tmp/u/.claude/projects/p/s.jsonl"}) == "claude"
     assert sw.harness({}) == "claude"
 
 

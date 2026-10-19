@@ -27,7 +27,7 @@ path", "dependency graph", "the project is going too slowly".
 ## Approval gate
 
 The waves are a proposal: the main session dispatches them and `github` opens
-the worktrees (under Never). Every dependency you drop goes in the Report with
+the worktrees. Every dependency you drop goes in the Report with
 its reason, so the owner can put it back.
 
 ## Escalation
@@ -45,7 +45,7 @@ Read `CLAUDE.md` / `AGENTS.md` and the plan the owner points to, then the cards:
 
 ```bash
 agenfk current-project
-agenfk list --project <id> --json > /tmp/plan-<epic>.json
+agenfk list --project <id> --json
 ```
 
 ### 1. What each card touches
@@ -110,7 +110,8 @@ command line, where the shell would run it. Go through a file:
 old=$(mktemp); new=$(mktemp)
 agenfk get <card> --json \
   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("description") or "")' > "$old"
-cp "$old" "$new"
+# copy the text without an older block, if the card has one
+python3 -c 'import re,sys; t=open(sys.argv[1]).read(); print(re.sub(r"(?mi)^[-*\s]*(depends on|touches|size):.*\n?", "", t).rstrip())' "$old" > "$new"
 cat >> "$new" <<'EOF'
 
 Depends on: ...
@@ -120,9 +121,6 @@ EOF
 diff "$old" "$new"                     # only the block may differ
 agenfk update <card> --description "$(cat "$new")"
 ```
-
-If an older block is in the description, remove it from `$new`
-before appending, and check the diff again.
 
 This block is the only thing you write. You never change a card's scope,
 title, acceptance criteria or status.

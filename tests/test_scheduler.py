@@ -73,6 +73,10 @@ def test_a_directory_or_a_glob_overlaps_the_files_inside_it():
     assert r["waves"] == [["x", "y"]], "a shared prefix is not a shared file"
 
 
+def test_a_named_resource_never_matches_a_path_glob():
+    assert not waves.overlap("state:prod", "s*") and not waves.overlap("s*", "state:prod")
+
+
 def test_named_resources_match_exactly():
     r = plan([card("a", touches=["state:org/identity"]), card("b", touches=["state:org/identity-2"])])
     assert r["waves"] == [["a", "b"]]
@@ -405,7 +409,7 @@ def test_the_owners_request_routes_to_the_scheduler_first():
     assert hints and "`scheduler`" in hints[0], hints
     for prompt in ("qual o caminho crítico desse epic?", "monta o grafo de dependências dos cards",
                    "what can run in parallel in this plan?", "show me the critical path of this plan",
-                   "parallelise the epic into waves", "quais cards podem rodar em paralelo?",
+                   "parallelise the epic into waves", "split this roadmap into waves", "quais cards podem rodar em paralelo?",
                    "which cards can run in parallel?", "what can we run in parallel?",
                    "o que podemos paralelizar?"):
         hints = route(prompt)

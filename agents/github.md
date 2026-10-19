@@ -47,8 +47,8 @@ before the first git command.
 1. **Map** (always first, read-only): `git worktree list`,
    `claude agents --json`, `agenfk list --active`, `gh pr list`. Cross-reference
    session → worktree → branch → card → PR and name every missing link.
-2. **Plan of fronts** for what the main session or `product` wants to
-   parallelise: a table with card, base (SHA), branch, worktree, files the front
+2. **Plan of fronts** for what the main session, `product` or `scheduler`
+   (wave 1) wants to parallelise: a table with card, base (SHA), branch, worktree, files the front
    may touch, agent, evidence of done. Two fronts on the same file become one,
    or run in series. Ceiling of ~4.
 3. **Open the front:** `agenfk branch create|link <id>`, `git worktree add`,

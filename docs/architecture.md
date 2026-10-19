@@ -10,6 +10,7 @@ agenfk-squad/
 │   ├── session-context/      the session report and the handoff arithmetic (scripts/session_context.py)
 │   ├── clear-pickup/         handoff (write) and pickup (read) across a context clear
 │   ├── parallel-git/         branches, worktrees, PR stacks, merge train
+│   ├── parallel-plan/        dependency blocks and waves of cards for `scheduler` (scripts/waves.py)
 │   ├── design-reference/     the design method and quality floor used by `frontend`
 │   └── vendor/               third-party skills, Apache-2.0, unmodified
 ├── hooks/

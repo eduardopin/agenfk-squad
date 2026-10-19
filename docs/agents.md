@@ -1,6 +1,6 @@
 # Agent catalogue
 
-Eleven agents, one file each in `agents/`. An agent is a Markdown prompt with
+Twelve agents, one file each in `agents/`. An agent is a Markdown prompt with
 four frontmatter keys:
 
 | Key | What it does |
@@ -19,6 +19,7 @@ is advice; an agent with no `Edit` and no `Write` cannot edit files. Read the
 | Agent | Flow step | Tools | Writes? | Model |
 |---|---|---|---|---|
 | [`product`](#product) | TODO | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (creates cards through `agenfk`) | inherit |
+| [`scheduler`](#scheduler) | TODO, and each time a card closes | Read, Grep, Glob, Bash | Card descriptions only (a dependency block) | inherit |
 | [`github`](#github) | before IMPLEMENT, at VERIFY | Read, Grep, Glob, Bash, Write | Worktree claims only | inherit |
 | [`developer`](#developer) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes | inherit |
 | [`frontend`](#frontend) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch | Yes | inherit |
@@ -70,6 +71,30 @@ dependencies.
 - **Returns:** the real state, the cards created (in TODO), what was cut and why.
 - **Never:** edits code, estimates without reading the repository, creates a
   card whose acceptance cannot be checked by running something.
+
+## scheduler
+
+**Says which cards can run at the same time, and which wait for which.**
+
+Takes a plan that has been cut into cards and turns it into a dependency
+graph. A dependency counts only with a reason: B consumes a contract A changes,
+B needs something A produces, or B waits on an external approval. Order that
+exists only in the document is dropped and reported. Two cards that touch the
+same file without depending on each other are kept in different waves. The
+arithmetic is `skills/parallel-plan/scripts/waves.py`, so the same input always
+gives the same waves.
+
+- **Dispatch when:** a plan has more than about five cards; before
+  dispatching several cards from one plan; a card closes and the next wave is
+  needed; "what can run in parallel", "critical path", "the project is going
+  too slowly".
+- **Returns:** the waves (wave 1 ready now), the critical path, the
+  dependencies kept and dropped with reasons, the pairs kept apart by a shared
+  file, and a brief per wave-1 card for `github` to open its worktree.
+- **Never:** dispatches, opens a branch or worktree, advances a card, edits a
+  repository file, or changes a card's scope. Its only write is the
+  `Depends on` / `Touches` / `Size` block on each card's description.
+- **Uses:** the `parallel-plan` skill.
 
 ## github
 

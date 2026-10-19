@@ -35,6 +35,19 @@ RULES = [
      r"|competitor|positioning|first customers|ideal customer|how to sell|sales approach|outreach|prospect)",
      "go-to-market -> `gtm` agent (drafts only; never sends or publishes)."),
 
+    # before `product` and `github`: "epic" and "paraleliz" also match those two, and a
+    # request about the whole plan's ordering belongs here first.
+    (r"\b(caminho critico (do|desse|deste|da|dessa|no|nesse) (plano|epico|epic|projeto|roadmap|backlog)"
+     r"|grafo de dependencias? (dos|das|do|da|entre) (cards|tarefas|etapas|atividades|plano|epico|projeto)"
+     r"|dependencias entre (os |as )?(cards|tarefas|etapas|atividades)|ondas? de (cards|trabalho|despacho|dispatch)"
+     r"|(o que|quais (cards|tarefas|etapas|atividades)) (da|pode|podem|podemos) (para |pra )?(rodar |andar |ir )?(em )?paralel"
+     r"|paralelizar (as |os |o |a )?(tarefas|cards|etapas|atividades|projeto|plano|epico|epic)"
+     r"|critical path (of|for|in) (the |this |our )?(plan|epic|project|roadmap|backlog|cards)"
+     r"|dependency graph (of|for|between) (the |this |our )?(cards|tasks|plan|epic|project)"
+     r"|dependencies between (the )?(cards|tasks)|waves? of (cards|work)|into waves"
+     r"|(what|which (cards|tasks)) can (we )?run in parallel|paralleli[sz]e (the )?(tasks|cards|steps|plan|project|epic))",
+     "plan ordering -> `scheduler` agent (dependency graph, waves of cards that run together, critical path; recompute when a card closes)."),
+
     (r"\b(quanto falta|proximo bloco|proximo passo do projeto|priorizar|prioridade|replanejar|roadmap|decompor|epico|epic\b|planejar a semana|em qual projeto"
      r"|how much is left|next block|next step (of|for) the project|prioriti[sz]e|priority|replan|break down into cards|decompose|plan the week|which project)",
      "product -> `product` agent (real state of the repo, smallest increment, cards in AgenFK)."),

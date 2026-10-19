@@ -3,7 +3,7 @@
 [![tests](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml/badge.svg)](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml)
 [![license: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
 
-**A squad of eleven Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).**
+**A squad of twelve Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).**
 
 AgenFK gives an AI coding session a board, a flow and gates: no card, no edit; no
 evidence, no next step. The squad adds what a single gated session still lacks
@@ -76,7 +76,7 @@ flowchart LR
         main["Main session<br/>(the orchestrator)"]
         subgraph squad["Squad agents (sub-sessions)"]
             direction LR
-            plan["product<br/>github"]
+            plan["product, scheduler<br/>github"]
             write["developer<br/>frontend<br/>infra"]
             check["tester<br/>verifier"]
             advise["finops, finance<br/>gtm, context"]
@@ -122,6 +122,7 @@ agent that owns it and the evidence `agenfk verify` has to carry.
 | Agent | Role | Writes? | Model |
 |---|---|---|---|
 | `product` | Says where the project really is, cuts the goal to the smallest usable increment, breaks it into cards | No (creates cards in TODO) | inherit |
+| `scheduler` | Turns a long plan into a dependency graph and waves of cards that run together; recomputes the next wave when a card closes | Card descriptions only (a dependency block) | inherit |
 | `github` | Maps who is in which worktree and branch, plans parallel fronts over disjoint files, proposes the merge train | Worktree claims only | inherit |
 | `developer` | Turns exactly one card into code, on its own branch and worktree | Yes | inherit |
 | `frontend` | Interface, components, design systems, motion, visual pieces, with a measured quality floor | Yes | inherit |
@@ -203,6 +204,7 @@ Then open a project that has an AgenFK board and ask for something:
 | `session-context` | Context indicators for Claude Code, Codex and pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |
 | `clear-pickup` | Writes a handoff file from ground truth (git state plus session state) before a context clear, and reloads it afterwards |
 | `parallel-git` | One card = one branch = one worktree = one session; disjoint fronts; writer claims; merge train with squash and `rebase --onto` |
+| `parallel-plan` | The `Depends on` / `Touches` block on each card and `scripts/waves.py`, which turns a plan into waves of cards that run together, the critical path and the cards kept apart by a shared file |
 | `ci-cost` | Fewer CI minutes without loosening a gate: measure (billing API, per-job ceil, cancelled minutes), then cut in order of gain; PR mutation over the changed lines (`scripts/changed-ranges.mjs`, `scripts/mutation-since.sh`, Stryker) |
 | `design-reference` | One design method: direction before code, a verifiable quality floor, the patterns that give away AI-generated UI, motion with rules |
 | `vendor/canvas-design`, `vendor/algorithmic-art` | Third-party skills by Anthropic, Apache-2.0, redistributed unmodified (see [NOTICE](NOTICE)) |

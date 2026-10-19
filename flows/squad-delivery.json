@@ -7,7 +7,7 @@
     {
       "name": "TODO",
       "label": "To Do",
-      "exitCriteria": "Owner: the `product` agent (read-only). The card states the smallest increment a real user can use, lists acceptance criteria that can be checked by running something, names the files or areas it is expected to touch, and lists the cards it depends on. A card that does not fit in about 120k tokens of context is split before it leaves TODO. When two or more cards will run in parallel in the same repository, the `github` agent has delivered the map (session -> worktree -> branch -> card) and the fronts touch disjoint files. Evidence for `agenfk verify`: the acceptance criteria as written on the card and, for parallel work, the worktree path and branch of this card.",
+      "exitCriteria": "Owner: the `product` agent (read-only). The card states the smallest increment a real user can use, lists acceptance criteria that can be checked by running something, names the files or areas it is expected to touch, and lists the cards it depends on. A card that does not fit in about 120k tokens of context is split before it leaves TODO. When the plan has more than a handful of cards, the `scheduler` agent has recorded `Depends on` and `Touches` on each card and this card is in the current wave of `waves.py`. When two or more cards will run in parallel in the same repository, the `github` agent has delivered the map (session -> worktree -> branch -> card) and the fronts touch disjoint files. Evidence for `agenfk verify`: the acceptance criteria as written on the card and, for parallel work, the worktree path and branch of this card.",
       "order": 0,
       "isAnchor": true
     },

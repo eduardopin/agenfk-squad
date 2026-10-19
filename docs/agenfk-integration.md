@@ -50,7 +50,7 @@ in the format of the community registry. Its steps line up with the agents.
 
 | Step | Owner | AgenFK command | Evidence `agenfk verify` must carry |
 |---|---|---|---|
-| **TODO** | `product` (plus `github` for parallel work) | `agenfk create`, `agenfk verify` | Acceptance criteria as written on the card; for parallel work, the worktree path and branch |
+| **TODO** | `product` (plus `scheduler` and `github` for parallel work) | `agenfk create`, `agenfk update --description`, `agenfk verify` | Acceptance criteria as written on the card; for parallel work, the card's wave from `waves.py`, its worktree path and branch |
 | **IMPLEMENT** | `developer`, `frontend` or `infra` | `agenfk gatekeeper --item-id <id>` before editing | Branch, commit SHAs, the suite command and its result, anything left out |
 | **TEST** | `tester` | `agenfk gatekeeper`, `agenfk log-test` | Tests added, suite result, and for each new test the mutation that made it fail |
 | **REVIEW** | `verifier` | `agenfk comment` with the verdict | `SHIP`/`FIX_FIRST`/`REJECT`, the suite as run by the verifier, findings and their resolution |
@@ -146,7 +146,7 @@ project has active. The agents match on step **names**:
 
 | Step name in your flow | Agent |
 |---|---|
-| `TODO` | `product` |
+| `TODO` | `product`, then `scheduler` when the plan has more than a handful of cards |
 | `IMPLEMENT`, `IN_PROGRESS` | `developer` (or `frontend`, `infra`) |
 | `TEST` | `tester` |
 | `REVIEW`, `ADVERSARIAL`, `MUTATE`, `VERIFY` | `verifier` |

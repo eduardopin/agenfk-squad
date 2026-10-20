@@ -65,7 +65,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
      brief. Read the return handoff, check in git what actually got done and
      dispatch only what is MISSING, with a short brief, in a new sub-session. 1 redispatch.
    - **DISPATCH DENIED** (orchestrator context ≥ 600k, 40 sub-sessions in the
-     session, 3 sessions orchestrating at the same time, 7th reviewer on the same card):
+     session, memory 95% in use, 7th reviewer on the same card):
      do not work around it with another tool or another agent type, and do not
      repeat the dispatch. The denial says where the work continues; do what
      it says:

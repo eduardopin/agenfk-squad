@@ -168,13 +168,15 @@ what is missing, with a short brief, in a new sub-session. One redispatch.
 ## The dispatch brake
 
 Before any `Agent` or `Task` call from a main session, the watcher checks four
-ceilings:
+ceilings; the slot one is memory where it can be read, and the count elsewhere
+or wherever `SQUAD_MAX_ORCH` is set:
 
 | Ceiling | Variable | Default |
 |---|---|---|
 | Context of the orchestrator | `SQUAD_CTX_CEILING` | 600,000 |
 | Sub-sessions spawned by this session | `SQUAD_MAX_SUBS` | 40 |
-| Sessions orchestrating at the same time | `SQUAD_MAX_ORCH` | 3 |
+| Memory in use, which decides the orchestrator slots | `SQUAD_MEM_CEILING` | 95% |
+| Sessions orchestrating at the same time, where memory cannot be read or wherever `SQUAD_MAX_ORCH` is set | `SQUAD_MAX_ORCH` | 3 |
 | Reviewer dispatches for the same card | `SQUAD_MAX_REVIEWS` | 6 (the 7th is denied) |
 
 A session counts as orchestrating while it has a sub-session with activity in

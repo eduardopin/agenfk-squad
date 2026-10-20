@@ -34,6 +34,10 @@ def run(h, event, sid, transcript, extra=None, env=None):
     for key in list(e):
         if key.startswith("SQUAD_") or key.startswith("HERDR_"):
             del e[key]
+    # no memory reading by default: the slot tests below count orchestrators, the
+    # fallback, and none of them may depend on how loaded the machine running them is
+    e["SQUAD_MEMINFO"] = os.path.join(h, "no-meminfo")
+    e["SQUAD_CGROUP"] = os.path.join(h, "no-cgroup")
     e.update(env or {})
     return subprocess.run([sys.executable, HOOK], input=json.dumps(p), capture_output=True,
                           text=True, env=e).stdout.strip()
@@ -372,6 +376,134 @@ def test_notice_ahead_of_the_brake_only_for_whoever_orchestrates():
     remeasure()
     orchestrators(h, 3)
     assert "DISPATCH NOTICE" in remeasure()                      # the slot came back and went away again
+
+
+def meminfo(h, used_pct):
+    """A /proc/meminfo with this share of 10 GB in use, and the env that points at it."""
+    path = os.path.join(h, "meminfo")
+    avail = round(10_000_000 * (100 - used_pct) / 100)
+    with open(path, "w") as fh:
+        fh.write(f"MemTotal:       10000000 kB\nMemFree:          100000 kB\n"
+                 f"MemAvailable:   {avail} kB\nBuffers:          1000 kB\n")
+    return {"SQUAD_MEMINFO": path}
+
+
+def test_slots_follow_memory_not_a_fixed_count():
+    """With memory to spare, an eighth orchestrator gets its slot."""
+    h = home()
+    sid = "12345678-0010"
+    tr = session(h, sid, 300_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    orchestrators(h, 8)
+    assert "DISPATCH DENIED" not in dispatch(h, sid, tr, env=meminfo(h, 50))
+
+
+def test_memory_at_the_ceiling_leaves_no_slot():
+    h = home()
+    sid = "12345678-0011"
+    tr = session(h, sid, 300_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    out = dispatch(h, sid, tr, env=meminfo(h, 96))       # no other orchestrator at all
+    assert "DISPATCH DENIED" in out and "96%" in out and "95%" in out, out
+    assert "PLAN of the denied dispatch" in out, out     # the way forward is the same as for a full count
+
+
+def test_memory_ceiling_edges_and_override():
+    h = home()
+    sid = "12345678-0012"
+    tr = session(h, sid, 300_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    assert "DISPATCH DENIED" in dispatch(h, sid, tr, env=meminfo(h, 95))
+    h2 = home()
+    tr2 = session(h2, sid, 300_000, 0.0)
+    run(h2, "PostToolUse", sid, tr2)
+    assert "DISPATCH DENIED" not in dispatch(h2, sid, tr2, env=meminfo(h2, 94.9))
+    busy = dict(meminfo(h2, 80), SQUAD_MEM_CEILING="75")
+    assert "DISPATCH DENIED" in dispatch(h2, sid, tr2, env=busy)
+    for value in ("0", "-5", "101"):                     # meaningless: the default, never "deny all"
+        odd = dict(meminfo(h2, 80), SQUAD_MEM_CEILING=value)
+        assert "DISPATCH DENIED" not in dispatch(h2, sid, tr2, env=odd), value
+        odd = dict(meminfo(h2, 96), SQUAD_MEM_CEILING=value)   # ...and the default, 95, still holds
+        assert "DISPATCH DENIED" in dispatch(h2, sid, tr2, env=odd), value
+    assert "DISPATCH DENIED" not in dispatch(h2, sid, tr2, env=meminfo(h2, 94.96))   # never rounded up
+
+
+def test_light_session_gets_slot_free_when_memory_drops():
+    h = home()
+    sid = "12345678-0013"
+    tr = session(h, sid, 60_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    out = dispatch(h, sid, tr, env=meminfo(h, 97))
+    assert "RIGHT HERE" in out and "97%" in out, out
+    assert said(run(h, "PostToolUse", sid, tr, env=meminfo(h, 97))) == "nothing"
+    assert "SLOT FREE" in said(run(h, "PostToolUse", sid, tr, env=meminfo(h, 60)))
+
+
+def test_notice_ahead_of_the_brake_follows_memory():
+    h = home()
+    sid = "12345678-0015"
+    tr = session(h, sid, 300_000, 0.0)
+    run(h, "PostToolUse", sid, tr, env=meminfo(h, 50))
+    path = os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json")
+    def remeasure(pct):
+        st = state(h, sid)
+        st.update(checked=0, subs=2, calls=[])
+        with open(path, "w") as fh:
+            json.dump(st, fh)
+        return said(run(h, "PostToolUse", sid, tr, env=meminfo(h, pct)))
+    out = remeasure(97)
+    assert "DISPATCH NOTICE — no orchestrator slot is free (memory is 97%" in out, out
+    assert remeasure(97) == "nothing"                            # once per episode
+    remeasure(60)
+    assert "DISPATCH NOTICE" in remeasure(97)                    # re-arms after memory came back
+
+
+def test_an_explicit_orchestrator_cap_still_holds_with_memory_to_spare():
+    h = home()
+    sid = "12345678-0016"
+    tr = session(h, sid, 60_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    orchestrators(h, 2)
+    capped = dict(meminfo(h, 50), SQUAD_MAX_ORCH="2")
+    assert "RIGHT HERE" in dispatch(h, sid, tr, env=capped)
+    assert "DISPATCH DENIED" not in dispatch(h, sid, tr, env=meminfo(h, 50))
+
+
+def test_a_cgroup_memory_limit_wins_over_meminfo():
+    h = home()
+    sid = "12345678-0017"
+    tr = session(h, sid, 60_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    cg = os.path.join(h, "cgroup")
+    os.makedirs(cg)
+    for name, value in (("memory.max", "1000000"), ("memory.current", "970000")):
+        with open(os.path.join(cg, name), "w") as fh:
+            fh.write(value + "\n")
+    env = dict(meminfo(h, 10), SQUAD_CGROUP=cg)                # the host looks empty, the container is full
+    assert "97%" in dispatch(h, sid, tr, env=env)
+    with open(os.path.join(cg, "memory.stat"), "w") as fh:
+        fh.write("anon 300000\ninactive_file 600000\nactive_file 70000\n")
+    assert "DISPATCH DENIED" not in dispatch(h, sid, tr, env=env)   # page cache it can drop is not use
+    os.remove(os.path.join(cg, "memory.stat"))
+    with open(os.path.join(cg, "memory.max"), "w") as fh:
+        fh.write("max\n")                                        # no limit: the host's meminfo decides
+    assert "DISPATCH DENIED" not in dispatch(h, sid, tr, env=env)
+
+
+def test_unreadable_meminfo_falls_back_to_the_fixed_count():
+    h = home()
+    sid = "12345678-0014"
+    tr = session(h, sid, 60_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    bad = os.path.join(h, "bad-meminfo")
+    for text in ("", "MemTotal: 0 kB\nMemAvailable: 0 kB\n", "MemTotal: 100 kB\n", "garbage\n",
+                 "MemTotal: 100 kB\nMemAvailable: 200 kB\n"):
+        with open(bad, "w") as fh:
+            fh.write(text)
+        orchestrators(h, 2)
+        assert "DISPATCH DENIED" not in dispatch(h, sid, tr, env={"SQUAD_MEMINFO": bad}), text
+        orchestrators(h, 3)
+        assert "RIGHT HERE" in dispatch(h, sid, tr, env={"SQUAD_MEMINFO": bad}), text
 
 
 def test_sub_agent_return_is_not_the_owner_asking_to_stop():

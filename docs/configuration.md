@@ -7,7 +7,7 @@ the `env` block of `~/.claude/settings.json`:
 ```json
 {
   "env": {
-    "SQUAD_MAX_ORCH": "2",
+    "SQUAD_MEM_CEILING": "90",
     "SQUAD_WINDOW": "200000"
   }
 }
@@ -71,7 +71,10 @@ denial after 3 identical calls in a row.
 |---|---|---|
 | `SQUAD_CTX_CEILING` | 600,000 | Orchestrator context above which a new dispatch is denied and a handoff ordered |
 | `SQUAD_MAX_SUBS` | 40 | Sub-sessions one main session may spawn |
-| `SQUAD_MAX_ORCH` | 3 | Sessions that may orchestrate sub-agents at the same time, across the machine |
+| `SQUAD_MEM_CEILING` | 95 | Percent of memory in use (1 - MemAvailable/MemTotal) at which no orchestrator slot is left. Below it, any number of sessions may orchestrate at once. A value outside 1-100 means the default |
+| `SQUAD_MEMINFO` | `/proc/meminfo` | Where memory is read |
+| `SQUAD_CGROUP` | `/sys/fs/cgroup` | cgroup v2 directory. When its `memory.max` is a number (a container with a memory limit), `memory.current` minus `inactive_file` from `memory.stat`, over `memory.max`, is the share in use instead of `/proc/meminfo`, which shows the host |
+| `SQUAD_MAX_ORCH` | 3 | Sessions that may orchestrate sub-agents at the same time, across the machine. Applies where memory cannot be read (macOS, no `/proc`); when set in the environment it applies everywhere, next to the memory ceiling, as a cap on token spend |
 | `SQUAD_ORCH_HERE` | 120,000 | With no orchestrator slot: below this context the card is implemented in the session itself; at or above it, handoff with the plan |
 | `SQUAD_MAX_REVIEWS` | 6 | Reviewer dispatches allowed for the same card. The next one is denied |
 

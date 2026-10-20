@@ -102,8 +102,10 @@ has already burned. The numbers are in [watcher.md](watcher.md#the-handoff-arith
 
 The same budget applies to orchestration. Sub-agents are the largest single
 cost (64% in the sample week), so there is a cap on sub-sessions per session,
-on sessions orchestrating at once, and on the context of an orchestrator that
-wants to dispatch.
+on the context of an orchestrator that wants to dispatch, and on memory: no
+session dispatches once 95% of it is in use. The number of sessions orchestrating
+at once is not capped while memory can be read, so that cap no longer limits
+token spend; set `SQUAD_MAX_ORCH` to keep a count as well.
 
 *Enforced by:* `hooks/squad-watch.py` on `PostToolUse`, `PreToolUse` and `Stop`.
 

@@ -56,7 +56,15 @@ Thresholds, by environment variable:
   SQUAD_CTX_WARN (0) SQUAD_CTX_HANDOFF (0)  absolute thresholds in tokens, off by default
   SQUAD_CTX_CEILING (600000)    above this, dispatch denied and handoff ordered
   SQUAD_MAX_SUBS      (40)      sub-sessions per main session
-  SQUAD_MAX_ORCH      (3)       sessions orchestrating sub-agents at the same time
+  SQUAD_MEM_CEILING   (95)      % of memory in use (1 - MemAvailable/MemTotal) at which
+                                no orchestrator slot is left; below it, any number of
+                                sessions may orchestrate at once
+  SQUAD_MEMINFO       (/proc/meminfo)  where that is read; inside a cgroup with a
+  SQUAD_CGROUP        (/sys/fs/cgroup) memory limit, (memory.current - inactive_file)/memory.max wins
+  SQUAD_MAX_ORCH      (3)       sessions orchestrating sub-agents at the same time where
+                                memory cannot be read (macOS, no /proc); when set in the
+                                environment it applies everywhere, next to the memory
+                                ceiling
   SQUAD_ORCH_HERE     (120000)  no orchestrator slot: below this the card is done
                                 in the session itself; from here up, handoff with
                                 the plan and a new session
@@ -145,6 +153,11 @@ MAIN_CEIL = env_int("SQUAD_CTX_CEILING", 600_000)
 MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 80), 10), 100)       # % of the window at which the handoff goes out regardless
 MAX_SUBS = env_int("SQUAD_MAX_SUBS", 40)
 MAX_ORCH = env_int("SQUAD_MAX_ORCH", 3)
+MEM_CEIL = env_int("SQUAD_MEM_CEILING", 0)
+MEM_CEIL = MEM_CEIL if 0 < MEM_CEIL <= 100 else 95   # 0 or less would deny every dispatch: it means the default
+MEMINFO = os.environ.get("SQUAD_MEMINFO") or "/proc/meminfo"
+CGROUP = os.environ.get("SQUAD_CGROUP") or "/sys/fs/cgroup"
+ORCH_SET = bool(os.environ.get("SQUAD_MAX_ORCH"))   # an owner's own cap keeps holding, memory or not
 MAX_REV = env_int("SQUAD_MAX_REVIEWS", 6)
 ORCH_HERE = env_int("SQUAD_ORCH_HERE", 120_000)
 DISPATCH = {"Agent", "Task"}
@@ -468,6 +481,70 @@ def other_orchestrators(session):
     return len(live)
 
 
+def cgroup_used(folder=CGROUP):
+    """Share of a cgroup v2 memory limit in use, or None without a limit. Inside a
+    container /proc/meminfo shows the host, which would never fill up. The page
+    cache the kernel can drop (inactive_file) is subtracted, as docker stats and
+    the kubelet do: after a build the cgroup reads nearly full with room to spare."""
+    try:
+        with open(os.path.join(folder, "memory.max"), encoding="utf-8") as fh:
+            limit = fh.read().strip()
+        if limit == "max":
+            return None
+        with open(os.path.join(folder, "memory.current"), encoding="utf-8") as fh:
+            current = int(fh.read().strip())
+        limit = int(limit)
+    except (OSError, ValueError):
+        return None
+    inactive = 0
+    try:
+        with open(os.path.join(folder, "memory.stat"), encoding="utf-8") as fh:
+            for row in fh:
+                name, _, value = row.partition(" ")
+                if name == "inactive_file":
+                    inactive = int(value)
+                    break
+    except (OSError, ValueError):
+        inactive = 0
+    return 100.0 * max(current - inactive, 0) / limit if limit > 0 else None
+
+
+def memory_used(path=MEMINFO):
+    """Share of memory in use, in percent, or None when it cannot be read.
+    MemAvailable counts the page cache the kernel can drop, so it is the room a
+    new session really has; MemFree would read a healthy machine as full."""
+    limited = cgroup_used()
+    if limited is not None:
+        return limited
+    kb = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for row in fh:
+                name, _, rest = row.partition(":")
+                if name in ("MemTotal", "MemAvailable") and rest.split():
+                    kb[name] = int(rest.split()[0])
+    except (OSError, ValueError):
+        return None
+    total, avail = kb.get("MemTotal", 0), kb.get("MemAvailable")
+    if total <= 0 or avail is None or not 0 <= avail <= total:
+        return None                 # a malformed reading is not a healthy machine
+    return 100.0 * (1 - avail / total)
+
+
+def no_slot(session):
+    """Why there is no orchestrator slot, or None when there is one. Memory decides
+    where it can be read, because it is what a parallel session costs the machine
+    and a fixed count ignores how much is left. The count is the fallback where it
+    cannot be read."""
+    used = memory_used()
+    if used is not None and used >= MEM_CEIL:
+        return (f"memory is {round(used, 1):g}% in use (ceiling {MEM_CEIL}%) and one more "
+                "orchestrating session or sub-agent can push the machine into the OOM killer")
+    if (used is None or ORCH_SET) and other_orchestrators(session) >= MAX_ORCH:
+        return f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents right now"
+    return None
+
+
 def keep_brief(session, p):
     """Keeps the brief of the denied dispatch in full: it is the plan the session
     already wrote, and it cannot depend on the session rewriting it from memory
@@ -528,8 +605,7 @@ def pre_dispatch(p):
         handoff = True
         why = (f"this session has already dispatched {st['subs']} sub-sessions (ceiling {MAX_SUBS}). " + plan(
             "The new session, with the count reset, dispatches that plan.", brief))
-    elif other_orchestrators(session) >= MAX_ORCH:
-        cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents right now"
+    elif cap := no_slot(session):
         if review_key(p):
             st["wait_slot"] = True
             why = (f"{cap}, and a review is not something you do yourself (whoever writes does not approve). Carry on "
@@ -583,9 +659,10 @@ def dispatch_notice(session, st, ctx):
         st["ceil_warned"] = True
         out.append(f"[squad-watch] DISPATCH NOTICE — context {k(ctx)}, orchestrator ceiling "
                    f"{k(MAIN_CEIL)}. {tail}")
-    full = ctx >= ORCH_HERE and other_orchestrators(session) >= MAX_ORCH
+    cap = no_slot(session) if ctx >= ORCH_HERE else None
+    full = cap is not None
     if full and not st.get("orch_warned"):
-        out.append(f"[squad-watch] DISPATCH NOTICE — all {MAX_ORCH} orchestrator slots are taken "
+        out.append(f"[squad-watch] DISPATCH NOTICE — no orchestrator slot is free ({cap}) "
                    f"and this session is at {k(ctx)}. {tail} A reviewer waits for the SLOT FREE notice.")
     st["orch_warned"] = full
     return out
@@ -1056,7 +1133,7 @@ def post_tool(p):
                         st.pop(key, None)
                 st["ctx_level"] = 2 if st.get("ordered") else level   # a handoff already ordered does not disarm
                 out += dispatch_notice(session, st, ctx)
-    if not agent and st.get("wait_slot") and other_orchestrators(session) < MAX_ORCH:
+    if not agent and st.get("wait_slot") and no_slot(session) is None:
         st.pop("wait_slot")
         out.append("[squad-watch] SLOT FREE: there is an orchestrator slot again. The dispatch that was denied "
                    "for lack of a slot (the reviewer, or the next card) can now go through an agent.")

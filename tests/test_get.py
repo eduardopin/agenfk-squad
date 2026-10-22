@@ -282,7 +282,9 @@ def test_hooks_registered_by_hand_are_not_duplicated_and_are_removed():
     assert_ok(run(h))
     s = read_settings(h)
     assert squad_commands(s, "squad-watch.py", "PreToolUse") == ["python3 ~/.claude/hooks/squad-watch.py"]
-    assert s["hooks"]["PreToolUse"] == by_hand["hooks"]["PreToolUse"], "the user's own timeout is kept"
+    assert s["hooks"]["PreToolUse"][0] == by_hand["hooks"]["PreToolUse"][0], "the user's own timeout is kept"
+    # Hooks the hand-registered settings did not have still arrive, in their own groups.
+    assert all(g.get("matcher") != "*" for g in s["hooks"]["PreToolUse"][1:]), s["hooks"]["PreToolUse"]
     assert len(squad_commands(s, "squad-watch.py", "Stop")) == 1
     assert_ok(run(h, "--uninstall"))
     assert read_settings(h) == {}

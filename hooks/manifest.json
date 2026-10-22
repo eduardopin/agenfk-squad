@@ -16,6 +16,12 @@
       "script": "squad-watch.py",
       "timeout": 10,
       "events": ["UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStop", "Stop"]
+    },
+    {
+      "script": "squad-graph.py",
+      "timeout": 5,
+      "events": ["PreToolUse"],
+      "matchers": {"PreToolUse": "Bash|Grep|Read|Glob"}
     }
   ]
 }

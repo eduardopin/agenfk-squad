@@ -42,7 +42,7 @@ It links, into `${CLAUDE_CONFIG_DIR:-~/.claude}`:
 | `agents/<name>.md` | each file in `agents/` |
 | `skills/<name>` | each skill directory that has a `SKILL.md`, including those in `skills/vendor/` |
 | `CLAUDE.md` | `CLAUDE.md` |
-| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py` | the four files in `hooks/` |
+| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-graph.py` | the five scripts in `hooks/` |
 
 and, so that the merge queue can be called by name:
 
@@ -51,6 +51,13 @@ and, so that the merge queue can be called by name:
 | `~/.local/bin/squad-turn` | `hooks/squad-turn.py` |
 
 Make sure `~/.local/bin` is on your `PATH`.
+
+It also installs the graphify CLI that `squad-graph.py` calls, with
+`uv tool install graphifyy[terraform]==<version>`, the version being the one in
+`hooks/graphify.pin`. Without `uv`, or with `SQUAD_GRAPHIFY=0`, it prints `SKIPPED`
+with that command and carries on. It never runs `graphify install`, which would
+write an always-on block into `~/.claude/CLAUDE.md`. A graph is built per
+project, by hand: see `skills/graph-context/SKILL.md`.
 
 ### What it will not do
 
@@ -102,6 +109,12 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
         "hooks": [
           { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 10 }
         ]
+      },
+      {
+        "matcher": "Bash|Grep|Read|Glob",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-graph.py", "timeout": 5 }
+        ]
       }
     ],
     "PostToolUse": [
@@ -134,6 +147,7 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 |---|---|
 | `squad-router.py` | `UserPromptSubmit` |
 | `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `Stop` |
+| `squad-graph.py` | `PreToolUse`, matcher `Bash\|Grep\|Read\|Glob` |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
 them when needed.

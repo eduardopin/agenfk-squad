@@ -62,6 +62,26 @@ link "$SQUAD/hooks/squad-switch.py" "$CLAUDE/hooks/squad-switch.py" || rc=1
 link "$SQUAD/hooks/squad-turn.py" "$CLAUDE/hooks/squad-turn.py" || rc=1
 mkdir -p "$HOME/.local/bin"       # the merge queue is called by name: `squad-turn request`
 link "$SQUAD/hooks/squad-turn.py" "$HOME/.local/bin/squad-turn" || rc=1
+link "$SQUAD/hooks/squad-graph.py" "$CLAUDE/hooks/squad-graph.py" || rc=1
+
+# graphify, the code graph squad-graph.py hands searches and reads to. The CLI goes
+# in with uv at the version hooks/graphify.pin names. Never `graphify install`: it
+# writes an always-on block into ~/.claude/CLAUDE.md. Optional, so a missing uv or
+# a failed download never fails the install.
+pin="$( (sed -e 's/#.*//' -e 's/[[:space:]]//g' "$SQUAD/hooks/graphify.pin" 2>/dev/null || true) \
+       | (grep -v '^$' || true) | head -n 1)"
+graphify_cmd="uv tool install graphifyy[terraform]==$pin"
+if [ -z "$pin" ]; then
+  echo "WARNING graphify skipped: hooks/graphify.pin holds no version" >&2
+elif [ "${SQUAD_GRAPHIFY:-1}" = "0" ]; then
+  echo "SKIPPED graphify (SQUAD_GRAPHIFY=0). By hand: $graphify_cmd"
+elif ! command -v uv >/dev/null 2>&1; then
+  echo "SKIPPED graphify (uv is not on PATH). By hand: $graphify_cmd"
+elif uv tool install "graphifyy[terraform]==$pin" >/dev/null 2>&1; then
+  echo "ok      graphify $pin (uv tool)"
+else
+  echo "WARNING graphify $pin did not install. By hand: $graphify_cmd" >&2
+fi
 
 # oh-my-pi (omp) reads a different agent dialect at ~/.omp/agent/agents, and skips
 # .claude/agents on purpose. Render the agents into its contract; see
@@ -86,5 +106,6 @@ fi
 echo
 echo "New agents and skills only show up in sessions started after this step."
 echo "Hooks in settings.json (see docs/installation.md): squad-router.py on UserPromptSubmit;"
-echo "squad-watch.py on PreToolUse, PostToolUse, SubagentStop, Stop and UserPromptSubmit."
+echo "squad-watch.py on PreToolUse, PostToolUse, SubagentStop, Stop and UserPromptSubmit;"
+echo "squad-graph.py on PreToolUse for Bash|Grep|Read|Glob."
 exit $rc

@@ -554,8 +554,12 @@ def test_a_commit_that_changed_no_built_file_says_nothing_until_a_file_moves():
     assert e.run("Bash", sid="c").stdout == SEARCH_NUDGE
     # The index state is now remembered as clean, so the manifest is not read again:
     # without it a missing manifest would count as stale and say so here.
-    os.remove(os.path.join(e.root, "graphify-out", "manifest.json"))
+    manifest = os.path.join(e.root, "graphify-out", "manifest.json")
+    os.remove(manifest)
     assert e.run("Bash", sid="c").stdout == SEARCH_NUDGE
+    # The manifest comes back, so the moved file, not a missing manifest, decides.
+    with open(manifest, "w") as fh:
+        json.dump({"src/app.py": {"mtime": now - 900, "ast_hash": "h"}}, fh)
     os.utime(src, (now, now))                              # an edit after the build
     os.utime(os.path.join(e.root, ".git", "index"), (now + 5, now + 5))
     assert "graphify update ." in context(e.run("Bash", sid="c").stdout)

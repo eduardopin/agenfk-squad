@@ -74,7 +74,10 @@ def load_manifest(path):
             raise BadManifest(f'{path}: {h["script"]} has matchers for events it does not list: '
                               f'{", ".join(sorted(unknown))}')
         for event in h["events"]:
-            plan.setdefault(event, []).append((h["script"], h.get("timeout"), own.get(event, matchers.get(event))))
+            matcher = own.get(event, matchers.get(event))
+            if matcher is not None and not isinstance(matcher, str):
+                raise BadManifest(f'{path}: the matcher of {h["script"]} on {event} is not a string: {matcher!r}')
+            plan.setdefault(event, []).append((h["script"], h.get("timeout"), matcher))
     return plan, [h["script"] for h in m["hooks"]]
 
 
@@ -175,8 +178,13 @@ def install(settings, config, plan, report):
                     report.append(f"on      {script:<16} {event} (already registered)")
                 continue
             if not os.path.exists(os.path.join(config, "hooks", script)):
+                left = ""
+                if stale:                    # it would fail on every tool call it still matches
+                    drop(settings, event, script, config, matcher)
+                    changed = True
+                    left = "; its old registration was removed"
                 report.append(f"SKIPPED {script:<16} {event}: {os.path.join(config, 'hooks', script)} "
-                              "does not exist (did install.sh skip it?)")
+                              f"does not exist (did install.sh skip it?){left}")
                 continue
             if stale:
                 drop(settings, event, script, config, matcher)

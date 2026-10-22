@@ -68,6 +68,27 @@ def test_a_hook_matcher_wins_over_the_top_level_one_for_its_event_only():
     assert groups_of(settings, "Stop", "squad-watch.py", config) == [None], settings
 
 
+def test_a_hook_matcher_for_one_event_leaves_its_other_events_on_the_top_level_one():
+    mixed = {"script": "squad-graph.py", "timeout": 10, "events": ["PreToolUse", "PostToolUse"],
+             "matchers": {"PreToolUse": "Bash"}}
+    config = config_with("squad-graph.py")
+    settings = {}
+    run("install", settings, config, manifest([mixed], matchers={"PreToolUse": "*", "PostToolUse": "Edit"}))
+    assert groups_of(settings, "PreToolUse", "squad-graph.py", config) == ["Bash"], settings
+    assert groups_of(settings, "PostToolUse", "squad-graph.py", config) == ["Edit"], settings
+
+
+def test_a_hook_whose_link_is_missing_does_not_stay_on_its_old_broad_matcher():
+    config = config_with()                                  # install.sh left no link
+    old = {"type": "command", "command": ss.command_for(config, "squad-graph.py")}
+    mine = {"type": "command", "command": "echo mine"}
+    settings = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [old, mine]}]}}
+    changed, report = run("install", settings, config, manifest([GRAPH]))
+    assert changed, report
+    assert settings == {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [mine]}]}}, settings
+    assert any(line.startswith("SKIPPED") and "old registration was removed" in line for line in report), report
+
+
 def test_two_matchers_on_one_event_land_in_two_groups():
     config = config_with("squad-watch.py", "squad-graph.py")
     settings = {}
@@ -207,8 +228,12 @@ def test_uninstall_reaches_every_group_of_an_event():
 
 def test_a_malformed_hook_matcher_is_refused_before_anything_is_written():
     config = config_with("squad-graph.py")
-    for bad in ("Bash", ["PreToolUse"], {"PreTooluse": "Bash"}):
-        m = manifest([dict(GRAPH, matchers=bad)])
+    cases = [manifest([dict(GRAPH, matchers=bad)]) for bad in
+             ("Bash", ["PreToolUse"], {"PreTooluse": "Bash"}, {"PreToolUse": 5}, {"PreToolUse": ["Bash"]})]
+    cases.append(manifest([WATCH], matchers={"PreToolUse": 5}))          # the top-level value too
+    for m in cases:
+        with open(m) as fh:
+            bad = fh.read()
         try:
             ss.load_manifest(m)
         except ss.BadManifest:
@@ -217,6 +242,7 @@ def test_a_malformed_hook_matcher_is_refused_before_anything_is_written():
             raise AssertionError(f"{bad!r} was accepted")
         assert ss.main(["install", "--config", config, "--manifest", m]) == 2
         assert not os.path.exists(os.path.join(config, "settings.json"))
+
 
 if __name__ == "__main__":
     try:

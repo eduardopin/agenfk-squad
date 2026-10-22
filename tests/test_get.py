@@ -21,6 +21,9 @@ GET = os.path.join(ROOT, "get.sh")
 with open(os.path.join(ROOT, "hooks", "manifest.json")) as _fh:
     MANIFEST = json.load(_fh)
 WANTED = [(h["script"], e) for h in MANIFEST["hooks"] for e in h["events"]]
+# A hook's own matcher wins over the top-level one for that event.
+MATCHER = {(h["script"], e): h.get("matchers", {}).get(e, MANIFEST["matchers"].get(e))
+           for h in MANIFEST["hooks"] for e in h["events"]}
 
 TMP = tempfile.mkdtemp(prefix="get-")
 GITCONFIG = os.path.join(TMP, "gitconfig")       # no global git config of the machine's user
@@ -202,7 +205,7 @@ def assert_registered(h):
         groups = [g for g in s["hooks"].get(event, [])
                   for hk in g["hooks"] if shlex.split(hk["command"]) == exact]
         assert len(groups) == 1, (script, event, s["hooks"].get(event))
-        assert groups[0].get("matcher") == MANIFEST["matchers"].get(event), (event, groups[0])
+        assert groups[0].get("matcher") == MATCHER[(script, event)], (event, groups[0])
     return s
 
 
@@ -279,7 +282,9 @@ def test_hooks_registered_by_hand_are_not_duplicated_and_are_removed():
     assert_ok(run(h))
     s = read_settings(h)
     assert squad_commands(s, "squad-watch.py", "PreToolUse") == ["python3 ~/.claude/hooks/squad-watch.py"]
-    assert s["hooks"]["PreToolUse"] == by_hand["hooks"]["PreToolUse"], "the user's own timeout is kept"
+    assert s["hooks"]["PreToolUse"][0] == by_hand["hooks"]["PreToolUse"][0], "the user's own timeout is kept"
+    # Hooks the hand-registered settings did not have still arrive, in their own groups.
+    assert all(g.get("matcher") != "*" for g in s["hooks"]["PreToolUse"][1:]), s["hooks"]["PreToolUse"]
     assert len(squad_commands(s, "squad-watch.py", "Stop")) == 1
     assert_ok(run(h, "--uninstall"))
     assert read_settings(h) == {}

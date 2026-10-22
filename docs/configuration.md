@@ -92,6 +92,34 @@ denial after 3 identical calls in a row.
 | `HERDR_BIN_PATH` | `herdr` | The herdr binary |
 | `SQUAD_SWITCH_PROMPT` | `/clear-pickup pickup` | The command sent to the fresh session. Exists for testing |
 
+## The code graph
+
+`hooks/squad-graph.py` reads:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SQUAD_GRAPHIFY` | on | `0` turns the hook off: nothing is spawned, nothing is printed. At install time, `0` also skips installing the graphify CLI |
+| `CLAUDE_PROJECT_DIR` | set by Claude Code | Where the hook looks for the graph. Without it, the current directory |
+| `GRAPHIFY_OUT` | `graphify-out` | graphify's output directory, relative to the project, as graphify itself reads it |
+
+graphify runs from the hook without the variables it uses to choose a model
+(API keys, `AWS_*`, `OLLAMA_*`, `AZURE_OPENAI_*`) and with
+`GRAPHIFY_HOOK_STRICT=0`, and the hook prints only graphify's
+`additionalContext`, in an answer it builds itself, so no decision, rewritten
+input or stop gets through. `hook-guard` in 0.9.91 makes no model call. `HOME`
+and `PATH` are passed on, so a later release that did call out could still use a
+`claude` CLI on `PATH` or credentials under `$HOME`; a pin bump is where to check.
+graphify 0.9.91 does not read `GRAPHIFY_BACKEND`; the hook sets it to `none`
+anyway, for a later release that might. Fixed in the script: graphify gets 2 seconds, and the slow notice fires
+once when the p95 of its calls passes 500 ms over 20 or more calls. Per-session
+counters are in `~/.claude/squad/graph/<session>.json`, updated under a lock,
+and files there idle for more than 7 days are removed when a new session starts;
+`python3 ~/.claude/hooks/squad-graph.py --report <session>` prints them.
+
+The pin in `hooks/graphify.pin` fixes graphify itself, not its dependencies,
+which uv resolves at install time. The hook runs whichever `graphify` comes first
+on `PATH`.
+
 ## The session report
 
 `skills/session-context/scripts/session_context.py` reads the same variables

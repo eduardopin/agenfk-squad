@@ -10,12 +10,15 @@ agenfk-squad/
 │   ├── session-context/      the session report and the handoff arithmetic (scripts/session_context.py)
 │   ├── clear-pickup/         handoff (write) and pickup (read) across a context clear
 │   ├── parallel-git/         branches, worktrees, PR stacks, merge train
+│   ├── graph-context/        build and query the graphify code graph
 │   ├── design-reference/     the design method and quality floor used by `frontend`
 │   └── vendor/               third-party skills, Apache-2.0, unmodified
 ├── hooks/
 │   ├── squad-router.py       UserPromptSubmit: suggests the agent for the request
 │   ├── squad-watch.py        the watcher: five hook events
 │   ├── squad-switch.py       detached: clears the pane and calls the pickup
+│   ├── squad-graph.py        PreToolUse on Bash|Grep|Read|Glob: hands the call to `graphify hook-guard`
+│   ├── graphify.pin          the graphify release install.sh installs
 │   └── squad-turn.py         the merge queue CLI (`squad-turn`)
 ├── flows/squad-delivery.json the AgenFK flow whose steps match the agents
 ├── tests/test_watch.py       the suite
@@ -87,6 +90,7 @@ stdin. The watcher is one script that looks at `hook_event_name` and branches.
 | `UserPromptSubmit` | The owner sends a prompt | `squad-router.py` | No. Prints a routing hint as context |
 | `UserPromptSubmit` | The owner sends a prompt | `squad-watch.py` | No. Delivers pending notes (a sub-session ended badly, `SLOT FREE`, `MERGE TURN`) |
 | `PreToolUse` | Before any tool call | `squad-watch.py` | Yes. Returns `permissionDecision: deny` with the reason |
+| `PreToolUse` | Before a Bash, Grep, Read or Glob call | `squad-graph.py` | No. When the project has a graphify graph, adds graphify's nudge toward `graphify query`, and the stale and slow notices |
 | `PostToolUse` | After any tool call | `squad-watch.py` | No. Adds context: warnings, `PROACTIVE HANDOFF` |
 | `SubagentStop` | A sub-session ends | `squad-watch.py` | No. Records metrics, leaves a note for the parent |
 | `Stop` | The main session ends its turn | `squad-watch.py` | Yes. Returns `decision: block` when a handoff is owed |

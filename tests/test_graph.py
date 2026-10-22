@@ -534,6 +534,53 @@ def test_a_state_file_of_the_wrong_shape_is_repaired_not_obeyed():
     assert rep["search"] == 1 and rep["read"] == 0 and rep["nudged"] == 1, rep
 
 
+def manifest_env():
+    """A stale_env whose graph came with graphify's manifest.json over one source file."""
+    e, now = stale_env()
+    src = os.path.join(e.root, "src", "app.py")
+    os.makedirs(os.path.dirname(src))
+    with open(src, "w") as fh:
+        fh.write("x = 1\n")
+    os.utime(src, (now - 900, now - 900))
+    with open(os.path.join(e.root, "graphify-out", "manifest.json"), "w") as fh:
+        json.dump({"src/app.py": {"mtime": now - 900, "ast_hash": "h"}}, fh)
+    e.git_index(now)
+    return e, now, src
+
+
+def test_a_commit_that_changed_no_built_file_says_nothing_until_a_file_moves():
+    # The index moved (a commit), the file the graph was built from did not.
+    e, now, src = manifest_env()
+    assert e.run("Bash", sid="c").stdout == SEARCH_NUDGE
+    assert e.run("Bash", sid="c").stdout == SEARCH_NUDGE
+    os.utime(src, (now, now))                              # an edit after the build
+    os.utime(os.path.join(e.root, ".git", "index"), (now + 5, now + 5))
+    assert "graphify update ." in context(e.run("Bash", sid="c").stdout)
+
+
+def test_a_built_file_that_is_gone_makes_the_graph_stale():
+    e, now, src = manifest_env()
+    os.remove(src)
+    assert "graphify update ." in context(e.run("Bash", sid="g").stdout)
+
+
+def test_state_of_sessions_idle_for_a_week_is_removed_when_a_session_starts():
+    e = Env()
+    e.run("Bash", sid="old")
+    e.run("Bash", sid="recent")
+    state = os.path.join(e.home, ".claude", "squad", "graph")
+    week = time.time() - 8 * 86400
+    for name in ("old.json", "old.json.lock", "recent.json"):
+        if name.startswith("old"):
+            os.utime(os.path.join(state, name), (week, week))
+    e.run("Bash", sid="recent")                            # an existing session: no sweep
+    assert os.path.exists(os.path.join(state, "old.json"))
+    e.run("Bash", sid="new")                               # a new session sweeps
+    left = sorted(os.listdir(state))
+    assert "old.json" not in left and "old.json.lock" not in left, left
+    assert "recent.json" in left and "new.json" in left, left
+
+
 def test_report_of_an_unknown_session_is_all_zero():
     rep = Env().report("never-seen")
     assert {k: rep.get(k) for k in ("search", "read", "nudged", "no-graph", "skipped")} == \

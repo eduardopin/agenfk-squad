@@ -17,11 +17,13 @@ controls the squad needs around a third-party hook:
   - without a graph, graphify is not started at all;
   - fail open: graphify missing, failing, slower than 2 s or printing anything
     that is not a PreToolUse answer leaves the tool call alone;
-  - once per session, a notice when .git/index is newer than graph.json (the
-    graph may describe code that changed) and one when the p95 of graphify's
-    calls passes 500 ms over 20 or more calls.
+  - once per session, a notice when a file the graph was built from changed or
+    went away since (graphify's manifest.json records each file's mtime; the
+    check runs only after .git/index moved past graph.json), and one when the
+    p95 of graphify's calls passes 500 ms over 20 or more calls.
 
-Counters per session live in ~/.claude/squad/graph/<session>.json:
+Counters per session live in ~/.claude/squad/graph/<session>.json, and files
+there older than 7 days are removed when a new session starts:
 
     python3 hooks/squad-graph.py --report <session>
 
@@ -46,6 +48,7 @@ TIMEOUT = 2            # seconds graphify gets; the hook itself has 5 in the man
 SLOW_MS = 500          # p95 above this raises the latency notice
 SLOW_MIN = 20          # calls measured before the p95 means anything
 KEEP_MS = 200          # most recent durations kept
+KEEP_DAYS = 7          # state of sessions idle longer than this is removed
 # What graphify 0.9.91's llm.backend_detection_env_vars() lists, by family. None
 # of it reaches the child. hook-guard makes no model call today; this keeps a
 # later release from finding credentials, it does not make one impossible.
@@ -75,7 +78,23 @@ def load(session):
     st["ms"] = [x for x in old.get("ms") or [] if isinstance(x, (int, float))] \
         if isinstance(old.get("ms"), list) else []
     st["said"] = [x for x in old["said"] if isinstance(x, str)] if isinstance(old.get("said"), list) else []
+    if isinstance(old.get("checked_index"), (int, float)) and not isinstance(old["checked_index"], bool):
+        st["checked_index"] = old["checked_index"]
     return st
+
+
+def prune(keep):
+    """Removes state and lock files untouched for KEEP_DAYS, except this session's."""
+    cutoff = time.time() - KEEP_DAYS * 86400
+    with os.scandir(STATE) as entries:
+        for e in entries:
+            if e.name.startswith(keep) or not e.name.endswith((".json", ".lock")):
+                continue
+            try:
+                if e.stat().st_mtime < cutoff:
+                    os.unlink(e.path)
+            except OSError:
+                pass
 
 
 def update(session, change):
@@ -84,6 +103,8 @@ def update(session, change):
     Returns what change() returns."""
     path = state_path(session)
     os.makedirs(STATE, exist_ok=True)
+    if not os.path.exists(path):          # once per session, off the hot path
+        prune(os.path.basename(path)[:-len(".json")] + ".")
     with open(path + ".lock", "a") as lock:
         if fcntl:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -109,12 +130,48 @@ def git_index(root):
     return os.path.join(dot, "index")
 
 
-def stale(root, graph):
+def index_mtime(root):
     try:
         index = git_index(root)
-        return bool(index) and os.stat(index).st_mtime > os.stat(graph).st_mtime
+        return os.stat(index).st_mtime if index else None
     except OSError:
-        return False
+        return None
+
+
+def changed_since_build(root, graph):
+    """True when a file graphify's manifest.json lists has another mtime now, or is
+    gone; True as well when there is no readable manifest to tell."""
+    try:
+        with open(os.path.join(os.path.dirname(graph), "manifest.json"), encoding="utf-8") as fh:
+            files = json.load(fh)
+    except (OSError, ValueError):
+        return True
+    if not isinstance(files, dict):
+        return True
+    for rel, rec in files.items():
+        try:
+            if os.stat(os.path.join(root, rel)).st_mtime != rec["mtime"]:
+                return True
+        except (OSError, TypeError, KeyError):
+            return True
+    return False
+
+
+def stale(root, graph, checked):
+    """(is the graph stale, the index mtime to remember as checked clean).
+
+    A commit moves .git/index without changing a file, so the index only says
+    when to look; the manifest says whether anything moved. An index state
+    already found clean is not checked again."""
+    index = index_mtime(root)
+    try:
+        if index is None or index <= os.stat(graph).st_mtime or index == checked:
+            return False, None
+    except OSError:
+        return False, None
+    if changed_since_build(root, graph):
+        return True, None
+    return False, index
 
 
 def p95(ms):
@@ -176,7 +233,11 @@ def run(raw):
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         failed = True
     elapsed = (time.monotonic() - start) * 1000
-    is_stale = not failed and stale(root, graph)
+    before = load(session)
+    if failed or "stale" in before["said"]:
+        is_stale, clean_index = False, None
+    else:
+        is_stale, clean_index = stale(root, graph, before.get("checked_index"))
 
     def record(st):
         st[kind] += 1
@@ -188,6 +249,8 @@ def run(raw):
         if text:
             st["nudged"] += 1
         notes = []
+        if clean_index is not None:
+            st["checked_index"] = clean_index
         if "stale" not in st["said"] and is_stale:
             st["said"].append("stale")
             notes.append("[squad-graph] The code graph is older than the last git change here, so it may "

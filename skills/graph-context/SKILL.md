@@ -61,9 +61,10 @@ claim still cites the file and line it came from.
 The `squad-graph` hook can add two lines to a Bash, Grep, Read or Glob call,
 each once per session:
 
-- **stale**: `.git/index` is newer than `graph.json`, so the graph may describe
-  code that has moved. Run `graphify update .` before relying on it; until then
-  read the file directly.
+- **stale**: a file the graph was built from has changed or is gone since the
+  build (graphify's `manifest.json` records each file's mtime). Run
+  `graphify update .` before relying on it; until then read the file directly.
+  A commit that changed no built file says nothing.
 - **slow**: graphify's hook took more than 500 ms at p95 over 20 or more calls.
   The work is not blocked, only slower. `SQUAD_GRAPHIFY=0` in the environment
   turns the hook off without uninstalling anything.

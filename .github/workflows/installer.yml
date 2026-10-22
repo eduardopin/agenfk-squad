@@ -13,6 +13,9 @@ on:
       - hooks/manifest.json
       - tests/test_get.py
       - tests/test_squad_settings.py
+      - tests/test_install_graph.py
+      - hooks/graphify.pin
+      - hooks/squad-graph.py
       - .github/workflows/installer.yml
   pull_request:
     paths:
@@ -22,6 +25,9 @@ on:
       - hooks/manifest.json
       - tests/test_get.py
       - tests/test_squad_settings.py
+      - tests/test_install_graph.py
+      - hooks/graphify.pin
+      - hooks/squad-graph.py
       - .github/workflows/installer.yml
 
 permissions:
@@ -53,3 +59,5 @@ jobs:
         run: python tests/test_get.py
       - name: Settings writer unit tests (per-hook matchers)
         run: python tests/test_squad_settings.py
+      - name: graphify install step (fake uv, pin file, never graphify install)
+        run: python tests/test_install_graph.py

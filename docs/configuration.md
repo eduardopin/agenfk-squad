@@ -103,13 +103,17 @@ denial after 3 identical calls in a row.
 | `GRAPHIFY_OUT` | `graphify-out` | graphify's output directory, relative to the project, as graphify itself reads it |
 
 graphify runs from the hook without the variables it uses to choose a model
-(API keys, `AWS_*`, `OLLAMA_*`, `AZURE_OPENAI_*`), with `GRAPHIFY_HOOK_STRICT=0`,
-and any `permissionDecision` in its answer is dropped, so the hook can neither
-reach a model nor block a call. graphify 0.9.91 does not read
-`GRAPHIFY_BACKEND`; the hook sets it to `none` anyway, for a later release that
-might. Fixed in the script: graphify gets 2 seconds, and the slow notice fires
+(API keys, `AWS_*`, `OLLAMA_*`, `AZURE_OPENAI_*`) and with
+`GRAPHIFY_HOOK_STRICT=0`, and the hook prints only graphify's
+`additionalContext`, in an answer it builds itself, so no decision, rewritten
+input or stop gets through. `hook-guard` in 0.9.91 makes no model call. `HOME`
+and `PATH` are passed on, so a later release that did call out could still use a
+`claude` CLI on `PATH` or credentials under `$HOME`; a pin bump is where to check.
+graphify 0.9.91 does not read `GRAPHIFY_BACKEND`; the hook sets it to `none`
+anyway, for a later release that might. Fixed in the script: graphify gets 2 seconds, and the slow notice fires
 once when the p95 of its calls passes 500 ms over 20 or more calls. Per-session
-counters are in `~/.claude/squad/graph/<session>.json`, updated under a lock;
+counters are in `~/.claude/squad/graph/<session>.json`, updated under a lock,
+and files there idle for more than 7 days are removed when a new session starts;
 `python3 ~/.claude/hooks/squad-graph.py --report <session>` prints them.
 
 The pin in `hooks/graphify.pin` fixes graphify itself, not its dependencies,

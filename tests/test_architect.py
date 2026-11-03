@@ -5,6 +5,7 @@ Standard library only. Run: python3 tests/test_architect.py
 """
 
 import copy
+import io
 import os
 import json
 import re
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +23,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.dont_write_bytecode = True
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"  # subprocesses inherit it
 
-from plan import build_plan, path_overlap, render_text  # noqa: E402
+from plan import build_plan, path_overlap, render_text, utf8_stdout  # noqa: E402
 from delivery_map import build_delivery_map, render_markdown  # noqa: E402
 from handoff import build_handoff  # noqa: E402
 
@@ -184,7 +186,7 @@ class PlannerBehavior(unittest.TestCase):
             path = Path(directory) / "bad.json"
             for content in ["{broken", '{"project":"a","project":"b"}', '{"max_workers":NaN}']:
                 path.write_text(content, encoding="utf-8")
-                completed = subprocess.run([sys.executable, "-B", str(script), str(path), "--json"], capture_output=True, text=True, check=False)
+                completed = subprocess.run([sys.executable, "-B", str(script), str(path), "--json"], capture_output=True, text=True, encoding="utf-8", check=False)
                 self.assertEqual(completed.returncode, 2)
                 self.assertTrue(json.loads(completed.stdout)["errors"])
                 self.assertEqual(path.read_text(encoding="utf-8"), content)
@@ -226,6 +228,15 @@ class PlannerBehavior(unittest.TestCase):
         for character in ["\u200d", "\u200c"]:
             result = build_plan(plan(task("A", title="Family" + character + "plan")))
             self.assertTrue(result["valid"], repr(character))
+
+    def test_utf8_stdout_reconfigures_a_cp1252_stream(self):
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
+        with mock.patch.object(sys, "stdout", stream):
+            utf8_stdout()
+            print("Booking → room")
+            sys.stdout.flush()
+        self.assertEqual(raw.getvalue(), "Booking → room\n".encode("utf-8"))
 
     def test_text_output_keeps_exact_minutes(self):
         self.assertIn("0-1234567 min", render_text(build_plan(plan(task("A", estimate_minutes=1234567)))))
@@ -462,7 +473,7 @@ class DeliveryMapBehavior(unittest.TestCase):
             plan_path.write_text(originals[0], encoding="utf-8")
             ledger_path.write_text(originals[1], encoding="utf-8")
             completed = subprocess.run([sys.executable, "-B", str(SCRIPTS / "delivery_map.py"),
-                                        str(plan_path), str(ledger_path), "--json"], capture_output=True, text=True, check=False)
+                                        str(plan_path), str(ledger_path), "--json"], capture_output=True, text=True, encoding="utf-8", check=False)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertTrue(json.loads(completed.stdout)["valid"])
             self.assertEqual(completed.stderr, "")
@@ -509,11 +520,15 @@ class DeliveryMapBehavior(unittest.TestCase):
             ledger_path = Path(directory) / "resources.json"
             plan_path.write_text(json.dumps(data), encoding="utf-8")
             ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
-            completed = subprocess.run([sys.executable, "-I", "-B", str(SCRIPTS / "delivery_map.py"),
-                                        str(plan_path), str(ledger_path)],
-                                       capture_output=True, check=False, env={"PYTHONIOENCODING": "cp1252"})
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn("Resources → PRs", completed.stdout.decode("utf-8"))
+            arguments = [str(SCRIPTS / "delivery_map.py"), str(plan_path), str(ledger_path)]
+            # -I ignores PYTHONIOENCODING, so isolated mode and the cp1252 stdout are two runs.
+            isolated = subprocess.run([sys.executable, "-I", "-B", *arguments], capture_output=True, check=False)
+            self.assertEqual(isolated.returncode, 0, isolated.stderr)
+            self.assertIn("Resources → PRs", isolated.stdout.decode("utf-8"))
+            cp1252 = subprocess.run([sys.executable, "-B", *arguments], capture_output=True, check=False,
+                                    env=dict(os.environ, PYTHONIOENCODING="cp1252"))
+            self.assertEqual(cp1252.returncode, 0, cp1252.stderr)
+            self.assertIn("Resources → PRs", cp1252.stdout.decode("utf-8"))
 
     def test_pt_br_renders_the_portuguese_map(self):
         data, ledger = fixture()
@@ -607,14 +622,14 @@ class HandoffBehavior(unittest.TestCase):
             data = plan(task("A", acceptance=[f"$(touch {sentinel})"], produces=[str(sentinel)]))
             original = json.dumps(data)
             source.write_text(original, encoding="utf-8")
-            completed = subprocess.run([sys.executable, "-B", str(script), str(source), "A"], capture_output=True, text=True, check=False)
+            completed = subprocess.run([sys.executable, "-B", str(script), str(source), "A"], capture_output=True, text=True, encoding="utf-8", check=False)
             self.assertEqual(completed.returncode, 0)
             self.assertEqual(completed.stderr, "")
             self.assertEqual(len(completed.stdout.splitlines()), 1)
             self.assertTrue(json.loads(completed.stdout)["valid"])
             self.assertFalse(sentinel.exists())
             self.assertEqual(source.read_text(encoding="utf-8"), original)
-            rejected = subprocess.run([sys.executable, "-B", str(script), str(source), "NOPE"], capture_output=True, text=True, check=False)
+            rejected = subprocess.run([sys.executable, "-B", str(script), str(source), "NOPE"], capture_output=True, text=True, encoding="utf-8", check=False)
             self.assertEqual(rejected.returncode, 2)
             self.assertEqual(rejected.stderr, "")
             self.assertFalse(json.loads(rejected.stdout)["valid"])
@@ -626,9 +641,14 @@ class HandoffBehavior(unittest.TestCase):
             source = Path(directory) / "plan.json"
             source.write_text(json.dumps(plan(task("A", title="Booking → room"))), encoding="utf-8")
             completed = subprocess.run([sys.executable, "-I", "-B", str(script), str(source), "A"],
-                                       capture_output=True, check=False, env={"PYTHONIOENCODING": "cp1252"})
+                                       capture_output=True, check=False)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertTrue(json.loads(completed.stdout.decode("utf-8"))["valid"])
+            # -I ignores PYTHONIOENCODING; a separate run proves the arrow survives a cp1252 stdout.
+            cp1252 = subprocess.run([sys.executable, "-B", str(script), str(source), "A"], capture_output=True,
+                                    check=False, env=dict(os.environ, PYTHONIOENCODING="cp1252"))
+            self.assertEqual(cp1252.returncode, 0, cp1252.stderr)
+            self.assertIn("Booking → room", cp1252.stdout.decode("utf-8"))
 
 
 # Private strings must never ship in the public repository. Built from pieces so
@@ -686,7 +706,7 @@ class PackageLayout(unittest.TestCase):
         # Ask git, not the working tree: a local py_compile leaves __pycache__ behind
         # and that is fine as long as it is not tracked or staged.
         done = subprocess.run(["git", "ls-files", "--", "skills/architect"], cwd=ROOT,
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8")
         if done.returncode != 0:
             self.skipTest("not a git checkout")
         bad = [f for f in done.stdout.splitlines() if "__pycache__" in f or f.endswith((".pyc", ".pyo"))]
@@ -701,7 +721,7 @@ class ScriptCli(unittest.TestCase):
     def test_each_script_answers_help(self):
         for name in ("plan.py", "delivery_map.py", "handoff.py"):
             done = subprocess.run([sys.executable, "-I", "-B", str(SCRIPTS / name), "--help"],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(done.returncode, 0, name)
             self.assertIn("usage", done.stdout.lower(), name)
 
@@ -721,21 +741,21 @@ class ScriptCli(unittest.TestCase):
         plan_json = assets / "app-bootstrap.plan.json"
         ledger = assets / "app-bootstrap.resources.json"
         done = subprocess.run([sys.executable, "-I", "-B", str(SCRIPTS / "plan.py"), str(plan_json), "--json"],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(json.loads(done.stdout)["valid"])
         done = subprocess.run([sys.executable, "-I", "-B", str(SCRIPTS / "delivery_map.py"),
-                               str(plan_json), str(ledger), "--json"], capture_output=True, text=True)
+                               str(plan_json), str(ledger), "--json"], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(json.loads(done.stdout)["valid"])
         done = subprocess.run([sys.executable, "-I", "-B", str(SCRIPTS / "delivery_map.py"),
-                               str(plan_json), str(ledger)], capture_output=True, text=True)
+                               str(plan_json), str(ledger)], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(done.stdout.startswith("# Delivery map"))
 
     def test_plan_example_json_is_a_valid_plan(self):
         done = subprocess.run([sys.executable, "-I", "-B", str(SCRIPTS / "plan.py"),
-                               str(SKILL / "assets" / "plan.example.json"), "--json"], capture_output=True, text=True)
+                               str(SKILL / "assets" / "plan.example.json"), "--json"], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertTrue(json.loads(done.stdout)["valid"])
 

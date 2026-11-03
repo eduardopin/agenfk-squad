@@ -314,15 +314,19 @@ async function interact(actor, cmd, args, flags, fn) {
   let target = null;
   let error = null;
   let detail = null;
-  let secret = !!flags.secret;
+  // Typed text stays hidden until fill/type classify the field as not secret, before acting on it: an action that
+  // fails, or a ref that never resolves, must not put the value in the trace or take the automatic screenshot.
+  const field = { secret: !!flags.secret || cmd === "fill" || cmd === "type" };
   try {
-    const r = await fn(page);
+    const r = await fn(page, field);
     target = r?.target ?? null;
     detail = r?.detail ?? null;
-    secret ||= !!r?.secret;
   } catch (e) {
     error = e;
   }
+  const secret = field.secret;
+  const typed = secret && (cmd === "fill" || cmd === "type") ? String(args[1] ?? "") : "";
+  const errMessage = error ? (typed ? error.message.split(typed).join("[hidden]") : error.message).split("\n")[0] : "";
   const notCounted = error && ["bad_ref", "stale_ref", "no_snapshot", "bad_args", "no_dialog"].includes(error.code);
   // Observer/coordinator interactions are interventions recorded in the trace, not the actor's budget.
   if (!notCounted && (flags.as ?? "actor") === "actor") actor.actions++;
@@ -346,11 +350,11 @@ async function interact(actor, cmd, args, flags, fn) {
   const urlAfter = active.isClosed() ? null : maskUrl(active.url());
   trace({
     actor_id: actor.id, as: flags.as ?? "actor", via: flags.via ?? "direct", cmd, args: sanitizeArgs(cmd, args, secret), target,
-    ok: !error, error: error ? { code: error.code ?? "action_failed", message: error.message.split("\n")[0].slice(0, 300) } : null,
+    ok: !error, error: error ? { code: error.code ?? "action_failed", message: errMessage.slice(0, 300) } : null,
     url_before: urlBefore, url_after: urlAfter, evidence_ids: evidenceIds, actions_used: actor.actions, duration_ms: Date.now() - started,
   });
   const head = `${error ? "ERROR" : "ok"} ${cmd}${target ? ` ${target}` : ""}${detail ? ` — ${detail}` : ""} · actions ${actor.actions}/${actor.maxActions}${urlAfter && urlAfter !== urlBefore ? ` · url ${urlAfter}` : ""}`;
-  const errLine = error ? `\n${error.code ? `[${error.code}] ` : ""}${error.message.split("\n")[0].slice(0, 400)}` : "";
+  const errLine = error ? `\n${error.code ? `[${error.code}] ` : ""}${errMessage.slice(0, 400)}` : "";
   return { ok: !error, text: `${head}${errLine}${evidenceIds.length ? `\n# evidence ${evidenceIds.join(", ")}` : ""}${snap ? `\n${snap.text}` : ""}`, evidence: evidenceIds, code: error?.code };
 }
 
@@ -368,7 +372,7 @@ const describe = (ref, meta) => `${ref} ${meta.role}${meta.name ? ` ${JSON.strin
 async function withRef(actor, ref, fn) {
   const r = await resolveRef(actor, ref);
   const out = await fn(r.handle, r);
-  if (out && typeof out === "object") return { target: describe(ref, r.meta), detail: out.detail ?? null, secret: !!out.secret };
+  if (out && typeof out === "object") return { target: describe(ref, r.meta), detail: out.detail ?? null };
   return { target: describe(ref, r.meta), detail: out ?? null };
 }
 
@@ -396,16 +400,14 @@ const commands = {
   hover: (a, [ref], f) => interact(a, "hover", [ref], f, () => withRef(a, ref, (h) => h.hover({ timeout: 8000 }))),
   check: (a, [ref], f) => interact(a, "check", [ref], f, () => withRef(a, ref, (h) => h.check({ timeout: 8000 }))),
   uncheck: (a, [ref], f) => interact(a, "uncheck", [ref], f, () => withRef(a, ref, (h) => h.uncheck({ timeout: 8000 }))),
-  fill: (a, [ref, ...rest], f) => interact(a, "fill", [ref, rest.join(" ")], f, () => withRef(a, ref, async (h) => {
-    const secret = await markSecret(h, f.secret);
+  fill: (a, [ref, ...rest], f) => interact(a, "fill", [ref, rest.join(" ")], f, (_page, field) => withRef(a, ref, async (h) => {
+    field.secret = await markSecret(h, f.secret);
     await h.fill(rest.join(" "), { timeout: 8000 });
-    return { secret };
   })),
-  type: (a, [ref, ...rest], f) => interact(a, "type", [ref, rest.join(" ")], f, () => withRef(a, ref, async (h) => {
-    const secret = await markSecret(h, f.secret);
+  type: (a, [ref, ...rest], f) => interact(a, "type", [ref, rest.join(" ")], f, (_page, field) => withRef(a, ref, async (h) => {
+    field.secret = await markSecret(h, f.secret);
     await h.focus();
     await a.page.keyboard.type(rest.join(" "), { delay: Number(f.delay ?? 25) });
-    return { secret };
   })),
   select: (a, [ref, ...values], f) => interact(a, "select", [ref, ...values], f, () => withRef(a, ref, async (h) => {
     const chosen = await h.selectOption(values.map((v) => v), { timeout: 8000 }).catch(async () => h.selectOption(values.map((label) => ({ label })), { timeout: 8000 }));

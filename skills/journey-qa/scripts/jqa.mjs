@@ -364,8 +364,10 @@ async function cmdCheckpoint({ flags }) {
   return 0;
 }
 
-// The only command that reaches the network: npm installs playwright-core (and, with --chromium, the
+// The only command that downloads anything: npm installs playwright-core (and, with --chromium, the
 // Playwright Chromium build) into the per-user runtime, never into the skill folder or the project.
+// It is not the only one on the network: the browser commands load the product and `actor spawn --exec` starts a
+// host that calls its model API.
 async function cmdSetup({ flags }) {
   const { runtimeDir } = await import("./lib/driver/playwright.mjs");
   const dir = runtimeDir();

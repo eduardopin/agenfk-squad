@@ -40,7 +40,7 @@ jqa browser actor add qa --role observer        # optional: the observer's own a
 jqa browser handshake --actor comprador --url https://staging.example.com/
 ```
 
-- **Allowlist:** main-page navigation outside the authorized origins is aborted and recorded. Include the journey's legitimate origins (external login, hosted checkout). Third-party subresources and iframes are not blocked.
+- **Allowlist:** main-page navigation outside the authorized origins is aborted and recorded. `data:` and `blob:` URLs (and `about:blank`) carry no origin to check and are let through, so a page the product builds that way is not blocked. Include the journey's legitimate origins (external login, hosted checkout). Third-party subresources and iframes are not blocked.
 - **Context per actor:** each `actor add` creates its own BrowserContext (separate cookies, storage and cache). The second actor generates isolation evidence automatically.
 - **Handshake:** exercises observation (DOM and screenshot), click, typing, keyboard, wait, held key and evidence capture on a self-test page of the driver itself; with `--url`, it opens the target. Writes `session-binding.json` with `status: verified` and `proof_ref` for each proven capability. `jqa validate session-binding.json` checks the contract.
 - **User's Chrome:** `--cdp http://127.0.0.1:9222` connects to a Chrome that the user started with remote debugging. Never enable debugging, install an extension or open a port on your own. New contexts via CDP remain isolated from the personal profile.

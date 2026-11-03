@@ -21,7 +21,7 @@ This skill is a task instruction under the host and the user's authorization. Co
 
 Everything runs through `node <this skill's folder>/scripts/jqa.mjs` (Node 20+, no dependencies). Resolve the real folder once (for example `~/.claude/skills/journey-qa`, `.claude/skills/journey-qa`, `~/.pi/agent/skills/journey-qa`) and reuse it; below, `jqa` stands for that command. `jqa help` lists every command, `--json` gives structured output. Exit codes: 0 ok, 1 action failed, 2 invalid contract, 3 guardrail refusal.
 
-`jqa doctor` says whether the browser driver is ready. If it reports Playwright missing, run `jqa setup` once: it installs `playwright-core` into a per-user runtime (`~/.local/share/journey-qa`, or `%LOCALAPPDATA%\journey-qa`) shared by every host, and uses the installed Chrome. No Chrome on the machine: `jqa setup --chromium`. `setup` is the only command that reaches the network; tell the user before running it.
+`jqa doctor` says whether the browser driver is ready. If it reports Playwright missing, run `jqa setup` once: it installs `playwright-core` into a per-user runtime (`~/.local/share/journey-qa`, or `%LOCALAPPDATA%\journey-qa`) shared by every host, and uses the installed Chrome. No Chrome on the machine: `jqa setup --chromium`. `setup` downloads from the npm registry; tell the user before running it. The network is also reached by the browser once it loads the product (`browser open`, `browser handshake --url` and the actions after them, inside the allowlist) and by `actor spawn --exec`, whose host calls its model API.
 
 Without a shell (a chat with no tools), apply the same method in natural language with whatever browser tools exist and deliver the report in the chat, stating that there was no ledger and no validation.
 

@@ -81,6 +81,13 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn('MUTATE', rules)
         self.assertIn('REVIEW / ADVERSARIAL / VERIFY', rules)
         self.assertRegex(rules, r'REVIEW, ADVERSARIAL and VERIFY go to the\s+`verifier`')
+        # Rule 4: the 2-round cap hands the owner the how, never the whether (rule 11).
+        rule4 = re.search(r'^4\. \*\*Whoever writes does not approve\.\*\*(.+?)(?=^\d+\. |\Z)', rules, re.M | re.S)
+        self.assertIsNotNone(rule4)
+        body4 = ' '.join(rule4[1].split())
+        self.assertIn('at most 2 rounds per card; after that the owner decides how to fix it', body4)
+        self.assertIn('never whether to ship it with the defect (rule 11)', body4)
+        self.assertNotIn("it is the owner's decision", body4)
         # Rule 11: a red gate is work; no PR goes in with a defect or a failure.
         rule = re.search(r'^11\. \*\*No PR passes or is merged with a defect or a failure\*\*(.+?)(?=^\d+\. |\Z)',
                          rules, re.M | re.S)
@@ -88,6 +95,7 @@ class ContractTests(unittest.TestCase):
         body = ' '.join(rule[1].split())
         for phrase in ('A red gate is work, not a decision for the owner',
                        'open a card in AgenFK for each cause',
+                       'rule 4 caps the rounds per card, not the number of causes',
                        'Never propose "accept with the failures explained"',
                        'through the merge queue, without asking for an OK'):
             self.assertIn(phrase, body)

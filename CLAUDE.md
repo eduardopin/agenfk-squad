@@ -36,7 +36,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 4. **Whoever writes does not approve.** REVIEW, ADVERSARIAL and VERIFY go to the
    `verifier` in a clean context: pass the card and the branch, not the
    implementer's narrative. FIX_FIRST/REJECT goes back to whoever implemented, at most 2
-   rounds; after that it is the owner's decision.
+   rounds per card; after that the owner decides how to fix it (another approach,
+   split the card), never whether to ship it with the defect (rule 11).
 5. **Only the main session advances a card** (`agenfk verify <id> --evidence ...`),
    with the evidence returned by the agents. No squad agent merges, runs
    `apply`, deploys, sends messages or publishes. Only `github` opens a PR, when the
@@ -118,7 +119,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 11. **No PR passes or is merged with a defect or a failure** (owner's rule, every
     project). A red gate is work, not a decision for the owner: diagnose each
     failure (flaky test, slow test, real defect), open a card in AgenFK for each
-    cause, fix it with as many `verifier` rounds as it takes and run the gate
-    again. Never propose "accept with the failures explained". With the gate
+    cause, fix each with its own `verifier` rounds (rule 4 caps the rounds per
+    card, not the number of causes) and run the gate again. Never propose
+    "accept with the failures explained". With the gate
     green and SHIP from the `verifier`, the main session merges by itself,
     through the merge queue, without asking for an OK.

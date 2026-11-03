@@ -213,6 +213,14 @@ class PlannerBehavior(unittest.TestCase):
             self.assertFalse(result["valid"], repr(character))
             self.assertTrue(result["errors"], repr(character))
 
+    def test_invisible_format_characters_are_refused_in_titles(self):
+        # BOM, soft hyphen, a deprecated format control, the Mongolian vowel separator and tag characters
+        # are all category Cf: invisible in a report, so a title carrying one is a validation error.
+        for character in ["﻿", "­", "⁪", "᠎", "\U000e0001", "\U000e0041", "\U000e007f"]:
+            result = build_plan(plan(task("A", title="Family" + character + "plan")))
+            self.assertFalse(result["valid"], repr(character))
+            self.assertTrue(any("title" in error for error in result["errors"]), (repr(character), result["errors"]))
+
     def test_joiners_stay_valid_in_titles(self):
         # ZWJ and ZWNJ are needed by real scripts and emoji; only bidi and invisible separators are refused.
         for character in ["\u200d", "\u200c"]:

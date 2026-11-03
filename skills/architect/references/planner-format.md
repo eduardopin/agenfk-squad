@@ -24,7 +24,7 @@ On Windows, use `python` or `py -3` depending on the installation. The three scr
 | `contracts` | List of contracts; may be empty. |
 | `tasks` | Non-empty list of tasks. |
 
-Unknown fields are rejected to catch typos. Strings cannot contain control characters (C0 and C1), lone surrogates or the Unicode line and paragraph separators, because they break printing and table rows. IDs use 1 to 128 letters, digits, periods, hyphens and underscores, starting with a letter or digit. Task IDs are unique among tasks; contract IDs are unique among contracts.
+Unknown fields are rejected to catch typos. Strings cannot contain control characters (C0 and C1), lone surrogates or the Unicode line and paragraph separators, because they break printing and table rows. They also cannot contain invisible format characters (Unicode category Cf: bidirectional overrides, zero-width space, byte order mark, soft hyphen, tag characters and the rest), which can reorder or hide text in a report; the zero-width joiner and non-joiner (U+200D, U+200C) stay allowed because real scripts and emoji need them. IDs use 1 to 128 letters, digits, periods, hyphens and underscores, starting with a letter or digit. Task IDs are unique among tasks; contract IDs are unique among contracts.
 
 ## Contracts
 

@@ -60,19 +60,16 @@ def empty_result():
 
 
 # Control (C0/C1), lone surrogates, and line/paragraph separators break printing and table rows.
-# Bidirectional overrides and invisible separators can reorder or hide text in reports.
-# ZWJ (U+200D) and ZWNJ (U+200C) stay allowed: real scripts and emoji need them.
-UNSAFE_CATEGORIES = {"Cc", "Cs", "Zl", "Zp"}
-UNSAFE_BIDI = {"LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"}
-UNSAFE_CODEPOINTS = {0x061C, 0x200B, 0x200E, 0x200F, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064}
+# Format characters (Cf) are invisible: bidi overrides and isolates, zero-width space, BOM,
+# soft hyphen, word joiner, deprecated format controls, the tag block (U+E0000-U+E007F) and the
+# rest can reorder, hide or smuggle text in reports, so the whole category is refused.
+# ZWNJ (U+200C) and ZWJ (U+200D) stay allowed: real scripts and emoji need them.
+UNSAFE_CATEGORIES = {"Cc", "Cf", "Cs", "Zl", "Zp"}
+ALLOWED_FORMAT = {0x200C, 0x200D}
 
 
 def unsafe_char(char):
-    return (
-        unicodedata.category(char) in UNSAFE_CATEGORIES
-        or unicodedata.bidirectional(char) in UNSAFE_BIDI
-        or ord(char) in UNSAFE_CODEPOINTS
-    )
+    return unicodedata.category(char) in UNSAFE_CATEGORIES and ord(char) not in ALLOWED_FORMAT
 
 
 def is_text(value):
@@ -85,7 +82,7 @@ def is_text(value):
 
 def validate_text(value, field, errors, identifier=False):
     if not is_text(value):
-        errors.append(f"{field}: expected a nonempty string without control characters")
+        errors.append(f"{field}: expected a nonempty string without control or invisible characters")
         return False
     if identifier and not IDENTIFIER.fullmatch(value):
         errors.append(f"{field}: use 1-128 letters, digits, periods, underscores or hyphens; start with a letter or digit")
@@ -126,7 +123,7 @@ def validate_strings(value, field, errors, nonempty=False, identifiers=False):
 def path_error(value):
     """Allow relative POSIX paths and the single recursive suffix '/**'."""
     if not is_text(value):
-        return "expected a nonempty relative path without control characters"
+        return "expected a nonempty relative path without control or invisible characters"
     if value.startswith(("/", "~")) or "\\" in value or ":" in value:
         return "use a repository-relative POSIX path; absolute paths, drives and backslashes are forbidden"
     base = value[:-3] if value.endswith("/**") else value

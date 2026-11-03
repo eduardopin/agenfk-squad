@@ -41,6 +41,21 @@ SHA1 = re.compile(r"^[0-9a-f]{40}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
+def is_link(path):
+    """A symbolic link, or on Windows a junction (os.path.islink is False for it): a vendored skill is a copy of
+    files, and a junction would pull a directory from anywhere into the hash and into the install."""
+    if os.path.islink(path):
+        return True
+    if os.name == "nt":
+        try:
+            # IO_REPARSE_TAG_MOUNT_POINT is a junction. Any other reparse point (a OneDrive placeholder, a dedup
+            # file) is a real file that merely carries the attribute: it is not a link.
+            return os.lstat(path).st_reparse_tag == 0xA0000003
+        except (OSError, AttributeError):
+            return False
+    return False
+
+
 def tree_hash(path):
     """(sha256 hex of the skill directory, symlinks found inside it), by the recipe above."""
     files, links = [], []
@@ -48,7 +63,7 @@ def tree_hash(path):
         for n in sorted(dirnames + filenames):
             full = os.path.join(dirpath, n)
             rel = os.path.relpath(full, path).replace(os.sep, "/")
-            if os.path.islink(full):
+            if is_link(full):
                 links.append(rel)
             elif n in filenames:
                 files.append(rel)
@@ -96,7 +111,7 @@ def check(vendor):
         full = os.path.join(vendor, n)
         if n == "LOCK":
             continue
-        if os.path.islink(full):
+        if is_link(full):
             problems.append(f"{n}: is a symlink in skills/vendor/; vendored skills are copies, not links")
             continue
         if not os.path.isdir(full):
@@ -131,12 +146,28 @@ def repo_copy():
     return dst
 
 
+WINDOWS = os.name == "nt"      # install.sh links with symlinks and runs under bash: Windows has install.ps1 (tests/test_install_ps1.py)
+
+
 def install(repo):
     h = tempfile.mkdtemp(prefix="home-")
     cfg = os.path.join(h, "claude")
     env = dict(os.environ, HOME=h, CLAUDE_CONFIG_DIR=cfg)
     r = subprocess.run(["bash", os.path.join(repo, "install.sh")], capture_output=True, text=True, env=env)
     return r, cfg
+
+
+def test_gitattributes_pins_lf_so_the_lock_holds_on_a_crlf_machine():
+    # LOCK pins the sha256 of LF bytes. With core.autocrlf=true (the Windows default) a checkout is CRLF
+    # and every vendored text file drifts, unless .gitattributes says otherwise.
+    with open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8") as fh:
+        rules = [line.split() for line in fh if line.strip() and not line.startswith("#")]
+    assert ["*", "text=auto", "eol=lf"] in rules, rules
+    for ext in ("ttf",):
+        assert [f"*.{ext}", "binary"] in rules, ext            # the fonts are bytes, never "text"
+    out = subprocess.run(["git", "-C", ROOT, "check-attr", "eol", "--", "skills/vendor/LOCK"],
+                         capture_output=True, text=True).stdout
+    assert "eol: lf" in out, out
 
 
 def test_vendor_tree_matches_lock():
@@ -181,7 +212,38 @@ def test_lock_entry_without_directory_fails():
                         "remove the line or restore the skill"], problems
 
 
+def can_symlink():
+    """Windows lets only some accounts create symbolic links (Developer Mode, or an administrator)."""
+    d = tempfile.mkdtemp(prefix="probe-")
+    try:
+        os.symlink(d, os.path.join(d, "link"))
+        return True
+    except (OSError, NotImplementedError):
+        return False
+
+
+def junction(link, target):
+    r = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_junction_inside_or_as_a_vendored_skill_fails():
+    if os.name != "nt":
+        return        # a junction is a Windows thing; the symlink twin of this test is the next one
+    outside = tempfile.mkdtemp(prefix="outside-")
+    v = vendor_copy()
+    junction(os.path.join(v, "canvas-design", "fonts-elsewhere"), outside)
+    problems = check(v)
+    assert any(p.startswith("canvas-design: symlink inside a vendored skill (fonts-elsewhere)") for p in problems), problems
+    v = vendor_copy()
+    junction(os.path.join(v, "linked-skill"), outside)
+    assert check(v) == ["linked-skill: is a symlink in skills/vendor/; vendored skills are copies, not links"]
+
+
 def test_symlink_inside_or_as_a_vendored_skill_fails():
+    if not can_symlink():
+        print("skipped (this account cannot create symbolic links; the junction twin runs instead)")
+        return
     outside = tempfile.mkdtemp(prefix="outside-")
     v = vendor_copy()
     os.symlink(outside, os.path.join(v, "canvas-design", "fonts-elsewhere"))
@@ -216,6 +278,8 @@ def test_lock_fields_are_checked():
 
 
 def test_install_refuses_a_source_that_resolves_outside_the_repo():
+    if WINDOWS:
+        return        # install.sh is not how Windows installs: see tests/test_install_ps1.py
     outside = tempfile.mkdtemp(prefix="outside-")
     with open(os.path.join(outside, "SKILL.md"), "w") as fh:
         fh.write("---\nname: evil\ndescription: x\n---\n")
@@ -240,6 +304,8 @@ def test_install_refuses_a_source_that_resolves_outside_the_repo():
 
 
 def test_install_refuses_a_sibling_that_shares_the_repo_prefix():
+    if WINDOWS:
+        return        # install.sh is not how Windows installs: see tests/test_install_ps1.py
     repo = repo_copy()
     sibling = repo + "-evil"                                           # <repo>-evil starts with <repo>
     os.makedirs(sibling)
@@ -254,6 +320,8 @@ def test_install_refuses_a_sibling_that_shares_the_repo_prefix():
 
 
 def test_install_links_a_clean_copy_and_exits_zero():
+    if WINDOWS:
+        return        # install.sh is not how Windows installs: see tests/test_install_ps1.py
     repo = repo_copy()
     r, cfg = install(repo)
     assert r.returncode == 0, r.stdout + r.stderr

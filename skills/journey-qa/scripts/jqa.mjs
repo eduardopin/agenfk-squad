@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Journey QA command line. Node >= 18, zero dependencies except Playwright for `browser`.
+// Journey QA command line. Node >= 20, zero dependencies except Playwright for `browser`.
 // Run `node jqa.mjs help` for the command list.
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

@@ -407,6 +407,16 @@ def test_pickup_that_did_not_land_is_resent_then_tells_the_owner():
     assert len(nt) == 1 and "pickup" in nt[0], nt
 
 
+def test_resent_pickup_quotes_a_path_with_a_space():
+    h = tempfile.mkdtemp(prefix="wake space-")    # a Windows profile can hold a space, as squad-switch knows
+    _HOMES.append(h)
+    fake_herdr(h, {"w1:p1": [SID2, "idle"]})
+    copy = sealed_copy(h)
+    record_pickup(h, SID2, copy)
+    scan(h)
+    assert lines(h, "prompts") == [f'w1:p1 /clear-pickup pickup "{copy}"'], lines(h, "prompts")
+
+
 def test_pickup_that_landed_is_not_resent_and_the_record_goes():
     h = home()
     fake_herdr(h, {"w1:p1": [SID2, "idle"]})

@@ -511,7 +511,8 @@ def resend_pickup(ctx):
     st["pickup_n"] = int(st.get("pickup_n") or 0) + 1
     save(ctx["path"], st)
     os.utime(ctx["pend"], follow_symlinks=False)   # the next resend waits for the deadline again
-    rc, _ = herdr("agent", "prompt", pane, f"{PICKUP} {copy}" if PICKUP.startswith("/") else PICKUP)
+    where = f'"{copy}"' if " " in copy else copy     # a Windows profile can hold a space: the prompt splits on it
+    rc, _ = herdr("agent", "prompt", pane, f"{PICKUP} {where}" if PICKUP.startswith("/") else PICKUP)
     log(pane, f"{sid[:8]} pickup resent ({st['pickup_n']}): " + ("ok" if rc == 0 else "the prompt failed"))
     return rc == 0
 

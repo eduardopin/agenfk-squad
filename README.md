@@ -200,13 +200,31 @@ Then open a project that has an AgenFK board and ask for something:
 
 | Skill | What it is |
 |---|---|
-| `session-context` | Context indicators for Claude Code, Codex and pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |
+| `pr-evidence` | Repository-template answers and current-head independent reviews/checks/threads; offline, no auto-post or merge |
+| `ci-plan-evidence` | Complete current CI JSON plans, expected environments/checks and exact loss approval; no Terraform/cloud execution |
+| `parallel-plan` | Iterative dependency waves with inherited parent constraints, blocked prerequisites and conservative file collisions; forecast only |
+| `engineering-evidence` | On-demand diagnosis, contract, source-to-sink security and bounded-cost telemetry checklists |
+| `session-context` | Context indicators for Claude Code, Codex, pi and oh-my-pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |
 | `clear-pickup` | Writes a handoff file from ground truth (git state plus session state) before a context clear, and reloads it afterwards |
 | `parallel-git` | One card = one branch = one worktree = one session; disjoint fronts; writer claims; merge train with squash and `rebase --onto` |
 | `ci-cost` | Fewer CI minutes without loosening a gate: measure (billing API, per-job ceil, cancelled minutes), then cut in order of gain; PR mutation over the changed lines (`scripts/changed-ranges.mjs`, `scripts/mutation-since.sh`, Stryker) |
 | `board-heartbeat` | A scheduled, read-only look at the board between sessions (`scripts/heartbeat.py`): stalled cards, PRs with no review, a merge turn held too long, idle worktrees, old handoffs; one line each with who acts, silent when nothing is stuck |
 | `design-reference` | One design method: direction before code, a verifiable quality floor, the patterns that give away AI-generated UI, motion with rules |
 | `vendor/canvas-design`, `vendor/algorithmic-art` | Third-party skills by Anthropic, Apache-2.0, redistributed unmodified (see [NOTICE](NOTICE)) |
+
+Evidence-tool adoption decisions, exclusions and limits:
+[docs/bundle-adoption.md](docs/bundle-adoption.md). These are new generic
+implementations, not a copy of private tooling or its history. Scripts use only
+Python's standard library and write stdout; each supports `--help`. The existing
+installer discovers the new skill directories without a settings change.
+
+```sh
+for t in tests/test_pr_evidence.py tests/test_ci_plan_evidence.py tests/test_parallel_plan.py tests/test_bundle_contracts.py; do
+  python3 -B "$t" || exit 1
+done
+```
+
+Scenario fixtures are contract examples, not a live-model benchmark.
 
 ## Specialising for one project
 
@@ -222,8 +240,8 @@ This is the working setup of one person, published as it is. It runs daily on
 Linux with Claude Code. The automatic session switch depends on the
 [herdr](docs/installation.md#optional-dependencies) pane manager; without it the watcher still
 orders the handoff and you type `/clear` and `/clear-pickup pickup` yourself.
-The session report reads Codex and pi transcripts too, but the hooks only
-drive Claude Code. [ROADMAP.md](ROADMAP.md) lists what that leaves open.
+The session report reads Codex, pi and oh-my-pi transcripts too, but the hooks
+only drive Claude Code. [ROADMAP.md](ROADMAP.md) lists what that leaves open.
 
 ## Contributing
 

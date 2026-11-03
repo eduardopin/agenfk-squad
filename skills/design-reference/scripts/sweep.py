@@ -13,6 +13,7 @@ and matched with regular expressions.
 Precedence on conflict: written spec > tokens > component theme.
 """
 import bisect
+import collections
 import json
 import os
 import re
@@ -33,6 +34,7 @@ MAX_RESOLVED = 1000       # a var() that expands past this is a bomb, not a colo
 MAX_KEYS = 10000          # keys read from one JS object literal
 MAX_SPEC_CHARS = 256_000  # text of a written spec that goes through the regexes
 MAX_VALUE = 200           # a value that goes into the <style>; longer than this is neither colour nor font
+MAX_NAME = 200            # a token name longer than this names no role: it is not stripped down to one
 
 ROLES = ["bg", "surface", "fg", "fg-2", "accent", "border",
          "font-display", "font-body", "font-mono"]
@@ -251,7 +253,11 @@ def looks_like_color(value):
 
 
 def normalise_color(name):
+    """Each pass strips one prefix or suffix and copies the rest: quadratic in the name's length, so a
+    name past MAX_NAME (960 KB of "colors-" took 2 s) is returned as it is and matches no alias."""
     n = name.lower().lstrip("-").replace("_", "-").replace(".", "-")
+    if len(name) > MAX_NAME:
+        return n
     changed = True
     while changed:
         changed = False
@@ -265,7 +271,10 @@ def normalise_color(name):
 
 
 def normalise_font(name):
+    """Same MAX_NAME cap as normalise_color."""
     n = name.lower().lstrip("-").replace("_", "-").replace(".", "-")
+    if len(name) > MAX_NAME:
+        return n
     changed = True
     while changed:
         changed = False
@@ -721,9 +730,10 @@ def spec_title(text):
 # ---------------------------------------------------------------- roles
 
 def roles_of(tokens, global_tokens):
-    """Map tokens -> roles. Return {role: (value, token_name)}."""
-    everything = dict(global_tokens)
-    everything.update(tokens)
+    """Map tokens -> roles. Return {role: (value, token_name)}.
+    The source's tokens are read over the global ones without copying them: a copy per source was
+    quadratic in a repository with thousands of token files (3000 of 100 tokens each took 35 s)."""
+    everything = collections.ChainMap(tokens, global_tokens)
     by_color, by_font = {}, {}
     for name, value in tokens.items():
         if looks_like_font(name, value):
@@ -900,10 +910,14 @@ def _sweep(root):
         for k, v in dark.items():
             global_dark.setdefault(k, v)
 
+    global_both = {**global_light, **global_dark}   # once: a copy per source was quadratic
     roles = {p: None for p in ROLES}
     origin = {}
     dark_roles = {}
+    seen_conflicts = set(conflicts)   # the list keeps the order, the set answers "already said?" in O(1)
     for level, label, f, light, dark in sources:
+        if out_of_time():   # thousands of sources: the roles stop at the budget too, as truncated
+            break
         for role, (value, name) in roles_of(light, global_light).items():
             if roles[role] is None:
                 roles[role] = value
@@ -916,10 +930,11 @@ def _sweep(root):
                 reason = (f"{LEVEL_NAMES[l0]} > {LEVEL_NAMES[level]}" if l0 > level
                           else "same level, the shallowest wins")
                 line = f"{role}: {f0} says {roles[role]}, {f} says {value}; {f0} wins ({reason})"
-                if line not in conflicts:
+                if line not in seen_conflicts:
+                    seen_conflicts.add(line)
                     conflicts.append(line)
         if dark:
-            for role, (value, name) in roles_of(dark, {**global_light, **global_dark}).items():
+            for role, (value, name) in roles_of(dark, global_both).items():
                 dark_roles.setdefault(role, value)
     # A role with no token of a known name: its use in the CSS (body, h1, a, focus) says which token plays it.
     for role, value in usage.items():
@@ -939,7 +954,7 @@ def _sweep(root):
             origin[role] = (2, "CSS usage", value)
             name = re.search(r"--[\w-]+", value)
             if name and global_dark.get(name.group(0)):
-                dark_value = resolve(global_dark[name.group(0)], {**global_light, **global_dark})
+                dark_value = resolve(global_dark[name.group(0)], global_both)
                 if dark_value and safe(dark_value) and looks_like_color(dark_value):
                     dark_roles.setdefault(role, final_color(dark_value))
 
@@ -1062,9 +1077,17 @@ def summary(finding):
                      + ("; Storybook present" if finding["storybook"] else "") + ".")
     if finding["figma"]:
         lines.append("Figma: " + ", ".join(finding["figma"][:2]) + ".")
-    for c in finding["conflicts"][:3]:
-        lines.append("Conflict: " + c + ".")
-    return "\n".join(lines[:8])
+    # A skipped file or the limit say the finding is partial: they go first, past three conflicts a count
+    # says how many the --json lists, and the conflicts keep their place inside the 8 lines.
+    def partial(c):
+        return " skipped: " in c or c.startswith("the sweep stopped at the limit")
+    conflicts = finding["conflicts"]
+    ordered = [c for c in conflicts if partial(c)] + [c for c in conflicts if not partial(c)]
+    shown = ordered if len(ordered) <= 3 else ordered[:2]
+    tail = ["Conflict: " + c + "." for c in shown]
+    if len(ordered) > len(shown):
+        tail.append(f"Conflicts: {len(ordered)} in all, {len(shown)} shown; --json lists every one.")
+    return "\n".join(lines[:8 - len(tail)] + tail)
 
 
 def main(argv):

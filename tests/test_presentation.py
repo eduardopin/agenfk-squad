@@ -12,6 +12,9 @@ as no Chrome), otherwise from the same names the export script looks for. To
 also check the skill for names that must not be published (a project, a
 customer, a person), list them in SQUAD_PRIVATE_TERMS, comma-separated. The
 list lives in your environment, never in the repository.
+
+On Windows the script runs under Git Bash: the gates that need no Chrome run
+there too; the Chrome export is not verified on Windows, so its tests SKIP.
 """
 import os
 import re
@@ -25,6 +28,23 @@ SKILL = os.path.join(ROOT, "skills", "presentation")
 TEMPLATE = os.path.join(SKILL, "templates", "deck.html")
 SCRIPT = os.path.join(SKILL, "scripts", "export-deck.sh")
 MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+WINDOWS = os.name == "nt"
+
+
+def find_bash():
+    """The bash on the PATH, by full path. Run as plain "bash", Windows looks in
+    System32 before the PATH and starts the WSL launcher, not Git Bash; that one
+    never runs the script and leaves stderr empty."""
+    b = shutil.which("bash")
+    windir = os.path.normcase(os.environ.get("SystemRoot", r"C:\Windows"))
+    if WINDOWS and (not b or os.path.normcase(b).startswith(windir)):
+        git = shutil.which("git")  # Git for Windows: <Git>\cmd\git.exe, <Git>\bin\bash.exe
+        b = git and os.path.join(os.path.dirname(os.path.dirname(git)), "bin", "bash.exe")
+        b = b if b and os.path.isfile(b) else None
+    return b or "/bin/bash"
+
+
+BASH = find_bash()
 
 _terms = [re.escape(t.strip()) for t in os.environ.get("SQUAD_PRIVATE_TERMS", "").split(",") if t.strip()]
 PRIVATE = re.compile("|".join([r"/home/[a-z]+/", r"/Users/[A-Za-z]+/"] + _terms), re.I)
@@ -69,7 +89,12 @@ def export(*args, env=None):
     e = dict(os.environ)
     e.pop("CHROME", None)
     e.update(env or {})
-    return subprocess.run(["bash", SCRIPT, *args], capture_output=True, text=True, env=e, timeout=300)
+    return subprocess.run([BASH, SCRIPT, *args], capture_output=True, text=True, env=e, timeout=300)
+
+
+def said(r):
+    """What a failed assertion shows: the exit code and both streams."""
+    return f"exit {r.returncode}\nstdout: {r.stdout!r}\nstderr: {r.stderr!r}"
 
 
 def pages(pdf):
@@ -195,23 +220,58 @@ def test_template_navigates_sideways_with_two_rails():
 
 # ---------- script gates that need no Chrome ----------
 
+def test_on_windows_the_script_runs_under_git_bash_not_the_wsl_launcher():
+    """A bash in the Windows folder is the WSL launcher; find_bash takes Git's
+    instead. The layout is faked, so this runs on any system."""
+    global WINDOWS
+    tmp = tempfile.mkdtemp(prefix="presentation-")
+    saved = WINDOWS, os.environ.get("PATH"), os.environ.get("SystemRoot")
+    try:
+        def tool(*parts):
+            p = os.path.join(tmp, *parts)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write("")
+            os.chmod(p, 0o755)
+            return p
+        exe = ".exe" if os.name == "nt" else ""  # shutil.which on Windows needs the extension
+        wsl = tool("Windows", "System32", "bash" + exe)
+        tool("Git", "cmd", "git" + exe)
+        git_bash = tool("Git", "bin", "bash.exe")
+        os.environ["SystemRoot"] = os.path.join(tmp, "Windows")
+        os.environ["PATH"] = os.pathsep.join([os.path.dirname(wsl), os.path.join(tmp, "Git", "cmd")])
+        WINDOWS = True
+        same = lambda a, b: os.path.normcase(a) == os.path.normcase(b)
+        assert same(find_bash(), git_bash), find_bash()
+        WINDOWS = False
+        assert same(find_bash(), wsl), ("off Windows the PATH's bash stands", find_bash())
+    finally:
+        WINDOWS = saved[0]
+        for k, v in (("PATH", saved[1]), ("SystemRoot", saved[2])):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(tmp)
+
+
 def test_script_refuses_a_deck_without_the_template_contract():
     tmp = tempfile.mkdtemp(prefix="presentation-")
     try:
         out = os.path.join(tmp, "x.pdf")
         no_render = variant(tmp, "no-render.html", lambda h: h.replace("html.render", "html.other"))
         r = export(no_render, "--pdf", out)
-        assert r.returncode == 2 and "html.render" in r.stderr, r.stderr
+        assert r.returncode == 2 and "html.render" in r.stderr, said(r)
         no_slide = variant(tmp, "no-slide.html", lambda h: h.replace('class="slide', 'class="sheet'))
         r = export(no_slide, "--pdf", out)
-        assert r.returncode == 2 and "section" in r.stderr, r.stderr
+        assert r.returncode == 2 and "section" in r.stderr, said(r)
         no_id = variant(tmp, "no-id.html", lambda h: h.replace(' id="s3"', "", 1))
         r = export(no_id, "--pdf", out)
-        assert r.returncode == 2 and "has no id" in r.stderr, r.stderr
+        assert r.returncode == 2 and "has no id" in r.stderr, said(r)
         r = export(TEMPLATE)
-        assert r.returncode == 2 and "nothing to do" in r.stderr, r.stderr
+        assert r.returncode == 2 and "nothing to do" in r.stderr, said(r)
         r = export(TEMPLATE, "--measure", "--theme", "sepia")
-        assert r.returncode == 2 and "--theme" in r.stderr, r.stderr
+        assert r.returncode == 2 and "--theme" in r.stderr, said(r)
         assert not os.path.exists(out)
     finally:
         shutil.rmtree(tmp)
@@ -219,18 +279,29 @@ def test_script_refuses_a_deck_without_the_template_contract():
 
 def test_missing_chrome_fails_with_a_clear_message():
     r = export(TEMPLATE, "--pdf", "/does/not/exist/x.pdf", "--chrome", "/does/not/exist/chrome")
-    assert r.returncode == 2 and "Chrome not found at --chrome" in r.stderr, r.stderr
+    assert r.returncode == 2 and "Chrome not found at --chrome" in r.stderr, said(r)
     r = export(TEMPLATE, "--measure", env={"CHROME": "/does/not/exist/chrome"})
-    assert r.returncode == 2 and "$CHROME" in r.stderr, r.stderr
+    assert r.returncode == 2 and "$CHROME" in r.stderr, said(r)
     if os.access(MAC_CHROME, os.X_OK):
         return  # the macOS fallback would find it; the PATH case cannot be shown here
     # A PATH with only the tools the script needs before it looks for Chrome.
+    tools = ("bash", "grep", "sed", "wc", "tr")
     tmp = tempfile.mkdtemp(prefix="presentation-")
     try:
-        for tool in ("bash", "grep", "sed", "wc", "tr"):
-            os.symlink(shutil.which(tool), os.path.join(tmp, tool))
-        r = export(TEMPLATE, "--measure", env={"PATH": tmp})
-        assert r.returncode == 2 and "no Chrome found" in r.stderr and "--chrome" in r.stderr, r.stderr
+        if WINDOWS:
+            # Git's own tool folders: an msys tool loads its DLLs from beside it,
+            # so a link elsewhere would not start (and links need a privilege).
+            path = os.pathsep.join(sorted({os.path.dirname(BASH)} | {
+                os.path.dirname(shutil.which(t)) for t in tools if shutil.which(t)}))
+        else:
+            for tool in tools:
+                os.symlink(shutil.which(tool), os.path.join(tmp, tool))
+            path = tmp
+        names = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
+        if any(shutil.which(c, path=path) for c in names):
+            return  # a browser sits beside the tools; the PATH case cannot be shown here
+        r = export(TEMPLATE, "--measure", env={"PATH": path})
+        assert r.returncode == 2 and "no Chrome found" in r.stderr and "--chrome" in r.stderr, said(r)
     finally:
         shutil.rmtree(tmp)
 
@@ -239,6 +310,9 @@ def test_missing_chrome_fails_with_a_clear_message():
 
 def needs_chrome(fn):
     def run():
+        if WINDOWS:
+            # the script hands Chrome file:// URLs of Git Bash paths; not verified on Windows
+            raise Skip("the Chrome export is not verified on Windows (see the skill, section 6)")
         if not chrome():
             raise Skip("no Chrome (set $CHROME or put google-chrome/chromium on the PATH)")
         fn()
@@ -320,7 +394,7 @@ def test_template_exports_one_page_and_one_png_per_slide():
     try:
         pdf, pngs = os.path.join(tmp, "deck.pdf"), os.path.join(tmp, "png")
         r = export_with_chrome(TEMPLATE, "--measure", "--pdf", pdf, "--png-dir", pngs)
-        assert r.returncode == 0, r.stderr
+        assert r.returncode == 0, said(r)
         assert "measure screen 1440x830: 1440x830" in r.stdout, r.stdout
         assert pages(pdf) == len(ids), f"{pages(pdf)} pages for {len(ids)} slides"
         outputs = sorted(os.listdir(pngs))
@@ -342,10 +416,10 @@ def test_an_overflowing_slide_is_refused_before_export():
                       lambda h: h.replace('<div class="callout">', text + '<div class="callout">', 1))
         pdf = os.path.join(tmp, "x.pdf")
         r = export_with_chrome(bad, "--pdf", pdf)
-        assert r.returncode == 1 and "overflows" in r.stderr and "s2" in r.stderr, r.stderr
+        assert r.returncode == 1 and "overflows" in r.stderr and "s2" in r.stderr, said(r)
         assert not os.path.exists(pdf), "exported the cut slide"
         r = export_with_chrome(bad, "--measure")
-        assert r.returncode == 1 and "screen 1440x830" in r.stderr, r.stderr
+        assert r.returncode == 1 and "screen 1440x830" in r.stderr, said(r)
     finally:
         shutil.rmtree(tmp)
 
@@ -357,7 +431,7 @@ def test_a_pdf_with_more_pages_than_slides_is_refused():
         loose = '<div style="height:2in">Loose content outside any slide.</div>'
         bad = variant(tmp, "loose.html", lambda h: h.replace("</main>", "</main>" + loose, 1))
         r = export_with_chrome(bad, "--pdf", os.path.join(tmp, "x.pdf"))
-        assert r.returncode == 1 and "pages for" in r.stderr, (r.returncode, r.stderr)
+        assert r.returncode == 1 and "pages for" in r.stderr, said(r)
     finally:
         shutil.rmtree(tmp)
 

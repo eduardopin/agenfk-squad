@@ -175,6 +175,13 @@ last, the default macOS path. With none of them the script stops with exit
 code 2 and says where it looked. It runs with a throwaway profile and never
 touches the user's own.
 
+On Windows, run it with Git Bash (`bash export-deck.sh ...` from Git Bash, or
+Git's `bash.exe` by full path; a bare `bash` from PowerShell or cmd can start
+the WSL launcher instead). There the deck checks and the exit codes below hold,
+but the Chrome export (measure, PDF, PNG) is not verified on Windows: it hands
+Chrome `file://` URLs built from Git Bash paths. Export from Linux, macOS or
+WSL until it is.
+
 The script's gates (exit code other than 0; never work around them):
 
 | Code | When |

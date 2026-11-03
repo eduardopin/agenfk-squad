@@ -36,7 +36,8 @@ runs/<run-id>/
 
 Each line of `evidence/ledger.jsonl`: `seq`, `evidence_id`, `captured_at`, `kind`, `origin`, `captured_by` (`driver`, `tool`, `agent`, `user`, `fixture`), `actor_id`, `url`, `summary`, `file`, `sha256`, `prev`, `hash`.
 
-- `hash = sha256(prev + canonical content of the entry)`: removing, reordering or editing an entry, or changing the file, breaks the chain. `jqa evidence verify` points to where.
+- `hash = sha256(prev + canonical content of the entry)`: editing an entry, reordering entries, removing one from the middle, or changing an evidenced file breaks the chain. `jqa evidence verify` points to where.
+- Removing entries from the end is not detectable from the ledger alone: what remains is still a valid chain. The `head_hash` recorded in a synced report (`ledger.entries` records the count alongside it) is the check: `jqa validate` compares it with the ledger's current head and warns on a mismatch, and `--strict` turns that warning into an error. Observed evidence in the report that is missing from the ledger is always an error.
 - `captured_by: driver` = captured by the driver itself at the moment of the action. `agent` = recorded by the agent (e.g. a screenshot from another tool). The report shows this difference.
 - The ledger proves integrity from the record onward; it does not prove that the machine or the operator was honest.
 

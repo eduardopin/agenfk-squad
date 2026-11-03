@@ -27,11 +27,16 @@ def home():
     return tempfile.mkdtemp(prefix="watch-")
 
 
+def sh(path):
+    """A path as a shell command holds it: forward slashes (Git Bash reads a backslash as an escape)."""
+    return path.replace("\\", "/") if os.name == "nt" else path
+
+
 def run_proc(h, event, sid, transcript, extra=None, env=None):
     p = {"hook_event_name": event, "session_id": sid, "transcript_path": transcript,
          "tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": h}
     p.update(extra or {})
-    e = dict(os.environ, HOME=h)
+    e = dict(os.environ, HOME=h, USERPROFILE=h)
     for key in list(e):
         if key.startswith("SQUAD_") or key.startswith("HERDR_"):
             del e[key]
@@ -253,6 +258,10 @@ elif a[:2] == ["agent", "send-keys"]:
     open({sent!r}, "a").write("KEYS " + " ".join(a[3:]) + "\\n")
 """)
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+    if os.name == "nt":                  # a shebang does not run on Windows: a .cmd that calls the script does
+        with open(path + ".cmd", "w") as fh:
+            fh.write(f'@"{sys.executable}" "{path}" %*\r\n')
+        path += ".cmd"
     return path, sent
 
 
@@ -621,7 +630,7 @@ def test_wait_survives_a_transient_herdr_failure():
 def test_wait_exits_when_herdr_never_answers_again():
     """A closed pane or herdr down must not keep the waiting process alive forever."""
     h = home()
-    e = dict(os.environ, HOME=h, HERDR_BIN_PATH="/bin/false", SQUAD_SWITCH_BUSY="2")
+    e = dict(os.environ, HOME=h, USERPROFILE=h, HERDR_BIN_PATH="/bin/false", SQUAD_SWITCH_BUSY="2")
     t0 = time.time()
     r = subprocess.run([sys.executable, SWITCH, "wait", "w1:p1", "abcdef12-0009", "/x/t.jsonl", "/x", "1"],
                        env=e, capture_output=True, text=True, timeout=60)
@@ -641,7 +650,7 @@ def test_the_claim_refuses_a_second_switch_of_the_same_session():
     with open(handoff, "rb") as fh:
         digest = hashlib.sha256(fh.read()).hexdigest()
     e = {k: v for k, v in os.environ.items() if not k.startswith(("SQUAD_", "HERDR_"))}
-    e.update(HOME=h, HERDR_BIN_PATH=herdr)
+    e.update(HOME=h, USERPROFILE=h, HERDR_BIN_PATH=herdr)
     def switch():
         return subprocess.run([sys.executable, SWITCH, "w1:p1", sid, handoff, digest], env=e,
                               capture_output=True, text=True, timeout=90).returncode
@@ -786,6 +795,11 @@ import sys
 print("77" if "number" in sys.argv else open({state_file!r}).read())
 """)
     os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
+    if os.name == "nt":                  # a shebang does not run on Windows: a .cmd that calls the script does
+        launcher = gh + ".cmd"
+        with open(launcher, "w") as fh:
+            fh.write(f'@"{sys.executable}" "{gh}" %*\r\n')
+        gh = launcher
     return repo, {"SQUAD_GH": gh}, state_file
 
 
@@ -810,7 +824,7 @@ def test_merge_queue_one_session_at_a_time_and_the_next_is_called():
     a, b = "aaaa1111-0001", "bbbb2222-0001"
     assert bash(h, "PreToolUse", a, repo, "gh pr merge 10 --squash", env) == "nothing"   # turn free: passes
     assert queue(h)[0]["holder"]["session"] == a
-    out = bash(h, "PreToolUse", b, repo, f"cd {repo} && gh pr merge 11 --squash", env)
+    out = bash(h, "PreToolUse", b, repo, f"cd {sh(repo)} && gh pr merge 11 --squash", env)
     assert "MERGE QUEUE" in out and "is merging" in out and "PR #10" in out, out
     assert "queue" not in queue(h)[0] and queue(h)[0]["intents"] == []                    # nobody waits in line
     assert bash(h, "PreToolUse", b, repo, "git fetch origin && git merge origin/main", env) == "nothing"
@@ -925,6 +939,11 @@ pr = prs.get(n) or {{}}
 print(json.dumps(pr) if "-q" not in sys.argv else pr.get(sys.argv[-1][1:], ""))
 """)
     os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
+    if os.name == "nt":                  # a shebang does not run on Windows: a .cmd that calls the script does
+        launcher = gh + ".cmd"
+        with open(launcher, "w") as fh:
+            fh.write(f'@"{sys.executable}" "{gh}" %*\r\n')
+        gh = launcher
     return repo, {"SQUAD_GH": gh}, prs
 
 
@@ -1018,7 +1037,7 @@ def test_turn_status_shows_who_is_merging_and_the_intents():
     repo, env, _ = repo_with_gh(h)
     assert bash(h, "PreToolUse", "eeee1111-0001", repo, "squad-turn request 40", env) == "nothing"
     assert bash(h, "PreToolUse", "ffff2222-0001", repo, f"{GM} 41", env) == "nothing"
-    e = dict(os.environ, HOME=h)
+    e = dict(os.environ, HOME=h, USERPROFILE=h)
     out = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "squad-turn.py"), "status"], cwd=repo,
                          capture_output=True, text=True, env=e).stdout
     assert "merging now: session ffff2222 (PR #41)" in out and "eeee1111 (PR #40)" in out, out
@@ -1086,7 +1105,7 @@ def test_turn_status_compares_against_the_remote_default_branch():
         fh.write("feat\n")
     git(repo, "commit", "-qam", "feat")
     out = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "squad-turn.py"), "status"], cwd=repo,
-                         capture_output=True, text=True, env=dict(os.environ, HOME=h, **env)).stdout
+                         capture_output=True, text=True, env=dict(os.environ, HOME=h, USERPROFILE=h, **env)).stdout
     assert "feat x origin/beta" in out and "merges without conflict" in out, out
 
 
@@ -1099,7 +1118,7 @@ def seal_head(h, repo):
     e = {k: v for k, v in os.environ.items() if not k.startswith(("SQUAD_", "HERDR_"))}
     r = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "squad-seal.py"), "record", "--card", "c-1",
                         "--model", "m", "--verdict", "SHIP", "--evidence", ev], cwd=repo, capture_output=True,
-                       text=True, env=dict(e, HOME=h))
+                       text=True, env=dict(e, HOME=h, USERPROFILE=h))
     assert r.returncode == 0, r.stderr
     return sha
 
@@ -1136,11 +1155,11 @@ def test_merge_and_push_are_checked_where_the_command_runs():
     outside = os.path.join(h, "outside")
     os.makedirs(outside)
     set_prs(prs, **{"5": ("feat", git(repo, "rev-parse", "HEAD"))})
-    for cmd in (f"cd {repo} && git push origin HEAD:beta", f"cd {repo} && {GM} 5", f"cd {repo}; {GM} 5"):
+    for cmd in (f"cd {sh(repo)} && git push origin HEAD:beta", f"cd {sh(repo)} && {GM} 5", f"cd {sh(repo)}; {GM} 5"):
         out = bash(h, "PreToolUse", sid, outside, cmd, env)
         assert "MERGE SEAL" in out and "no seal for that SHA" in out, (cmd, out)
     for cmd in ('git -C "$WT" push origin HEAD:beta', f'cd "$WT" && {GM} 5', f"cd - && {GM} 5",
-                f"(cd {repo} && true) && {GM} 5", f"GIT_DIR={repo}/.git git push origin HEAD:beta"):
+                f"(cd {sh(repo)} && true) && {GM} 5", f"GIT_DIR={sh(repo)}/.git git push origin HEAD:beta"):
         out = bash(h, "PreToolUse", sid, outside, cmd, env)
         assert "MERGE SEAL" in out and "literal path" in out, (cmd, out)
         assert holder(h) is None, cmd
@@ -1153,7 +1172,7 @@ def test_merge_and_push_are_checked_where_the_command_runs():
     assert bash(h, "PreToolUse", sid, repo, "git push origin HEAD:beta", env) == "nothing"   # sealed here
     bash(h, "PostToolUse", sid, repo, "git push origin HEAD:beta", env)
     for cmd in ("cd ../wt-x && git push origin HEAD:beta", "git -C ../wt-x push origin HEAD:beta",
-                f"cd {wt} && git push origin HEAD:beta"):
+                f"cd {sh(wt)} && git push origin HEAD:beta"):
         out = bash(h, "PreToolUse", sid, repo, cmd, env)
         assert "MERGE SEAL" in out and "no seal for that SHA" in out, (cmd, out)
     out = bash(h, "PreToolUse", sid, repo, 'cd "$WT" && git push origin HEAD:beta', {**env, "SQUAD_SEAL": "0"})
@@ -1167,7 +1186,7 @@ def test_turn_status_uses_squad_trunk_first():
     git(repo, "fetch", "-q", "origin")
     git(repo, "config", "squad.trunk", "release")
     out = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "squad-turn.py"), "status"], cwd=repo,
-                         capture_output=True, text=True, env=dict(os.environ, HOME=h, **env)).stdout
+                         capture_output=True, text=True, env=dict(os.environ, HOME=h, USERPROFILE=h, **env)).stdout
     assert "feat x origin/release" in out, out
 
 
@@ -1184,11 +1203,11 @@ def test_a_cd_that_may_not_run_leaves_the_directory_unknown():
     with open(os.path.join(wt, "a.txt"), "w") as fh:
         fh.write("not reviewed\n")
     git(wt, "commit", "-qam", "unsealed")
-    assert bash(h, "PreToolUse", sid, wt, f"cd {repo}; git push origin HEAD:beta", env) == "nothing"   # sealed there
-    bash(h, "PostToolUse", sid, wt, f"cd {repo}; git push origin HEAD:beta", env)
-    for cmd in (f"false && cd {repo}; git push origin HEAD:beta", f"[ -d /nada ] && cd {repo}; git push origin HEAD:beta",
-                f"cd {wt} || cd {repo}; git push origin HEAD:beta", f"cd {repo} | cat; git push origin HEAD:beta",
-                f"cd {repo} & git push origin HEAD:beta", f"if true; then cd {repo}; fi; git push origin HEAD:beta"):
+    assert bash(h, "PreToolUse", sid, wt, f"cd {sh(repo)}; git push origin HEAD:beta", env) == "nothing"   # sealed there
+    bash(h, "PostToolUse", sid, wt, f"cd {sh(repo)}; git push origin HEAD:beta", env)
+    for cmd in (f"false && cd {sh(repo)}; git push origin HEAD:beta", f"[ -d /nada ] && cd {sh(repo)}; git push origin HEAD:beta",
+                f"cd {sh(wt)} || cd {sh(repo)}; git push origin HEAD:beta", f"cd {sh(repo)} | cat; git push origin HEAD:beta",
+                f"cd {sh(repo)} & git push origin HEAD:beta", f"if true; then cd {sh(repo)}; fi; git push origin HEAD:beta"):
         out = bash(h, "PreToolUse", sid, wt, cmd, env)
         assert "MERGE SEAL" in out and "literal path" in out, (cmd, out)
 
@@ -1222,15 +1241,15 @@ def test_an_unknown_directory_is_denied_whatever_the_sessions_repository_says():
     sid = "aeae1111-0001"
     for cmd in (f'cd "$WT_B" && {GM} 5', 'cd "$WT_B" && git push origin HEAD:beta',
                 'cd "$WT_B" && git push origin release', 'cd "$WT_B" && git push --all origin feat/x',
-                f"builtin cd {repo} && git push origin HEAD:beta", f"command cd {repo}; {GM} 5",
-                f"X=1 cd {repo} && git push origin HEAD:beta", 'cd "$WT_B" && git push --mir origin feat/x',
-                f"function f {{ cd {repo}; }}; git push origin HEAD:beta"):
+                f"builtin cd {sh(repo)} && git push origin HEAD:beta", f"command cd {sh(repo)}; {GM} 5",
+                f"X=1 cd {sh(repo)} && git push origin HEAD:beta", 'cd "$WT_B" && git push --mir origin feat/x',
+                f"function f {{ cd {sh(repo)}; }}; git push origin HEAD:beta"):
         out = bash(h, "PreToolUse", sid, repo, cmd, env)
         assert "MERGE SEAL" in out and "literal path" in out, (cmd, out)
         assert holder(h) is None, cmd
     assert bash(h, "PreToolUse", sid, repo, 'cd "$WT_B" && git push origin HEAD:beta',
                 {**env, "SQUAD_SEAL": "0"}) == "nothing"
-    assert bash(h, "PreToolUse", sid, repo, f"cd {repo} && git push origin feat/x", env) == "nothing"
+    assert bash(h, "PreToolUse", sid, repo, f"cd {sh(repo)} && git push origin feat/x", env) == "nothing"
 
 
 def test_turn_status_falls_back_to_master():
@@ -1245,12 +1264,24 @@ def test_turn_status_falls_back_to_master():
     subprocess.run(["git", "-C", repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"], capture_output=True)
     git(repo, "checkout", "-q", "-b", "feat", "origin/master")
     out = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "squad-turn.py"), "status"], cwd=repo,
-                         capture_output=True, text=True, env=dict(os.environ, HOME=h, **env)).stdout
+                         capture_output=True, text=True, env=dict(os.environ, HOME=h, USERPROFILE=h, **env)).stdout
     assert "feat x origin/master" in out, out
 
 
 if __name__ == "__main__":
+    # every test runs, so one failure does not hide the others; the exit code is 1 when any failed
+    import traceback
+    failed = []
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
-            fn()
+            try:
+                fn()
+            except Exception:
+                traceback.print_exc()
+                failed.append(name)
+                print("FAIL", name)
+                continue
             print("ok ", name)
+    if failed:
+        print("failed:", " ".join(failed))
+        sys.exit(1)

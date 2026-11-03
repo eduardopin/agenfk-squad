@@ -10,6 +10,13 @@ import re
 import subprocess
 import unittest
 
+import sys
+
+if os.name == "nt":
+    # its scripts and fakes run through bash and POSIX tools; the cloud-resource pricing guard is not yet verified on Windows
+    print("skipped: the cloud-resource pricing guard is not yet verified on Windows")
+    sys.exit(0)
+
 ROOT = Path(__file__).resolve().parents[1]
 CLOUD = ROOT / 'skills/cloud-resource/references'
 

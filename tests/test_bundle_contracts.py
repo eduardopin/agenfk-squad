@@ -21,7 +21,7 @@ AGENTS = {
 class ContractTests(unittest.TestCase):
     def test_skill_metadata_and_progressive_disclosure(self):
         for name in SKILLS:
-            text = (ROOT / 'skills' / name / 'SKILL.md').read_text()
+            text = (ROOT / 'skills' / name / 'SKILL.md').read_text(encoding="utf-8")
             self.assertTrue(text.startswith('---\nname: ' + name + '\n'), name)
             desc = re.search(r'^description: (.+)$', text, re.M)
             self.assertIsNotNone(desc, name)
@@ -37,14 +37,14 @@ class ContractTests(unittest.TestCase):
     def test_agents_point_to_each_procedure_on_demand(self):
         for skill, agents in AGENTS.items():
             for agent in agents:
-                self.assertIn('`' + skill + '`', (ROOT / 'agents' / (agent + '.md')).read_text(), (skill, agent))
-        rules = (ROOT / 'CLAUDE.md').read_text()
+                self.assertIn('`' + skill + '`', (ROOT / 'agents' / (agent + '.md')).read_text(encoding="utf-8"), (skill, agent))
+        rules = (ROOT / 'CLAUDE.md').read_text(encoding="utf-8")
         for skill in SKILLS:
             self.assertIn('`' + skill + '`', rules, skill)
 
     def test_eval_fixtures_include_positive_negative_and_assertions(self):
         for skill in SKILLS:
-            data = json.loads((ROOT / 'skills' / skill / 'evals/evals.json').read_text())
+            data = json.loads((ROOT / 'skills' / skill / 'evals/evals.json').read_text(encoding="utf-8"))
             self.assertEqual(data['skill_name'], skill)
             self.assertEqual(len(data['evals']), 3)
             self.assertEqual(len({e['id'] for e in data['evals']}), 3)
@@ -58,7 +58,7 @@ class ContractTests(unittest.TestCase):
                    'posixpath', 're', 'sys', 'unicodedata'}
         for skill in SKILLS:
             for path in (ROOT / 'skills' / skill).glob('scripts/*.py'):
-                tree = ast.parse(path.read_text())
+                tree = ast.parse(path.read_text(encoding="utf-8"))
                 imports = set()
                 for node in ast.walk(tree):
                     if isinstance(node, ast.Import):
@@ -73,7 +73,7 @@ class ContractTests(unittest.TestCase):
                         self.assertNotIn(node.func.attr, ('write_text', 'write_bytes', 'unlink', 'mkdir'), path)
 
     def test_dispatch_rules_follow_the_flow_and_the_watcher(self):
-        rules = (ROOT / 'CLAUDE.md').read_text()
+        rules = (ROOT / 'CLAUDE.md').read_text(encoding="utf-8")
         # Rule 3: the parallel fronts ceiling is six, not four.
         self.assertIn('Ceiling ~6 fronts.', rules)
         self.assertNotRegex(rules, r'~4 fronts')
@@ -100,8 +100,8 @@ class ContractTests(unittest.TestCase):
                        'through the merge queue, without asking for an OK'):
             self.assertIn(phrase, body)
         # Rule 7: the numbers are the watcher's own defaults, not older ones.
-        watch = (ROOT / 'hooks/squad-watch.py').read_text()
-        ctx = (ROOT / 'skills/session-context/scripts/session_context.py').read_text()
+        watch = (ROOT / 'hooks/squad-watch.py').read_text(encoding="utf-8")
+        ctx = (ROOT / 'skills/session-context/scripts/session_context.py').read_text(encoding="utf-8")
 
         def default(src, var):
             found = re.search(r'env_(?:int|num)\("' + var + r'", ([\d_]+)', src)
@@ -126,7 +126,7 @@ class ContractTests(unittest.TestCase):
                 if path.is_file():
                     self.assertNotIn(path.suffix, ('.bundle', '.zip', '.pyc'), path)
                     self.assertFalse(path.is_symlink(), path)
-                    self.assertIsNone(forbidden.search(path.read_text()), path)
+                    self.assertIsNone(forbidden.search(path.read_text(encoding="utf-8")), path)
 
 
 if __name__ == '__main__':

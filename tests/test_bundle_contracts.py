@@ -72,6 +72,45 @@ class ContractTests(unittest.TestCase):
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                         self.assertNotIn(node.func.attr, ('write_text', 'write_bytes', 'unlink', 'mkdir'), path)
 
+    def test_dispatch_rules_follow_the_flow_and_the_watcher(self):
+        rules = (ROOT / 'CLAUDE.md').read_text()
+        # Rule 3: the parallel fronts ceiling is six, not four.
+        self.assertIn('Ceiling ~6 fronts.', rules)
+        self.assertNotRegex(rules, r'~4 fronts')
+        # Rule 4 and the table: the review has no mutation step.
+        self.assertNotIn('MUTATE', rules)
+        self.assertIn('REVIEW / ADVERSARIAL / VERIFY', rules)
+        self.assertRegex(rules, r'REVIEW, ADVERSARIAL and VERIFY go to the\s+`verifier`')
+        # Rule 11: a red gate is work; no PR goes in with a defect or a failure.
+        rule = re.search(r'^11\. \*\*No PR passes or is merged with a defect or a failure\*\*(.+?)(?=^\d+\. |\Z)',
+                         rules, re.M | re.S)
+        self.assertIsNotNone(rule)
+        body = ' '.join(rule[1].split())
+        for phrase in ('A red gate is work, not a decision for the owner',
+                       'open a card in AgenFK for each cause',
+                       'Never propose "accept with the failures explained"',
+                       'through the merge queue, without asking for an OK'):
+            self.assertIn(phrase, body)
+        # Rule 7: the numbers are the watcher's own defaults, not older ones.
+        watch = (ROOT / 'hooks/squad-watch.py').read_text()
+        ctx = (ROOT / 'skills/session-context/scripts/session_context.py').read_text()
+
+        def default(src, var):
+            found = re.search(r'env_(?:int|num)\("' + var + r'", ([\d_]+)', src)
+            self.assertIsNotNone(found, var)
+            return int(found[1].replace('_', ''))
+
+        flat = ' '.join(rules.split())
+        self.assertIn('context ≥ %d%% of the window' % default(watch, 'SQUAD_CTX_PCT'), flat)
+        self.assertIn('%d%% of the window with burn ≥ %d%% of the session budget'
+                      % (default(ctx, 'SQUAD_REREAD_FLOOR'), default(ctx, 'SQUAD_BURN_FULL')), flat)
+        self.assertIn('rising to %d%% with zero burn' % default(watch, 'SQUAD_CTX_PCT'), flat)
+        self.assertIn('orchestrator context ≥ %dk' % (default(watch, 'SQUAD_CTX_CEILING') // 1000), flat)
+        self.assertIn('%d sub-sessions in the session' % default(watch, 'SQUAD_MAX_SUBS'), flat)
+        self.assertIn('%d sessions orchestrating at the same time' % default(watch, 'SQUAD_MAX_ORCH'), flat)
+        self.assertIn('with a heavy session, ≥ %dk' % (default(watch, 'SQUAD_ORCH_HERE') // 1000), flat)
+        self.assertIn('%dth reviewer on the same card' % (default(watch, 'SQUAD_MAX_REVIEWS') + 1), flat)
+
     def test_no_private_context_or_bundled_history_in_new_skills(self):
         forbidden = re.compile(r'/home/[a-z]+/|(?<!\d)\d{12}(?!\d)|-----BEGIN .*PRIVATE KEY-----', re.I)
         for skill in SKILLS:

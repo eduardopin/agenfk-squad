@@ -33,7 +33,7 @@ before you spend money on a scenario of your own.
 `--plugin-dir` loads the plugin from the working tree, so the trial runs the
 change on the branch, not the installed copy. Defaults: 3 trials in parallel,
 `claude-opus-5-5`, $3 cap per trial, output under `$SKILL_TRIAL_OUT` (else
-`~/.cache/skill-trial/`). The report exits 1 when any trial FAILED.
+`~/.cache/skill-trial/`). The report exits 1 when any trial FAILED and 3 when a setup failed.
 
 A hook that `install.sh` puts into a Claude config directory is tried first the
 way CONTRIBUTING.md describes, with `CLAUDE_CONFIG_DIR` and `HOME` pointed at
@@ -84,6 +84,9 @@ works.
   `~/.ssh` or `~/.aws`. The network stays open for the API, and the
   Claude OAuth file stays readable because the claude process needs it.
 - A scenario lives under HOME, not `/tmp`: the jail's `/tmp` is empty.
+- SETUP in the report means `setup.sh` failed for that trial (read `setup.log`).
+  It is counted in the total and the report exits 3, which wins over the 1 of a
+  FAIL or ERROR, because the run is incomplete.
 - ERROR in the report means the session never ran (API, auth, jail). Read
   `stderr.txt` before anything else.
 - A trial starts from `env -i` plus HOME, PATH, the CA bundle and the stub's

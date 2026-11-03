@@ -102,7 +102,7 @@ class ReportTests(Tmp):
         self.assertIn('| Trial | Verdict |', r.stdout)
         self.assertIn('| trial-1 | PASS | ok | $0.50 | 4 | 0 | 12s | Added the file. |', r.stdout)
         self.assertIn('| trial-2 | N/A | never reached it |', r.stdout)
-        self.assertIn('2 trials, 0 FAIL, 1 N/A, 0 ERROR, $1.00', r.stdout)
+        self.assertIn('2 trials, 0 FAIL, 1 N/A, 0 ERROR, 0 SETUP, $1.00', r.stdout)
 
     def test_report_marks_a_session_that_never_ran_as_error(self):
         self.trial(1, 2, 'API Error: Cannot reach the API server', 'never reached it', cost=0)
@@ -110,6 +110,18 @@ class ReportTests(Tmp):
         self.assertEqual(r.returncode, 1)
         self.assertIn('| trial-1 | ERROR |', r.stdout)
         self.assertIn('1 ERROR', r.stdout)
+
+    def test_report_counts_a_failed_setup_and_exits_3(self):
+        self.trial(1, 0, 'Done.')
+        t = self.tmp / 'trial-2'
+        t.mkdir()
+        (t / 'check.rc').write_text('3\n')
+        (t / 'check.out').write_text('setup failed\n')
+        r = run(['python3', REPORT, self.tmp], timeout=30)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn('| trial-2 | SETUP |', r.stdout)
+        self.assertIn('2 trials, 0 FAIL, 0 N/A, 0 ERROR, 1 SETUP', r.stdout)
+        self.assertIn('usage:', run(['python3', REPORT, '--help'], timeout=30).stdout)
 
     def test_commands_lists_the_bash_commands_of_a_stream(self):
         ev = {'type': 'assistant', 'message': {'content': [

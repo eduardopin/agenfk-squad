@@ -82,7 +82,9 @@ works.
   in a file nobody listed, is readable, and the network is open. `--out` is
   refused when it is, holds or sits inside `~/.claude`, `~/.config`, `~/.local`,
   `~/.ssh` or `~/.aws`. The network stays open for the API, and the
-  Claude OAuth file stays readable because the claude process needs it.
+  Claude OAuth file stays readable because the claude process needs it,
+  unless the scenario's `env` file sets `ANTHROPIC_API_KEY=`: then the file is
+  masked and a trial of that scenario never sees it.
 - A scenario lives under HOME, not `/tmp`: the jail's `/tmp` is empty.
 - SETUP in the report means `setup.sh` failed for that trial (read `setup.log`).
   It is counted in the total and the report exits 3, which wins over the 1 of a

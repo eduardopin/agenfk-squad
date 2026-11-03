@@ -270,6 +270,26 @@ class TrialRunTests(Tmp):
         self.assertIn('RUN=0', probe)
         self.assertIn('MNT=0', probe)
 
+    def test_oauth_file_is_masked_only_for_a_scenario_with_its_own_key(self):
+        home = self.tmp / 'home'
+        (home / '.claude').mkdir(parents=True)
+        (home / '.claude' / '.credentials.json').write_text('oauth-secret')
+        fake = self.tmp / 'bin'
+        fake.mkdir()
+        (fake / 'claude').write_text('#!/usr/bin/env bash\ncat "$HOME/.claude/.credentials.json" > cred.txt 2>&1\n')
+        (fake / 'claude').chmod(0o755)
+        env = {**os.environ, 'HOME': str(home), 'SKILL_TRIAL_CLAUDE': str(fake / 'claude')}
+        own = self.tmp / 'own-key'
+        shutil.copytree(SCENARIO, own)
+        (own / 'env').write_text('ANTHROPIC_API_KEY=sk-test\n')
+        seen = {}
+        for name, scen in (('default', SCENARIO), ('own', own)):
+            out = self.tmp / f'out-{name}'
+            run(['bash', TRIAL, '--scenario', scen, '--n', '1', '--out', out], env=env)
+            seen[name] = (out / 'trial-1' / 'repo' / 'cred.txt').read_text()
+        self.assertEqual(seen['default'], 'oauth-secret')
+        self.assertNotIn('oauth-secret', seen['own'])
+
     def test_refuses_an_output_folder_that_touches_a_steering_path(self):
         home = self.tmp / 'home'
         for d in ('.claude', '.config', '.local', '.ssh', '.aws', '.cache'):

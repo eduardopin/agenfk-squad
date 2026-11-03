@@ -88,7 +88,15 @@ jail() {
            telemetry todos statsig plans tasks; do
     [ -d "$HOME/.claude/$d" ] && a+=(--tmpfs "$HOME/.claude/$d")
   done
-  [ -f "$HOME/.claude/.credentials.json" ] && a+=(--bind "$HOME/.claude/.credentials.json" "$HOME/.claude/.credentials.json")
+  # A scenario that brings its own ANTHROPIC_API_KEY never needs the OAuth file,
+  # so it is masked; otherwise the claude process needs it and a refresh rotates it.
+  if [ -f "$HOME/.claude/.credentials.json" ]; then
+    if grep -qE '^ANTHROPIC_API_KEY=' "$SCEN/env" 2>/dev/null; then
+      a+=(--ro-bind /dev/null "$HOME/.claude/.credentials.json")
+    else
+      a+=(--bind "$HOME/.claude/.credentials.json" "$HOME/.claude/.credentials.json")
+    fi
+  fi
   if [ -f "$HOME/.claude.json" ]; then cp "$HOME/.claude.json" "$cfg"; a+=(--bind "$cfg" "$HOME/.claude.json"); fi
   printf '%s\0' "${a[@]}"
 }

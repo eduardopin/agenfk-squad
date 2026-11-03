@@ -17,6 +17,13 @@ import sys
 import tempfile
 import time
 
+
+if os.name == "nt":
+    # squad-wake drives herdr panes and there is no herdr on Windows (docs/installation.md); install.ps1
+    # does not install it, and the fake herdr here is a script with a shebang
+    print("skipped: squad-wake needs herdr, which does not run on Windows")
+    sys.exit(0)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WAKE = os.path.join(ROOT, "hooks", "squad-wake.py")
 WATCH = os.path.join(ROOT, "hooks", "squad-watch.py")
@@ -151,7 +158,7 @@ def test_stopped_without_delivering_gets_a_one_line_wake():
     p = lines(h, "prompts")
     assert len(p) == 1 and p[0].startswith("w1:p1 [squad-watch] WAKE:"), p
     for must in ("git status", "AgenFK", "squad-turn status", "background", "[squad] BLOCKED:",
-                 "[squad] DONE:"):
+                 "[squad] END:"):
         assert must in p[0], must
     assert mine(h, SID)["n"] == 1
     assert "WAKE sent" in wakes_log(h)
@@ -227,6 +234,18 @@ def test_declared_done_is_not_woken_and_blocked_tells_the_owner_once():
     assert lines(h, "prompts") == []
     nt = lines(h, "notices")
     assert len(nt) == 1 and "approve the cloud login" in nt[0], nt
+
+
+def test_declared_end_is_not_woken():
+    # END is the mark the wake prompt asks for (DONE, above, is accepted too)
+    h = home()
+    fake_herdr(h, {"w1:p1": [SID, "idle"]})
+    conversation(h, SID, reply="All merged.\n[squad] END: no open card I can take", ago=5000)
+    scan(h)
+    scan(h)
+    assert lines(h, "prompts") == []
+    assert lines(h, "notices") == []
+    assert "declared END" in scan(h, None, "--dry-run").stdout
 
 
 def test_backoff_doubles_the_deadline_and_stops_at_the_wake_ceiling():

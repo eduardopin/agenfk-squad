@@ -174,7 +174,7 @@ def pending(session, copy):
         os.makedirs(CLAIMS, exist_ok=True)
         dest = os.path.join(CLAIMS, f"{session}.pickup")
         tmp = f"{dest}.{os.getpid()}.tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(copy)
         os.replace(tmp, dest)

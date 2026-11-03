@@ -313,9 +313,10 @@ session itself when it comes back.
 It never wakes a pane that is working or whose session changed between the
 decision and the send, a session whose owner asked to stop, a session at
 handoff level or switching, a session idle for more than `SQUAD_WAKE_AGE`
-(43200), or one whose last reply ends with a line `[squad] DONE: <why nothing
-is left>` or `[squad] BLOCKED: <what only the owner can do>` (the owner gets a
-herdr notification once). Unreadable watcher state means no wake.
+(43200), or one whose last reply ends with a line `[squad] END: <why nothing
+is left>` (`[squad] DONE:` is accepted too) or `[squad] BLOCKED: <what only the
+owner can do>` (the owner gets a herdr notification once). Unreadable watcher
+state means no wake.
 
 Each wake without progress doubles the deadline, up to `SQUAD_WAKE_CEILING`
 (3600); after `SQUAD_WAKE_MAX` (6) wakes in a row without progress it only

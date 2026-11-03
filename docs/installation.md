@@ -343,6 +343,10 @@ directory if you want it gone.
   switch does not run. The watcher still orders the handoff and writes it;
   you type `/clear` and then `/clear-pickup pickup`. Everything else in the
   watcher is the same.
+- **No squad-wake.** `hooks/squad-wake.py` calls back idle sessions through
+  herdr panes, so it does not run on Windows either: `install.ps1` does not
+  install it and no timer is set up. A session that stops without
+  delivering waits until you look at it.
 - **No chmod.** The squad's state under `%USERPROFILE%\.claude\squad` is
   protected by your profile's folder permissions (ACLs), not by mode bits:
   the `0600` and `0700` the Linux hooks set are not applied, and the

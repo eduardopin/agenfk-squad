@@ -21,7 +21,7 @@ It does not wake:
   - a working pane, or one whose session changed between the decision and the send;
   - when the owner asked to stop, pause or hand off (squad-watch's asked_stop);
   - a session at handoff level or switching (squad-switch is in charge);
-  - a last reply with `[squad] DONE: ...` (nothing more it can do) or
+  - a last reply with `[squad] END: ...` (nothing more it can do; `[squad] DONE: ...` too) or
     `[squad] BLOCKED: ...` (depends on the owner; the owner is told once).
 Backoff: each wake without progress doubles the deadline, up to
 SQUAD_WAKE_CEILING (3600) s; after SQUAD_WAKE_MAX (6) wakes in a row without
@@ -101,7 +101,7 @@ COPIES = os.path.join(BASE, "handoffs")
 
 PREFIX = "[squad-watch] WAKE"
 # only at the start of a line and with real content: quoting the template ("<what ...>") does not count
-MARK = re.compile(r"(?m)^[\s>*`-]*\[squad\]\s*(DONE|BLOCKED)\s*:\s*([^<\s`][^\n]{0,200})$", re.I)
+MARK = re.compile(r"(?m)^[\s>*`-]*\[squad\]\s*(END|DONE|BLOCKED)\s*:\s*([^<\s`][^\n]{0,200})$", re.I)
 CHANGES = {"Edit", "Write", "NotebookEdit", "MultiEdit", "Agent", "Task"}
 # the git subcommand as a whole word (not `merge-base`, nor `--grep=commit`), with git's global
 # options before it; --dry-run only counts outside quotes (the commit message may mention it)
@@ -135,7 +135,7 @@ def text(minutes):
             "call you back on its own (the merge turn, a live background command), say in one line what you "
             "are waiting for and stop. Only stop for good by ending with one of these lines: "
             "`[squad] BLOCKED: <what only the owner can do>` or "
-            "`[squad] DONE: <why nothing is left that you can do>`.")
+            "`[squad] END: <why nothing is left that you can do>`.")
 
 
 def log(pane, msg):
@@ -428,8 +428,8 @@ def decide(a, now, dry_run=False):
     m = None
     for m in MARK.finditer(reply):
         pass
-    if m and m.group(1).upper() == "DONE":
-        return "none", "declared DONE", ctx
+    if m and m.group(1).upper() in ("END", "DONE"):
+        return "none", f"declared {m.group(1).upper()}", ctx
     if m and m.group(1).upper() == "BLOCKED":
         if mine.get("blocked_notified") != int(os.path.getmtime(tr)):
             ctx["mark"] = "blocked_notified"

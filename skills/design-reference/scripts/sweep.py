@@ -94,6 +94,7 @@ LIBS = [("@radix-ui/themes", "Radix Themes"), ("@radix-ui/", "Radix"), ("@mui/ma
         ("@nextui-org/react", "NextUI"), ("@heroui/react", "HeroUI"), ("vuetify", "Vuetify"),
         ("@angular/material", "Angular Material"), ("primereact", "PrimeReact"),
         ("bootstrap", "Bootstrap"), ("@shadcn/ui", "shadcn")]
+RE_INTERNAL_LIB = re.compile(r"^@[\w-]+/(ui|design-system|ds|components|tokens|theme)$")   # the company's own kit
 
 RE_COLOR = re.compile(r"^\s*(#[0-9a-fA-F]{3,8}|-?[\d.]+(?:deg)?\s+[\d.]+%\s+[\d.]+%"
                       r"(?:\s*/\s*[\d.]+%?)?|[a-z]+)\s*$")
@@ -774,6 +775,7 @@ def _sweep(root):
     storybook = False
     shadcn = False
     package_name = None
+    seen_components = set()   # components in a set too: a membership test per dependency stays O(1)
     internal_lib = None
     counted = 0
     truncated = False
@@ -849,28 +851,37 @@ def _sweep(root):
                     pkg = json.loads(read(path, real_root))
                 except ValueError:
                     continue
+                if not isinstance(pkg, dict):   # [1,2], null, 123: valid JSON, not a manifest
+                    continue
+                name = pkg.get("name")
+                name = name if isinstance(name, str) else ""
                 if r == "package.json":
-                    package_name = package_name or pkg.get("name")
+                    package_name = package_name or name or None
                 deps = {}
                 for key in ("dependencies", "devDependencies", "peerDependencies"):
-                    deps.update(pkg.get(key) or {})
+                    block = pkg.get(key)
+                    if isinstance(block, dict):
+                        deps.update(block)
                 for d in deps:
                     for prefix, lib in LIBS:
                         if d == prefix or (prefix.endswith("/") and d.startswith(prefix)):
-                            if lib not in components:
+                            if lib not in seen_components:
+                                seen_components.add(lib)
                                 components.append(lib)
-                    if re.match(r"^@[\w-]+/(ui|design-system|ds|components|tokens|theme)$", d):
+                    if RE_INTERNAL_LIB.match(d):
                         internal_lib = internal_lib or d
-                        if d not in components:
+                        if d not in seen_components:
+                            seen_components.add(d)
                             components.append(d)
-                name = pkg.get("name") or ""
-                if re.match(r"^@[\w-]+/(ui|design-system|ds|components|tokens|theme)$", name):
+                if RE_INTERNAL_LIB.match(name):
                     internal_lib = internal_lib or name
-                    if name not in components:
+                    if name not in seen_components:
+                        seen_components.add(name)
                         components.append(name)
             elif al.startswith("readme"):
                 figma += RE_FIGMA.findall(read(path, real_root))
-        except (RecursionError, ValueError, MemoryError) as error:   # a hostile file does not bring the sweep down
+        # A hostile file does not bring the sweep down.
+        except (RecursionError, ValueError, MemoryError, TypeError, AttributeError) as error:
             conflicts.append(f"{rel(root, path)} skipped: {type(error).__name__}")
         except OutOfTime:
             truncated = True

@@ -647,6 +647,7 @@ HOSTILE_FILES = {
     "app/layout.tsx": ["import x from 'next/font/google'\nInter({"],
     "tokens.json": ['{"color":{"bg":{"$value":"'],
     "theme.json": ['{"a":'],
+    "package.json": ['{"name":"', '{"dependencies":{"', '{"dependencies":{"@a/ui":'],
 }
 HOSTILE_RUNS = [" ", "\t", "#", "var(--a", "{", "(", "'", '"', "a", "-", " \t#var(--a {('\"\n"]
 HOSTILE_SIZE = 200_000
@@ -661,6 +662,38 @@ def test_hostile_text_in_every_file_kind_is_swept_fast():
                     timed({path: text}, 5, "--json")
                 except AssertionError as e:
                     raise AssertionError(f"{path} {prefix!r} + {chunk!r} * {HOSTILE_SIZE // 1000} KB: {e}") from None
+
+
+# 5q. A package.json that is valid JSON of the wrong shape is ignored, not a Traceback: before, a list,
+# null or a number at the top raised AttributeError, a non-object dependency block or a non-string name
+# a TypeError, and the whole sweep exited 1.
+def test_package_json_of_the_wrong_shape_does_not_bring_the_sweep_down():
+    for text in ("[1,2]", "null", "123", '"x"', "true", '{"dependencies":5}', '{"dependencies":[1,2]}',
+                 '{"devDependencies":"x"}', '{"peerDependencies":null}', '{"name":123}', '{"name":["@a/ui"]}',
+                 '{"name":{"x":1}}'):
+        root = project({"package.json": text, "tokens.css": TOKENS})
+        code, out, err = run(root, "--json")
+        assert code == 0 and "Traceback" not in err, f"{text}: rc={code} {err[-300:]}"
+        a = json.loads(out)
+        assert a["verdict"] == "project" and a["roles"]["accent"] == "#0f766e", f"{text}: {a['verdict']}"
+        assert a["components"] == [] and a["system"] is None, f"{text}: {a['components']} {a['system']}"
+        assert not any("package.json" in c for c in a["conflicts"]), f"{text}: {a['conflicts']}"
+    # The usable parts of a half-broken manifest still count.
+    a = finding(project({"package.json": json.dumps({"name": 5, "dependencies": [1], "devDependencies":
+                                                     {"@acme/ui": "1", "@mui/material": "5"}}), "tokens.css": TOKENS}))
+    assert a["components"] == ["@acme/ui", "MUI"] and a["system"] == "@acme/ui", (a["components"], a["system"])
+    a = finding(project({"package.json": json.dumps({"name": "@acme/ds", "dependencies": 7}), "tokens.css": TOKENS}))
+    assert a["components"] == ["@acme/ds"] and a["system"] == "@acme/ds", (a["components"], a["system"])
+
+
+# 5r. Each dependency was looked up in the components list (linear): 52k of them took 9 s.
+def test_fifty_thousand_dependencies_are_read_fast():
+    deps = {f"@s{i}/ui": "1" for i in range(50_000)}
+    deps.update({"@radix-ui/react-dialog": "1", "@s0/ui": "2"})
+    out = timed({"package.json": json.dumps({"name": "big", "dependencies": deps})}, 2, "--json")
+    a = json.loads(out)
+    assert len(a["components"]) == 50_001 and a["components"][:2] == ["@s0/ui", "@s1/ui"], a["components"][:3]
+    assert a["components"].count("Radix") == 1 and len(set(a["components"])) == 50_001, "no duplicate"
 
 
 # 5g. Limits against a large repository: files and depth

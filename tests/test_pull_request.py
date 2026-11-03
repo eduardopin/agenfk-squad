@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""O gate de PR pega o titulo e o corpo ruins, em pt e en, e deixa passar os bons.
+"""The PR gate catches bad titles and bodies, in pt and en, and lets good ones through.
 
-Auto-verificavel: o codigo de saida e o veredito. Repositorios git
-descartaveis, HOME descartavel e um `gh` de mentira na frente do PATH: nada sai
-para a rede e nada toca em ~/.claude. Nao depende da skill `escrita`.
+Self-checking: the exit code is the verdict. Throwaway git repositories, a
+throwaway HOME and a fake `gh` at the front of PATH: nothing goes out to the
+network and nothing touches ~/.claude. It does not depend on the `writing` skill.
 
     python3 tests/test_pull_request.py
 """
@@ -14,7 +14,10 @@ import subprocess
 import sys
 import tempfile
 
-sys.dont_write_bytecode = True  # a skill mora num repo versionado: nada de __pycache__
+sys.dont_write_bytecode = True  # the skill lives in a versioned repo: no __pycache__
+# Every child below runs `python -I -B`: -I ignores PYTHONDONTWRITEBYTECODE, and without -B pr_check would
+# write a .pyc into skills/pr-evidence/ (it loads pr_evidence by path), which turns
+# tests/test_bundle_contracts.py red.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "skills", "pull-request")
 HOOK = os.path.join(SKILL, "hooks", "pr_gate.py")
@@ -24,10 +27,10 @@ sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import pr_check  # noqa: E402
 import review_comments  # noqa: E402
 
-# Um `gh` de mentira: imprime o arquivo de FAKE_GH_OUT, ou falha como sem login.
+# A fake `gh`: prints the file named in FAKE_GH_OUT, or fails as if not logged in.
 FAKE_BIN = tempfile.mkdtemp(prefix="pr-fakebin-")
 with open(os.path.join(FAKE_BIN, "gh"), "w") as fh:
-    fh.write('#!/bin/sh\n[ -n "$FAKE_GH_OUT" ] && exec cat "$FAKE_GH_OUT"\necho "gh: sem login" >&2\nexit 1\n')
+    fh.write('#!/bin/sh\n[ -n "$FAKE_GH_OUT" ] && exec cat "$FAKE_GH_OUT"\necho "gh: not logged in" >&2\nexit 1\n')
 os.chmod(os.path.join(FAKE_BIN, "gh"), 0o755)
 os.environ["PATH"] = FAKE_BIN + os.pathsep + os.environ.get("PATH", "")
 os.environ.pop("FAKE_GH_OUT", None)
@@ -35,7 +38,8 @@ GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
 
-BOM_PT = """O aviso do tour guiado aparecia a cada visita, e quem ja tinha visto o tour precisava fecha-lo de novo. A mudanca grava que o aviso foi visto e nao mexe no conteudo do tour.
+# The Portuguese body stays: the gate supports pt, and these cases keep that support honest.
+GOOD_PT = """O aviso do tour guiado aparecia a cada visita, e quem ja tinha visto o tour precisava fecha-lo de novo. A mudanca grava que o aviso foi visto e nao mexe no conteudo do tour.
 
 ## Antes e depois
 
@@ -106,7 +110,7 @@ Nenhum. Nao ha recurso cobrado.
 | unidade | `npm test` | 42 passaram, 0 falharam |
 """
 
-BOM_EN = """The guided tour notice showed on every visit, so people who had already seen the tour had to close it again. The change records that the notice was seen and leaves the tour content alone.
+GOOD_EN = """The guided tour notice showed on every visit, so people who had already seen the tour had to close it again. The change records that the notice was seen and leaves the tour content alone.
 
 ## Before and after
 
@@ -188,7 +192,7 @@ def git(repo, *args):
 
 
 def repo(files=None, commits=()):
-    """Repositorio git descartavel com estes arquivos e, depois, estes commits vazios."""
+    """A throwaway git repository with these files and, after them, these empty commits."""
     path = tempfile.mkdtemp(prefix="pr-repo-")
     git(path, "init", "-q", "-b", "main")
     for name, text in (files or {}).items():
@@ -197,7 +201,7 @@ def repo(files=None, commits=()):
         with open(full, "w", encoding="utf-8") as fh:
             fh.write(text)
     git(path, "add", "-A")
-    git(path, "commit", "-q", "--allow-empty", "-m", "Cria o repositorio de teste")
+    git(path, "commit", "-q", "--allow-empty", "-m", "Create the test repository")
     for msg in commits:
         git(path, "commit", "-q", "--allow-empty", "-m", msg)
     return path
@@ -212,29 +216,31 @@ def hook(payload, env=None):
     e = {k: v for k, v in os.environ.items() if not k.startswith(("SQUAD_", "FAKE_GH"))}
     e["HOME"] = tempfile.mkdtemp(prefix="pr-home-")
     e.update(env or {})
-    p = subprocess.run([sys.executable, "-I", HOOK], input=json.dumps(payload),
+    p = subprocess.run([sys.executable, "-I", "-B", HOOK], input=json.dumps(payload),
                        capture_output=True, text=True, env=e, timeout=60)
     assert p.returncode == 0, p.stderr
     return p
 
 
 def decision(p):
+    """("passthrough" | "deny" | "allow", message) from the hook's stdout."""
     if not p.stdout.strip():
-        return "passagem", ""
+        return "passthrough", ""
     out = json.loads(p.stdout)["hookSpecificOutput"]
     if out.get("permissionDecision") == "deny":
-        return "nega", out["permissionDecisionReason"]
-    return "passa", out.get("additionalContext", "")
+        return "deny", out["permissionDecisionReason"]
+    return "allow", out.get("additionalContext", "")
 
 
 def bash(cwd, command):
     return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd}
 
 
-# --- titulo -------------------------------------------------------------------
+# --- title --------------------------------------------------------------------
 
-def test_titulo_pt_ruim_e_nega_com_o_codigo_certo():
-    ruins = {
+def test_bad_pt_title_is_denied_with_the_right_code():
+    """Pins every title rule for pt: each bad title must come back with its own code, not just any."""
+    bad = {
         "Permissões dos seis papéis": "TITLE_NO_VERB",
         "Skill pull-request adaptada ao squad": "TITLE_NO_VERB",
         "Fase 6: cria o bucket de exportação": "TITLE_STEP_LABEL",
@@ -246,29 +252,31 @@ def test_titulo_pt_ruim_e_nega_com_o_codigo_certo():
         "feature/skill-pull-request": "TITLE_BRANCH_NAME",
         "Move o bucket aws_s3_bucket.exports para outra conta": "TITLE_CODE_IDENTIFIER",
     }
-    for title, code in ruins.items():
+    for title, code in bad.items():
         got = codes(pr_check.check_title(title, "pt"))
         assert code in got, (title, got)
 
 
-def test_titulo_pt_bom_passa_com_id_so_como_sufixo():
+def test_good_pt_title_passes_with_id_only_as_suffix():
+    """Pins that a good pt title is not flagged, and that a ticket id is fine as a suffix."""
     for title in ("O aviso do tour guiado passou a aparecer uma vez só",
                   "Move a exportação para um job em segundo plano",
                   "Move a exportação para um job em segundo plano (F6-B4)",
-                  "Vigia: limiar invalido no ambiente nao desliga o freio",
+                  "Monitor: limiar invalido no ambiente nao desliga o freio",
                   "Corrige o login quando a senha tem acento"):
         assert pr_check.check_title(title, "pt") == [], (title, pr_check.check_title(title, "pt"))
 
 
-def test_titulo_en_ruim_e_bom():
-    ruins = {
+def test_en_title_bad_and_good():
+    """Pins the en title rules: bad titles carry their code, good titles (id suffix, prefix) pass."""
+    bad = {
         "permissions boundaries for the six roles": "TITLE_NO_VERB",
         "Adding cache to reports": "TITLE_ACTIVITY",
         "Move a exportação para um job em segundo plano": "TITLE_NOT_ENGLISH",
         "Add the export bucket for phase 6": "TITLE_STEP_LABEL",
         "Updates": "TITLE_GENERIC",
     }
-    for title, code in ruins.items():
+    for title, code in bad.items():
         got = codes(pr_check.check_title(title, "en"))
         assert code in got, (title, got)
     for title in ("Move dealer exports to a background job",
@@ -277,54 +285,58 @@ def test_titulo_en_ruim_e_bom():
         assert pr_check.check_title(title, "en") == [], (title, pr_check.check_title(title, "en"))
 
 
-# --- corpo --------------------------------------------------------------------
+# --- body ---------------------------------------------------------------------
 
-def test_corpo_bom_passa_e_secoes_valem_nos_dois_idiomas():
-    assert pr_check.check_body(BOM_PT, "app", "pt") == []
-    assert pr_check.check_body(BOM_EN, "app", "en") == []
-    assert pr_check.check_body(BOM_EN, "app", "pt") == []
+def test_good_body_passes_and_sections_hold_in_both_languages():
+    """Pins that the good body passes in its own language and that en headings are also accepted under pt."""
+    assert pr_check.check_body(GOOD_PT, "app", "pt") == []
+    assert pr_check.check_body(GOOD_EN, "app", "en") == []
+    assert pr_check.check_body(GOOD_EN, "app", "pt") == []
 
 
-def test_corpo_sem_secao_e_sem_linha_de_segredos_e_negado():
-    got = codes(pr_check.check_body(without_section(BOM_PT, "Varreduras"), "app", "pt"))
+def test_body_missing_a_section_or_the_secrets_row_is_denied():
+    """Pins SECTION_MISSING (named in English whatever the body language) and SCAN_MISSING:secrets."""
+    got = codes(pr_check.check_body(without_section(GOOD_PT, "Varreduras"), "app", "pt"))
     assert "SECTION_MISSING:Scans" in got, got
-    got = codes(pr_check.check_body(without_section(BOM_EN, "Risk analysis"), "app", "en"))
+    got = codes(pr_check.check_body(without_section(GOOD_EN, "Risk analysis"), "app", "en"))
     assert "SECTION_MISSING:Risk analysis" in got, got
-    sem_segredos = BOM_PT.replace("| Segredos (gitleaks) | `gitleaks detect` | Passou |\n", "")
-    assert codes(pr_check.check_body(sem_segredos, "app", "pt")) == {"SCAN_MISSING:secrets"}
+    no_secrets = GOOD_PT.replace("| Segredos (gitleaks) | `gitleaks detect` | Passou |\n", "")
+    assert codes(pr_check.check_body(no_secrets, "app", "pt")) == {"SCAN_MISSING:secrets"}
 
 
-def test_template_cru_e_negado_por_placeholder():
-    for name, lang in (("body.md", "en"),):
-        with open(os.path.join(SKILL, "templates", name), encoding="utf-8") as fh:
-            got = codes(pr_check.check_body(fh.read(), "app", lang))
-        assert "PLACEHOLDER" in got, (name, got)
+def test_raw_template_is_denied_for_placeholders():
+    """Pins PLACEHOLDER: the unfilled body template must not pass as a body."""
+    with open(os.path.join(SKILL, "templates", "body.md"), encoding="utf-8") as fh:
+        got = codes(pr_check.check_body(fh.read(), "app", "en"))
+    assert "PLACEHOLDER" in got, got
 
 
-def test_pr_de_infra_com_mutacao_em_testes_e_negado():
-    linha = "| unidade | `npm test` | 42 passaram, 0 falharam |"
-    com_mutacao = BOM_PT.replace(linha, linha + "\n| mutação | `mutmut run` | 12 mutantes mortos |")
-    assert "TESTS_FORBIDDEN" in codes(pr_check.check_body(com_mutacao, "infra", "pt"))
-    assert "TESTS_FORBIDDEN" not in codes(pr_check.check_body(com_mutacao, "app", "pt"))
-    en = BOM_EN.replace("| unit | `npm test` | 42 passed, 0 failed |",
-                        "| mutation | `stryker run` | 90% killed |")
+def test_infra_pr_with_mutation_in_tests_is_denied():
+    """Pins TESTS_FORBIDDEN: an infra PR cannot list mutation testing, an app PR can; same through the CLI."""
+    row = "| unidade | `npm test` | 42 passaram, 0 falharam |"
+    with_mutation = GOOD_PT.replace(row, row + "\n| mutação | `mutmut run` | 12 mutantes mortos |")
+    assert "TESTS_FORBIDDEN" in codes(pr_check.check_body(with_mutation, "infra", "pt"))
+    assert "TESTS_FORBIDDEN" not in codes(pr_check.check_body(with_mutation, "app", "pt"))
+    en = GOOD_EN.replace("| unit | `npm test` | 42 passed, 0 failed |",
+                         "| mutation | `stryker run` | 90% killed |")
     assert "TESTS_FORBIDDEN" in codes(pr_check.check_body(en, "infra", "en"))
-    # pela CLI: o tipo sai da lista de arquivos do PR
+    # through the CLI: the kind comes from the PR's file list
     d = tempfile.mkdtemp(prefix="pr-cli-")
-    corpo, arquivos = os.path.join(d, "corpo.md"), os.path.join(d, "arquivos")
-    with open(corpo, "w", encoding="utf-8") as fh:
-        fh.write(com_mutacao)
-    with open(arquivos, "w") as fh:
+    body_file, files_file = os.path.join(d, "body.md"), os.path.join(d, "files")
+    with open(body_file, "w", encoding="utf-8") as fh:
+        fh.write(with_mutation)
+    with open(files_file, "w") as fh:
         fh.write("stacks/export/main.tf\n")
-    p = subprocess.run([sys.executable, "-I", CHECK, corpo, "--lang", "pt", "--files", arquivos,
+    p = subprocess.run([sys.executable, "-I", "-B", CHECK, body_file, "--lang", "pt", "--files", files_file,
                         "--title", "Move a exportação para um job em segundo plano"],
                        capture_output=True, text=True)
     assert p.returncode == 1 and "TESTS_FORBIDDEN" in p.stdout and "infra PR" in p.stdout, p.stdout
 
 
-# --- idioma -------------------------------------------------------------------
+# --- language -----------------------------------------------------------------
 
-def test_idioma_auto_le_claude_md_depois_prs_depois_commits_senao_pt():
+def test_auto_language_reads_claude_md_then_prs_then_commits_else_en():
+    """Pins the detection order (policy file, PR titles, commits) and that the last resort is en, not pt."""
     r = repo({"CLAUDE.md": "# Regras\n\nConversa em português; títulos de PR e commits em inglês.\n"},
              commits=["Corrige o login quando a senha tem acento"])
     assert pr_check.detect_lang(r) == ("en", "CLAUDE.md")
@@ -332,7 +344,7 @@ def test_idioma_auto_le_claude_md_depois_prs_depois_commits_senao_pt():
     assert pr_check.detect_lang(r) == ("pt", "AGENTS.md")
 
     r = repo(commits=["Corrige o login quando a senha tem acento", "Move a exportação para um job"])
-    out = os.path.join(tempfile.mkdtemp(), "titulos")
+    out = os.path.join(tempfile.mkdtemp(), "titles")
     with open(out, "w") as fh:
         fh.write("Move dealer exports to a background job\nAdd a retry to the export\nFix the login for the admin\n")
     os.environ["FAKE_GH_OUT"] = out
@@ -340,7 +352,7 @@ def test_idioma_auto_le_claude_md_depois_prs_depois_commits_senao_pt():
         assert pr_check.detect_lang(r) == ("en", "PR titles")
     finally:
         del os.environ["FAKE_GH_OUT"]
-    assert pr_check.detect_lang(r) == ("pt", "commits")  # gh sem login: cai para os commits
+    assert pr_check.detect_lang(r) == ("pt", "commits")  # gh not logged in: falls back to the commits
 
     r = repo(commits=["Add the export job", "Move the retry to the worker for the admin"])
     assert pr_check.detect_lang(r) == ("en", "commits")
@@ -349,572 +361,585 @@ def test_idioma_auto_le_claude_md_depois_prs_depois_commits_senao_pt():
 
 # --- hook ---------------------------------------------------------------------
 
-def _repo_com_corpos(extra=None):
-    files = {"CLAUDE.md": "Títulos de PR em português.\n", "corpo-bom.md": BOM_PT,
-             "corpo-ruim.md": without_section(BOM_PT, "Varreduras")}
+def _repo_with_bodies(extra=None):
+    files = {"CLAUDE.md": "Títulos de PR em português.\n", "good-body.md": GOOD_PT,
+             "bad-body.md": without_section(GOOD_PT, "Varreduras")}
     files.update(extra or {})
     return repo(files)
 
 
-def test_hook_nega_titulo_e_corpo_ruins():
-    r = _repo_com_corpos()
-    d, msg = decision(hook(bash(r, 'gh pr create --title "Ajustes" --body-file corpo-ruim.md')))
-    assert d == "nega" and "TITLE_GENERIC" in msg and "SECTION_MISSING:Scans" in msg, (d, msg)
-    d, msg = decision(hook(bash(r, 'agenfk pr create abc --title "Ajustes" --body "$(cat corpo-bom.md)"')))
-    assert d == "nega" and "TITLE_GENERIC" in msg, (d, msg)
-    d, msg = decision(hook(bash(r, 'gh pr create --body-file corpo-bom.md')))
-    assert d == "nega" and "no --title" in msg, (d, msg)
+def test_hook_denies_bad_title_and_body():
+    """Pins that the hook reports the title and the body problems together, and denies a missing title."""
+    r = _repo_with_bodies()
+    d, msg = decision(hook(bash(r, 'gh pr create --title "Ajustes" --body-file bad-body.md')))
+    assert d == "deny" and "TITLE_GENERIC" in msg and "SECTION_MISSING:Scans" in msg, (d, msg)
+    d, msg = decision(hook(bash(r, 'agenfk pr create abc --title "Ajustes" --body "$(cat good-body.md)"')))
+    assert d == "deny" and "TITLE_GENERIC" in msg, (d, msg)
+    d, msg = decision(hook(bash(r, 'gh pr create --body-file good-body.md')))
+    assert d == "deny" and "no --title" in msg, (d, msg)
 
 
-def test_hook_deixa_passar_o_pr_bom_e_ignora_o_que_nao_e_pr():
-    r = _repo_com_corpos()
+def test_hook_lets_a_good_pr_through_and_ignores_what_is_not_a_pr():
+    """Pins the allow message (with the detected language) and that grep/label edits are not PR creation."""
+    r = _repo_with_bodies()
     d, msg = decision(hook(bash(r, 'gh pr create --title "O aviso do tour passou a aparecer uma vez só" '
-                                   '--body-file corpo-bom.md')))
-    assert d == "passa" and "passed (language pt)" in msg, (d, msg)
-    assert decision(hook(bash(r, 'git log --oneline | grep "gh pr create"')))[0] == "passagem"
-    assert decision(hook(bash(r, 'gh pr edit 12 --add-label infra')))[0] == "passagem"
+                                   '--body-file good-body.md')))
+    assert d == "allow" and "passed (language pt)" in msg, (d, msg)
+    assert decision(hook(bash(r, 'git log --oneline | grep "gh pr create"')))[0] == "passthrough"
+    assert decision(hook(bash(r, 'gh pr edit 12 --add-label infra')))[0] == "passthrough"
 
 
-def test_hook_ferramenta_mcp_nega_e_passa():
-    r = _repo_com_corpos()
+def test_hook_mcp_tool_denies_and_allows():
+    """Pins that the MCP create_pull_request tool goes through the same gate as the Bash command."""
+    r = _repo_with_bodies()
     tool = "mcp__plugin_github_github__create_pull_request"
-    ruim = {"tool_name": tool, "cwd": r, "tool_input": {"owner": "o", "repo": "r", "title": "Ajustes",
-                                                         "body": BOM_PT, "head": "x", "base": "main"}}
-    d, msg = decision(hook(ruim))
-    assert d == "nega" and "TITLE_GENERIC" in msg, (d, msg)
-    bom = json.loads(json.dumps(ruim))
-    bom["tool_input"]["title"] = "Move a exportação para um job em segundo plano"
-    assert decision(hook(bom))[0] == "passa"
+    bad = {"tool_name": tool, "cwd": r, "tool_input": {"owner": "o", "repo": "r", "title": "Ajustes",
+                                                        "body": GOOD_PT, "head": "x", "base": "main"}}
+    d, msg = decision(hook(bad))
+    assert d == "deny" and "TITLE_GENERIC" in msg, (d, msg)
+    good = json.loads(json.dumps(bad))
+    good["tool_input"]["title"] = "Move a exportação para um job em segundo plano"
+    assert decision(hook(good))[0] == "allow"
 
 
-def test_hook_da_passagem_quando_o_projeto_tem_gate_proprio():
-    ruim = 'gh pr create --title "Ajustes" --body-file corpo-ruim.md'
-    com_skill = _repo_com_corpos({".claude/skills/acme-pr-delivery/SKILL.md": "---\nname: acme-pr-delivery\n---\n"})
-    assert decision(hook(bash(com_skill, ruim))) == ("passagem", "")
-    com_hook = _repo_com_corpos({".claude/hooks/guarda.sh": '#!/bin/sh\ncase "$1" in *"gh pr create"*) exit 2;; esac\n'})
-    assert decision(hook(bash(com_hook, ruim))) == ("passagem", "")
-    # skill de pilha de PRs nao e gate de formato: o gate do squad continua valendo
-    so_pilha = _repo_com_corpos({".claude/skills/prs-stack/SKILL.md": "---\nname: prs-stack\n---\n"})
-    assert decision(hook(bash(so_pilha, ruim)))[0] == "nega"
-    assert decision(hook(bash(_repo_com_corpos(), ruim), {"SQUAD_PR_GATE": "0"})) == ("passagem", "")
+def test_hook_passes_through_when_the_project_has_its_own_gate():
+    """Pins the hand-off: a project skill or hook that already gates PRs wins, and SQUAD_PR_GATE=0 turns ours off."""
+    bad = 'gh pr create --title "Ajustes" --body-file bad-body.md'
+    with_skill = _repo_with_bodies({".claude/skills/acme-pr-delivery/SKILL.md": "---\nname: acme-pr-delivery\n---\n"})
+    assert decision(hook(bash(with_skill, bad))) == ("passthrough", "")
+    with_hook = _repo_with_bodies({".claude/hooks/guard.sh": '#!/bin/sh\ncase "$1" in *"gh pr create"*) exit 2;; esac\n'})
+    assert decision(hook(bash(with_hook, bad))) == ("passthrough", "")
+    # a PR-stack skill is not a format gate: the squad gate still applies
+    stack_only = _repo_with_bodies({".claude/skills/prs-stack/SKILL.md": "---\nname: prs-stack\n---\n"})
+    assert decision(hook(bash(stack_only, bad)))[0] == "deny"
+    assert decision(hook(bash(_repo_with_bodies(), bad), {"SQUAD_PR_GATE": "0"})) == ("passthrough", "")
 
 
-def test_hook_com_erro_interno_avisa_e_nao_quebra():
-    r = _repo_com_corpos()
+def test_hook_with_an_internal_error_warns_and_does_not_break():
+    """Pins fail-open: a payload the hook cannot handle warns on stderr and never blocks the tool call."""
+    r = _repo_with_bodies()
     p = hook({"tool_name": "Bash", "tool_input": {"command": ["gh", "pr", "create"]}, "cwd": r})
     assert p.stdout.strip() == "" and "internal error" in p.stderr, (p.stdout, p.stderr)
-    p = subprocess.run([sys.executable, "-I", HOOK], input="isto nao e json", capture_output=True, text=True)
+    p = subprocess.run([sys.executable, "-I", "-B", HOOK], input="this is not json", capture_output=True, text=True)
     assert p.returncode == 0 and p.stdout.strip() == ""
 
 
-# --- inventario e revisao -----------------------------------------------------
+# --- inventory and review -----------------------------------------------------
 
-def test_inventario_em_repo_git_temporario():
-    r = repo({"main.tf": 'resource "aws_s3_bucket" "velho" {\n}\n', "app.py": "def velha():\n    pass\n"})
+def test_inventory_in_a_temporary_git_repo():
+    """Pins that the inventory lists created and deleted resources and functions, in JSON and in markdown."""
+    r = repo({"main.tf": 'resource "aws_s3_bucket" "old" {\n}\n', "app.py": "def old():\n    pass\n"})
     git(r, "checkout", "-q", "-b", "feat")
     with open(os.path.join(r, "main.tf"), "w") as fh:
-        fh.write('resource "aws_s3_bucket" "novo" {\n}\n')
+        fh.write('resource "aws_s3_bucket" "new" {\n}\n')
     with open(os.path.join(r, "app.py"), "w") as fh:
-        fh.write("def nova():\n    pass\n")
-    git(r, "commit", "-q", "-am", "Troca o bucket e a funcao")
-    p = subprocess.run([sys.executable, "-I", INVENTORY, "--repo", r, "--base", "main", "--format", "json"],
+        fh.write("def new():\n    pass\n")
+    git(r, "commit", "-q", "-am", "Swap the bucket and the function")
+    p = subprocess.run([sys.executable, "-I", "-B", INVENTORY, "--repo", r, "--base", "main", "--format", "json"],
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     inv = json.loads(p.stdout)
-    assert [i["name"] for i in inv["resources"]["created"]] == ["aws_s3_bucket.novo"], inv
-    assert [i["name"] for i in inv["resources"]["deleted"]] == ["aws_s3_bucket.velho"], inv
-    assert [i["name"] for i in inv["functions"]["created"]] == ["nova"], inv
-    assert [i["name"] for i in inv["functions"]["deleted"]] == ["velha"], inv
-    md = subprocess.run([sys.executable, "-I", INVENTORY, "--repo", r, "--base", "main"],
+    assert [i["name"] for i in inv["resources"]["created"]] == ["aws_s3_bucket.new"], inv
+    assert [i["name"] for i in inv["resources"]["deleted"]] == ["aws_s3_bucket.old"], inv
+    assert [i["name"] for i in inv["functions"]["created"]] == ["new"], inv
+    assert [i["name"] for i in inv["functions"]["deleted"]] == ["old"], inv
+    md = subprocess.run([sys.executable, "-I", "-B", INVENTORY, "--repo", r, "--base", "main"],
                         capture_output=True, text=True).stdout
-    assert "| `nova` | `app.py` | Created |" in md and "| `velha` | `app.py` | Deleted |" in md, md
+    assert "| `new` | `app.py` | Created |" in md and "| `old` | `app.py` | Deleted |" in md, md
 
 
-def test_revisao_bloqueante_pede_mudanca_e_autorrevisao_so_comenta():
-    diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n x = 1\n+y = segredo\n")
-    achado = {"severity": "Bloqueante", "path": "a.py", "line": 2,
-              "problem": "Segredo no codigo.", "fix": "Leia do ambiente."}
-    rev = review_comments.build_review(diff, [dict(achado)])
+def test_blocking_review_requests_changes_and_self_review_only_comments():
+    """Pins build_review: Blocking inside the diff requests changes with an inline comment, Minor outside the
+    diff goes in the body and approves, self-review is always COMMENT. English is the default text; pt still works."""
+    diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n x = 1\n+y = secret\n")
+    finding = {"severity": "Blocking", "path": "a.py", "line": 2,
+               "problem": "Secret in the code.", "fix": "Read it from the environment."}
+    rev = review_comments.build_review(diff, [dict(finding)])
     assert rev["event"] == "REQUEST_CHANGES" and len(rev["comments"]) == 1, rev
-    assert "**Bloqueante.**" in rev["comments"][0]["body"]
-    menor = dict(achado, severity="Menor", line=40)  # fora do diff: vai para o corpo
-    rev = review_comments.build_review(diff, [menor])
-    assert rev["event"] == "APPROVE" and rev["comments"] == [] and "Fora do diff" in rev["body"], rev
-    assert review_comments.build_review(diff, [dict(achado)], self_review=True)["event"] == "COMMENT"
+    assert "**Blocking.**" in rev["comments"][0]["body"]
+    minor = dict(finding, severity="Minor", line=40)  # outside the diff: goes in the body
+    rev = review_comments.build_review(diff, [minor])
+    assert rev["event"] == "APPROVE" and rev["comments"] == [] and "Outside the diff" in rev["body"], rev
+    assert review_comments.build_review(diff, [dict(finding)], self_review=True)["event"] == "COMMENT"
+    # pt text stays supported, and the pt severity word is accepted as input under the default language
+    rev = review_comments.build_review(diff, [dict(finding, severity="Bloqueante")], lang="pt")
+    assert rev["event"] == "REQUEST_CHANGES" and "**Bloqueante.**" in rev["comments"][0]["body"], rev
+    assert "Fora do diff" in review_comments.build_review(diff, [minor], lang="pt")["body"]
+    rev = review_comments.build_review(diff, [dict(finding, severity="Bloqueante")])
+    assert "**Blocking.**" in rev["comments"][0]["body"], rev
 
 
-# --- regras do corpo, uma a uma -----------------------------------------------
+# --- body rules, one by one ---------------------------------------------------
 
-BOM = {"pt": BOM_PT, "en": BOM_EN}
-
-
-def troca(body, antigo, novo):
-    assert antigo in body, antigo
-    return body.replace(antigo, novo, 1)
+GOOD = {"pt": GOOD_PT, "en": GOOD_EN}
 
 
-def com_abertura(body, texto):
-    return texto + "\n\n" + body.split("\n\n", 1)[1]
+def swap(body, old, new):
+    assert old in body, old
+    return body.replace(old, new, 1)
 
 
-def titulo_de(n, lang):
-    """Titulo bom com exatamente n caracteres."""
+def with_opening(body, text):
+    return text + "\n\n" + body.split("\n\n", 1)[1]
+
+
+def title_of(n, lang):
+    """A good title with exactly n characters."""
     base = "Move a exportação para um job em " if lang == "pt" else "Move dealer exports to a job in "
     return base + "a" * (n - len(base))
 
 
-def test_titulo_longo_so_acima_de_72_caracteres_nos_dois_idiomas():
-    """Trava TITLE_MAX e o `>`: 72 passa, 73 e TITLE_LONG (limite errado ou `>=` mudaria um dos dois)."""
+def test_title_is_long_only_above_72_characters_in_both_languages():
+    """Pins TITLE_MAX and the `>`: 72 passes, 73 is TITLE_LONG (a wrong limit or `>=` would move one of them)."""
     for lang in ("pt", "en"):
-        assert len(titulo_de(72, lang)) == 72
-        assert "TITLE_LONG" not in codes(pr_check.check_title(titulo_de(72, lang), lang)), lang
-        assert "TITLE_LONG" in codes(pr_check.check_title(titulo_de(73, lang), lang)), lang
-        assert "TITLE_LONG" in codes(pr_check.check_title(titulo_de(300, lang), lang)), lang
+        assert len(title_of(72, lang)) == 72
+        assert "TITLE_LONG" not in codes(pr_check.check_title(title_of(72, lang), lang)), lang
+        assert "TITLE_LONG" in codes(pr_check.check_title(title_of(73, lang), lang)), lang
+        assert "TITLE_LONG" in codes(pr_check.check_title(title_of(300, lang), lang)), lang
 
 
-def test_abertura_curta_longa_e_boilerplate_com_limites_exatos():
-    """Trava OPENING_MIN_WORDS (12), OPENING_MAX_WORDS (120) e BOILERPLATE, em pt e en."""
+def test_opening_short_long_and_boilerplate_with_exact_limits():
+    """Pins OPENING_MIN_WORDS (12), OPENING_MAX_WORDS (120) and BOILERPLATE, in pt and en."""
     for lang in ("pt", "en"):
-        body = BOM[lang]
-        palavras = lambda n: " ".join(["palavra"] * n)  # noqa: E731
-        got = codes(pr_check.check_body(com_abertura(body, palavras(11)), "app", lang))
+        body = GOOD[lang]
+        words = lambda n: " ".join(["word"] * n)  # noqa: E731
+        got = codes(pr_check.check_body(with_opening(body, words(11)), "app", lang))
         assert "OPENING_SHORT" in got and "OPENING_LONG" not in got, (lang, got)
-        assert codes(pr_check.check_body(com_abertura(body, palavras(12)), "app", lang)) == set(), lang
-        assert codes(pr_check.check_body(com_abertura(body, palavras(120)), "app", lang)) == set(), lang
-        got = codes(pr_check.check_body(com_abertura(body, palavras(121)), "app", lang))
+        assert codes(pr_check.check_body(with_opening(body, words(12)), "app", lang)) == set(), lang
+        assert codes(pr_check.check_body(with_opening(body, words(120)), "app", lang)) == set(), lang
+        got = codes(pr_check.check_body(with_opening(body, words(121)), "app", lang))
         assert "OPENING_LONG" in got and "OPENING_SHORT" not in got, (lang, got)
-    for lang, abertura in (("pt", "Este PR muda o aviso do tour guiado para aparecer uma vez só por navegador em cada visita."),
-                           ("pt", "Neste PR o aviso do tour guiado passa a aparecer uma vez só por navegador em cada visita."),
-                           ("en", "This PR makes the guided tour notice show once per browser instead of on every single visit."),
-                           ("en", "In this pull request the guided tour notice should show once per browser instead of on every visit.")):
-        got = codes(pr_check.check_body(com_abertura(BOM[lang], abertura), "app", lang))
-        assert got == {"OPENING_BOILERPLATE"}, (abertura, got)
+    for lang, opening in (("pt", "Este PR muda o aviso do tour guiado para aparecer uma vez só por navegador em cada visita."),
+                          ("pt", "Neste PR o aviso do tour guiado passa a aparecer uma vez só por navegador em cada visita."),
+                          ("en", "This PR makes the guided tour notice show once per browser instead of on every single visit."),
+                          ("en", "In this pull request the guided tour notice should show once per browser instead of on every visit.")):
+        got = codes(pr_check.check_body(with_opening(GOOD[lang], opening), "app", lang))
+        assert got == {"OPENING_BOILERPLATE"}, (opening, got)
 
 
-def test_secoes_fora_de_ordem_sao_negadas_nos_dois_idiomas():
-    """Trava SECTION_ORDER: trocar Custo e Analise de risco de lugar nao pode passar."""
+def test_sections_out_of_order_are_denied_in_both_languages():
+    """Pins SECTION_ORDER: swapping Cost and Risk analysis must not pass."""
     for lang, a, b in (("pt", "Custo", "Análise de risco"), ("en", "Cost", "Risk analysis")):
-        body = BOM[lang]
+        body = GOOD[lang]
         i, j = body.index(f"## {a}\n"), body.index(f"## {b}\n")
         k = body.index("\n## ", j + 1)
-        trocado = body[:i] + body[j:k + 1] + body[i:j] + body[k + 1:]
-        assert codes(pr_check.check_body(trocado, "app", lang)) == {"SECTION_ORDER"}, lang
+        swapped = body[:i] + body[j:k + 1] + body[i:j] + body[k + 1:]
+        assert codes(pr_check.check_body(swapped, "app", lang)) == {"SECTION_ORDER"}, lang
         assert "SECTION_ORDER" not in codes(pr_check.check_body(body, "app", lang))
 
 
-def test_secao_com_titulo_e_sem_conteudo_e_negada():
-    """Trava SECTION_EMPTY: `## Custo` vazio nao vale como `Nenhum.`."""
-    for lang, titulo, texto in (("pt", "Custo", "Nenhum. Nao ha recurso cobrado."),
+def test_section_with_a_heading_and_no_content_is_denied():
+    """Pins SECTION_EMPTY: an empty `## Cost` does not count as `None.`."""
+    for lang, heading, text in (("pt", "Custo", "Nenhum. Nao ha recurso cobrado."),
                                 ("en", "Cost", "None. Nothing billable.")):
-        vazio = troca(BOM[lang], f"## {titulo}\n\n{texto}\n\n", f"## {titulo}\n\n")
-        assert codes(pr_check.check_body(vazio, "app", lang)) == {f"SECTION_EMPTY:Cost"}, lang
+        empty = swap(GOOD[lang], f"## {heading}\n\n{text}\n\n", f"## {heading}\n\n")
+        assert codes(pr_check.check_body(empty, "app", lang)) == {"SECTION_EMPTY:Cost"}, lang
 
 
-def test_diagramas_de_estado_e_fluxo_pt_e_en():
-    """Trava _check_diagrams: sem subsecao, sem mermaid e tipo errado de diagrama sao negados."""
+def test_state_and_flow_diagrams_pt_and_en():
+    """Pins _check_diagrams: a missing subsection, a missing mermaid block and a wrong diagram type are denied."""
     for lang in ("pt", "en"):
-        body = BOM[lang]
-        estado = "stateDiagram-v2"
-        errado = troca(body, estado, "flowchart TD")
-        assert codes(pr_check.check_body(errado, "app", lang)) == {"DIAGRAM_KIND:State"}, lang
-        sem_bloco = troca(body, "```mermaid\nstateDiagram-v2\n    [*] --> " + ("NaoVisto" if lang == "pt" else "Unseen"),
-                          "```text\nx\n    [*] --> " + ("NaoVisto" if lang == "pt" else "Unseen"))
-        assert codes(pr_check.check_body(sem_bloco, "app", lang)) == {"DIAGRAM_MISSING:State"}, lang
-        fluxo = "### Fluxo" if lang == "pt" else "### Flow"
-        sem_fluxo = body.replace(fluxo, "### Outra coisa")
-        assert codes(pr_check.check_body(sem_fluxo, "app", lang)) == {"DIAGRAM_MISSING:Flow"}, lang
-        so_estado = troca(body, "```mermaid\nstateDiagram-v2", "```mermaid\nsequenceDiagram")
-        assert codes(pr_check.check_body(so_estado, "app", lang)) == {"DIAGRAM_KIND:State"}, lang
-        # fluxo com sequenceDiagram e valido
-        fluxo_ok = troca(body, "None. No new flow between components." if lang == "en"
-                         else "Nenhum. Nao ha fluxo novo entre componentes.",
-                         "```mermaid\nsequenceDiagram\n    A->>B: oi\n```")
-        assert codes(pr_check.check_body(fluxo_ok, "app", lang)) == set(), lang
+        body = GOOD[lang]
+        unseen = "NaoVisto" if lang == "pt" else "Unseen"
+        wrong = swap(body, "stateDiagram-v2", "flowchart TD")
+        assert codes(pr_check.check_body(wrong, "app", lang)) == {"DIAGRAM_KIND:State"}, lang
+        no_block = swap(body, "```mermaid\nstateDiagram-v2\n    [*] --> " + unseen,
+                        "```text\nx\n    [*] --> " + unseen)
+        assert codes(pr_check.check_body(no_block, "app", lang)) == {"DIAGRAM_MISSING:State"}, lang
+        flow_heading = "### Fluxo" if lang == "pt" else "### Flow"
+        no_flow = body.replace(flow_heading, "### Something else")
+        assert codes(pr_check.check_body(no_flow, "app", lang)) == {"DIAGRAM_MISSING:Flow"}, lang
+        only_sequence = swap(body, "```mermaid\nstateDiagram-v2", "```mermaid\nsequenceDiagram")
+        assert codes(pr_check.check_body(only_sequence, "app", lang)) == {"DIAGRAM_KIND:State"}, lang
+        # a flow with sequenceDiagram is valid
+        flow_ok = swap(body, "None. No new flow between components." if lang == "en"
+                       else "Nenhum. Nao ha fluxo novo entre componentes.",
+                       "```mermaid\nsequenceDiagram\n    A->>B: hi\n```")
+        assert codes(pr_check.check_body(flow_ok, "app", lang)) == set(), lang
 
 
-def test_custo_de_infra_exige_valor_em_dolar():
-    """Trava COST_AMOUNT_MISSING: so PR de infra, e so sem valor."""
-    for lang, nenhum, com_valor in (("pt", "Nenhum. Nao ha recurso cobrado.", "US$ 0.00 por mes."),
+def test_infra_cost_requires_a_dollar_amount():
+    """Pins COST_AMOUNT_MISSING: only for infra PRs, and only when there is no amount."""
+    for lang, none, with_amount in (("pt", "Nenhum. Nao ha recurso cobrado.", "US$ 0.00 por mes."),
                                     ("en", "None. Nothing billable.", "$12.50/month for the new bucket.")):
-        assert codes(pr_check.check_body(BOM[lang], "infra", lang)) == {"COST_AMOUNT_MISSING"}, lang
-        assert codes(pr_check.check_body(BOM[lang], "app", lang)) == set(), lang
-        com = troca(BOM[lang], nenhum, com_valor)
-        assert codes(pr_check.check_body(com, "infra", lang)) == set(), lang
+        assert codes(pr_check.check_body(GOOD[lang], "infra", lang)) == {"COST_AMOUNT_MISSING"}, lang
+        assert codes(pr_check.check_body(GOOD[lang], "app", lang)) == set(), lang
+        priced = swap(GOOD[lang], none, with_amount)
+        assert codes(pr_check.check_body(priced, "infra", lang)) == set(), lang
 
 
-def test_secao_sem_tabela_e_negada_e_nenhum_dispensa():
-    """Trava TABLE_MISSING: prosa no lugar da tabela e negada; `Nenhum.` dispensa."""
-    for lang, titulo, code in (("pt", "Práticas aplicadas", "Practices applied"),
-                               ("en", "Practices applied", "Practices applied")):
-        body = BOM[lang]
-        i = body.index(f"## {titulo}\n")
+def test_section_without_a_table_is_denied_and_none_waives_it():
+    """Pins TABLE_MISSING: prose where the table belongs is denied; a `None.` answer waives the table."""
+    for lang, heading, code in (("pt", "Práticas aplicadas", "Practices applied"),
+                                ("en", "Practices applied", "Practices applied")):
+        body = GOOD[lang]
+        i = body.index(f"## {heading}\n")
         k = body.index("\n## ", i + 1)
-        prosa = body[:i] + f"## {titulo}\n\nA gente segue as regras do projeto.\n" + body[k:]
-        assert codes(pr_check.check_body(prosa, "app", lang)) == {f"TABLE_MISSING:{code}"}, lang
-        nenhum = body[:i] + f"## {titulo}\n\nNenhum. None. Nada novo.\n" + body[k:]
-        assert codes(pr_check.check_body(nenhum, "app", lang)) == set(), lang
+        prose = body[:i] + f"## {heading}\n\nWe follow the project rules.\n" + body[k:]
+        assert codes(pr_check.check_body(prose, "app", lang)) == {f"TABLE_MISSING:{code}"}, lang
+        none = body[:i] + f"## {heading}\n\nNenhum. None. Nothing new.\n" + body[k:]
+        assert codes(pr_check.check_body(none, "app", lang)) == set(), lang
 
 
-def test_antes_e_depois_exige_colunas_antes_e_depois():
-    """Trava BEFORE_AFTER_COLUMNS."""
-    ruim = {"pt": ("| Comportamento | Antes | Depois |", "| Comportamento | Valor | Outro |"),
-            "en": ("| Behaviour | Before | After |", "| Behaviour | Value | Other |")}
-    for lang, (certo, errado) in ruim.items():
-        got = codes(pr_check.check_body(troca(BOM[lang], certo, errado), "app", lang))
+def test_before_and_after_requires_before_and_after_columns():
+    """Pins BEFORE_AFTER_COLUMNS."""
+    cases = {"pt": ("| Comportamento | Antes | Depois |", "| Comportamento | Valor | Outro |"),
+             "en": ("| Behaviour | Before | After |", "| Behaviour | Value | Other |")}
+    for lang, (right, wrong) in cases.items():
+        got = codes(pr_check.check_body(swap(GOOD[lang], right, wrong), "app", lang))
         assert got == {"BEFORE_AFTER_COLUMNS"}, (lang, got)
 
 
-def test_analise_de_risco_exige_as_quatro_linhas():
-    """Trava RISK_MISSING: tirar cada linha da tabela acusa exatamente aquele termo."""
-    linhas = {"pt": (("Risco de aplicar", "risk of applying"), ("Risco de não aplicar", "risk of not applying"),
-                     ("Raio de impacto", "blast radius"), ("Reversão", "rollback")),
-              "en": (("Risk of applying", "risk of applying"), ("Risk of not applying", "risk of not applying"),
-                     ("Blast radius", "blast radius"), ("Rollback", "rollback"))}
-    for lang, itens in linhas.items():
-        for rotulo, termo in itens:
-            sem = "\n".join(l for l in BOM[lang].split("\n") if not l.startswith(f"| {rotulo} |"))
-            assert sem != BOM[lang], rotulo
-            assert codes(pr_check.check_body(sem, "app", lang)) == {f"RISK_MISSING:{termo}"}, (lang, rotulo)
+def test_risk_analysis_requires_the_four_rows():
+    """Pins RISK_MISSING: dropping each table row reports exactly that term."""
+    rows = {"pt": (("Risco de aplicar", "risk of applying"), ("Risco de não aplicar", "risk of not applying"),
+                   ("Raio de impacto", "blast radius"), ("Reversão", "rollback")),
+            "en": (("Risk of applying", "risk of applying"), ("Risk of not applying", "risk of not applying"),
+                   ("Blast radius", "blast radius"), ("Rollback", "rollback"))}
+    for lang, items in rows.items():
+        for label, term in items:
+            without = "\n".join(l for l in GOOD[lang].split("\n") if not l.startswith(f"| {label} |"))
+            assert without != GOOD[lang], label
+            assert codes(pr_check.check_body(without, "app", lang)) == {f"RISK_MISSING:{term}"}, (lang, label)
 
 
-def test_praticas_exigem_coluna_de_fonte():
-    """Trava PRACTICE_SOURCE_MISSING."""
-    for lang, certo, errado in (("pt", "| Prática | Fonte | Onde |", "| Prática | Origem | Onde |"),
-                                ("en", "| Practice | Source | Where |", "| Practice | Origin | Where |")):
-        sem = troca(BOM[lang], certo, errado)
-        assert codes(pr_check.check_body(sem, "app", lang)) == {"PRACTICE_SOURCE_MISSING"}, lang
+def test_practices_require_a_source_column():
+    """Pins PRACTICE_SOURCE_MISSING."""
+    for lang, right, wrong in (("pt", "| Prática | Fonte | Onde |", "| Prática | Origem | Onde |"),
+                               ("en", "| Practice | Source | Where |", "| Practice | Origin | Where |")):
+        without = swap(GOOD[lang], right, wrong)
+        assert codes(pr_check.check_body(without, "app", lang)) == {"PRACTICE_SOURCE_MISSING"}, lang
 
 
-def test_varreduras_exigem_uma_linha_por_ferramenta():
-    """Trava SCAN_MISSING por ferramenta (lint, semgrep, trivy, segredos)."""
+def test_scans_require_one_row_per_tool():
+    """Pins SCAN_MISSING per tool (lint, semgrep, trivy)."""
     for lang in ("pt", "en"):
-        for ferramenta, rotulo in (("lint", "| Lint |"), ("semgrep", "| Semgrep |"), ("trivy", "| Trivy |")):
-            sem = "\n".join(l for l in BOM[lang].split("\n") if not l.startswith(rotulo))
-            assert codes(pr_check.check_body(sem, "app", lang)) == {f"SCAN_MISSING:{ferramenta}"}, (lang, ferramenta)
+        for tool, label in (("lint", "| Lint |"), ("semgrep", "| Semgrep |"), ("trivy", "| Trivy |")):
+            without = "\n".join(l for l in GOOD[lang].split("\n") if not l.startswith(label))
+            assert codes(pr_check.check_body(without, "app", lang)) == {f"SCAN_MISSING:{tool}"}, (lang, tool)
 
 
-def test_base_do_pr_so_vira_ref_quando_e_segura():
-    """Trava SAFE_REF: uma base que o git leria como opcao nao entra na lista de refs."""
+def test_pr_base_only_becomes_a_ref_when_it_is_safe():
+    """Pins SAFE_REF: a base git would read as an option never reaches the list of refs."""
     assert pr_check.base_refs("feat/x")[:2] == ["origin/feat/x", "feat/x"]
-    for ruim in ("--output=/tmp/x", "-p", "a b", "x;y", ""):
-        refs = pr_check.base_refs(ruim)
-        assert refs == list(pr_check.DEFAULT_BASES), (ruim, refs)
+    for bad in ("--output=/tmp/x", "-p", "a b", "x;y", ""):
+        refs = pr_check.base_refs(bad)
+        assert refs == list(pr_check.DEFAULT_BASES), (bad, refs)
     assert pr_check.base_refs(None) == list(pr_check.DEFAULT_BASES)
-    # e pelo git de verdade: --output=... nao pode escrever arquivo
+    # and through real git: --output=... must not write a file
     r = repo()
-    alvo = os.path.join(tempfile.mkdtemp(), "escrito")
-    assert pr_check.changed_files(r, f"--output={alvo}") == []
-    assert not os.path.exists(alvo)
+    target = os.path.join(tempfile.mkdtemp(), "written")
+    assert pr_check.changed_files(r, f"--output={target}") == []
+    assert not os.path.exists(target)
 
 
-# --- parser do hook, comando a comando ----------------------------------------
+# --- hook parser, command by command ------------------------------------------
 
 sys.path.insert(0, os.path.join(SKILL, "hooks"))
 import pr_gate  # noqa: E402
 
-TITULO_BOM = "O aviso do tour passou a aparecer uma vez só"
-RUIM = 'gh pr create --title "Ajustes" --body-file corpo-bom.md'  # nega por TITLE_GENERIC
+GOOD_TITLE = "O aviso do tour passou a aparecer uma vez só"
+BAD = 'gh pr create --title "Ajustes" --body-file good-body.md'  # denied for TITLE_GENERIC
 
 
-def veredito(r, command, env=None):
+def verdict(r, command, env=None):
     return decision(hook(bash(r, command), env))
 
 
-def test_hook_le_o_corpo_do_heredoc_dentro_de_body_cat():
-    """Trava o recorte de heredoc: `--body "$(cat <<'EOF' ... EOF)"` e conferido, nao ignorado."""
-    r = _repo_com_corpos()
-    cmd = lambda corpo, aspas="'EOF'": (f'gh pr create --title "{TITULO_BOM}" --body "$(cat <<{aspas}\n{corpo}\nEOF\n)"')  # noqa: E731
-    d, msg = decision(hook(bash(r, cmd(without_section(BOM_PT, "Varreduras")))))
-    assert d == "nega" and "SECTION_MISSING:Scans" in msg, (d, msg)
-    d, msg = decision(hook(bash(r, cmd(BOM_PT))))
-    assert d == "passa" and "passed" in msg, (d, msg)
-    d, msg = decision(hook(bash(r, cmd(without_section(BOM_PT, "Varreduras"), "EOF"))))
-    assert d == "nega" and "SECTION_MISSING:Scans" in msg, (d, msg)
+def test_hook_reads_the_heredoc_body_inside_body_cat():
+    """Pins the heredoc cut: `--body "$(cat <<'EOF' ... EOF)"` is checked, not skipped."""
+    r = _repo_with_bodies()
+    cmd = lambda body, quotes="'EOF'": (f'gh pr create --title "{GOOD_TITLE}" --body "$(cat <<{quotes}\n{body}\nEOF\n)"')  # noqa: E731
+    d, msg = decision(hook(bash(r, cmd(without_section(GOOD_PT, "Varreduras")))))
+    assert d == "deny" and "SECTION_MISSING:Scans" in msg, (d, msg)
+    d, msg = decision(hook(bash(r, cmd(GOOD_PT))))
+    assert d == "allow" and "passed" in msg, (d, msg)
+    d, msg = decision(hook(bash(r, cmd(without_section(GOOD_PT, "Varreduras"), "EOF"))))
+    assert d == "deny" and "SECTION_MISSING:Scans" in msg, (d, msg)
 
 
-def test_hook_nao_le_texto_de_heredoc_como_comando():
-    """Trava o heredoc como dado: citar `gh pr create` dentro de um heredoc ou de aspas nao abre PR."""
-    r = _repo_com_corpos()
-    assert veredito(r, "cat <<EOF\ngh pr create --title Ajustes\nEOF") == ("passagem", "")
-    assert veredito(r, "git commit -F - <<'EOF'\nExplica o gh pr create --title Ajustes\nEOF") == ("passagem", "")
-    assert veredito(r, 'echo "gh pr create --title Ajustes"') == ("passagem", "")
-    # heredoc sem terminador nao esconde o comando que vem antes
-    assert veredito(r, RUIM + " <<EOF\nsem fim")[0] == "nega"
+def test_hook_does_not_read_heredoc_text_as_a_command():
+    """Pins heredoc as data: quoting `gh pr create` inside a heredoc or quotes does not open a PR."""
+    r = _repo_with_bodies()
+    assert verdict(r, "cat <<EOF\ngh pr create --title Ajustes\nEOF") == ("passthrough", "")
+    assert verdict(r, "git commit -F - <<'EOF'\nExplains gh pr create --title Ajustes\nEOF") == ("passthrough", "")
+    assert verdict(r, 'echo "gh pr create --title Ajustes"') == ("passthrough", "")
+    # a heredoc with no terminator does not hide the command that comes before it
+    assert verdict(r, BAD + " <<EOF\nno end")[0] == "deny"
 
 
-def test_hook_segue_eval_e_bash_c_e_bash_com_heredoc():
-    """Trava eval, `bash -c` e `bash <<EOF`: o PR dentro deles e conferido."""
-    r = _repo_com_corpos()
-    for cmd in ("eval 'gh pr create --title \"Ajustes\" --body-file corpo-bom.md'",
-                "bash -c 'gh pr create --title \"Ajustes\" --body-file corpo-bom.md'",
-                "sh -lc 'gh pr create --title \"Ajustes\" --body-file corpo-bom.md'",
-                "bash <<EOF\ngh pr create --title \"Ajustes\" --body-file corpo-bom.md\nEOF"):
-        d, msg = veredito(r, cmd)
-        assert d == "nega" and "TITLE_GENERIC" in msg, (cmd, d, msg)
-    assert veredito(r, "bash -c 'echo gh pr create'") == ("passagem", "")
+def test_hook_follows_eval_bash_c_and_bash_with_heredoc():
+    """Pins eval, `bash -c` and `bash <<EOF`: the PR inside them is checked."""
+    r = _repo_with_bodies()
+    for cmd in ("eval 'gh pr create --title \"Ajustes\" --body-file good-body.md'",
+                "bash -c 'gh pr create --title \"Ajustes\" --body-file good-body.md'",
+                "sh -lc 'gh pr create --title \"Ajustes\" --body-file good-body.md'",
+                "bash <<EOF\ngh pr create --title \"Ajustes\" --body-file good-body.md\nEOF"):
+        d, msg = verdict(r, cmd)
+        assert d == "deny" and "TITLE_GENERIC" in msg, (cmd, d, msg)
+    assert verdict(r, "bash -c 'echo gh pr create'") == ("passthrough", "")
 
 
-def test_hook_rastreia_cd_para_achar_o_repo_certo():
-    """Trava o rastreio de `cd`/`pushd`: o gate proprio e o idioma sao os do diretorio onde o comando roda."""
+def test_hook_tracks_cd_to_find_the_right_repo():
+    """Pins `cd`/`pushd` tracking: the project's own gate and the language are those of the directory where the command runs."""
     skill = {".claude/skills/acme-pr-delivery/SKILL.md": "x"}
-    livre, gate = _repo_com_corpos(), _repo_com_corpos(skill)
-    assert veredito(livre, RUIM)[0] == "nega"
-    assert veredito(livre, f"cd {gate} && " + RUIM) == ("passagem", "")
-    assert veredito(livre, f"cd ../{os.path.basename(gate)} && " + RUIM) == ("passagem", "")
-    assert veredito(livre, f"pushd {gate} && " + RUIM) == ("passagem", "")
-    assert veredito(gate, RUIM) == ("passagem", "")
-    d, msg = veredito(gate, f"cd {livre} && " + RUIM)
-    assert d == "nega" and "TITLE_GENERIC" in msg, (d, msg)
-    # o cd de um subshell nao sobrevive a ele; o de um grupo `{ }` sim
-    assert veredito(livre, f"(cd {gate}; true); " + RUIM)[0] == "nega"
-    assert veredito(livre, f"(cd {gate} && {RUIM})") == ("passagem", "")
-    assert veredito(livre, f"{{ cd {gate}; }}; " + RUIM) == ("passagem", "")
+    free, gated = _repo_with_bodies(), _repo_with_bodies(skill)
+    assert verdict(free, BAD)[0] == "deny"
+    assert verdict(free, f"cd {gated} && " + BAD) == ("passthrough", "")
+    assert verdict(free, f"cd ../{os.path.basename(gated)} && " + BAD) == ("passthrough", "")
+    assert verdict(free, f"pushd {gated} && " + BAD) == ("passthrough", "")
+    assert verdict(gated, BAD) == ("passthrough", "")
+    d, msg = verdict(gated, f"cd {free} && " + BAD)
+    assert d == "deny" and "TITLE_GENERIC" in msg, (d, msg)
+    # a subshell's cd does not outlive it; a `{ }` group's does
+    assert verdict(free, f"(cd {gated}; true); " + BAD)[0] == "deny"
+    assert verdict(free, f"(cd {gated} && {BAD})") == ("passthrough", "")
+    assert verdict(free, f"{{ cd {gated}; }}; " + BAD) == ("passthrough", "")
 
 
-def test_hook_cd_calculado_nao_adivinha_o_diretorio():
-    """Trava o `cd` com `$` ou crase: o diretorio e desconhecido, entao corpo relativo e negado com o motivo certo."""
-    r = _repo_com_corpos()
-    for alvo in ("$DESTINO", "`pwd`", '"$(mktemp -d)"'):
-        d, msg = veredito(r, f"cd {alvo} && " + RUIM)
-        assert d == "nega" and "computed at run time" in msg, (alvo, d, msg)
-    d, msg = veredito(r, f'cd $DESTINO && gh pr create --title "Ajustes" --body-file {r}/corpo-bom.md')
-    assert d == "nega" and "TITLE_GENERIC" in msg and "calculado" not in msg, (d, msg)
+def test_hook_computed_cd_does_not_guess_the_directory():
+    """Pins `cd` with `$` or a backtick: the directory is unknown, so a relative body is denied with the right reason."""
+    r = _repo_with_bodies()
+    for target in ("$DESTINATION", "`pwd`", '"$(mktemp -d)"'):
+        d, msg = verdict(r, f"cd {target} && " + BAD)
+        assert d == "deny" and "computed at run time" in msg, (target, d, msg)
+    d, msg = verdict(r, f'cd $DESTINATION && gh pr create --title "Ajustes" --body-file {r}/good-body.md')
+    assert d == "deny" and "TITLE_GENERIC" in msg and "computed at run time" not in msg, (d, msg)
 
 
-def test_hook_ignora_comentario_e_nao_confunde_hash_dentro_de_palavra():
-    """Trava a remocao de `#`: aspas abertas num comentario nao tornam o comando ilegivel."""
-    r = _repo_com_corpos()
-    d, msg = veredito(r, RUIM + ' # nota "sem fechar')
-    assert d == "nega" and "TITLE_GENERIC" in msg and "could not be parsed" not in msg, (d, msg)
-    d, msg = veredito(r, f'gh pr create --title "{TITULO_BOM}" --body-file corpo-bom.md # ok')
-    assert d == "passa", (d, msg)
-    # `#` no meio da palavra nao abre comentario: o titulo inteiro e lido
-    d, msg = veredito(r, 'gh pr create --title Ajustes#12 --body-file corpo-bom.md')
-    assert d == "nega" and "Ajustes#12" in msg, (d, msg)
+def test_hook_ignores_a_comment_and_does_not_mistake_a_hash_inside_a_word():
+    """Pins the `#` stripping: an open quote inside a comment does not make the command unreadable."""
+    r = _repo_with_bodies()
+    d, msg = verdict(r, BAD + ' # note "unclosed')
+    assert d == "deny" and "TITLE_GENERIC" in msg and "could not be parsed" not in msg, (d, msg)
+    d, msg = verdict(r, f'gh pr create --title "{GOOD_TITLE}" --body-file good-body.md # ok')
+    assert d == "allow", (d, msg)
+    # `#` in the middle of a word does not open a comment: the whole title is read
+    d, msg = verdict(r, 'gh pr create --title Ajustes#12 --body-file good-body.md')
+    assert d == "deny" and "Ajustes#12" in msg, (d, msg)
 
 
-def test_hook_corpo_que_o_gate_nao_consegue_ler_e_negado_com_o_motivo():
-    """Trava $(...), crase, stdin, arquivo inexistente, --web/--editor, comando ilegivel e corpo ausente."""
-    r = _repo_com_corpos()
-    t = f'gh pr create --title "{TITULO_BOM}" '
-    casos = (
+def test_hook_body_the_gate_cannot_read_is_denied_with_the_reason():
+    """Pins $(...), backtick, stdin, missing file, --web/--editor, unreadable command and absent body."""
+    r = _repo_with_bodies()
+    t = f'gh pr create --title "{GOOD_TITLE}" '
+    cases = (
         (t + '--body "$(date)"', "gate does not run"),
         (t + '--body "`date`"', "gate does not run"),
         (t + "--body-file -", "stdin"),
-        (t + "--body-file nao-existe.md", "does not exist yet"),
-        (t + "--body-file corpo-bom.md --web", "the browser or the editor"),
-        (t + "-e --body-file corpo-bom.md", "the browser or the editor"),
+        (t + "--body-file missing.md", "does not exist yet"),
+        (t + "--body-file good-body.md --web", "the browser or the editor"),
+        (t + "-e --body-file good-body.md", "the browser or the editor"),
         (t + "--editor", "the browser or the editor"),
-        (t.rstrip() + ' --body-file "corpo-bom.md', "could not be parsed"),
+        (t.rstrip() + ' --body-file "good-body.md', "could not be parsed"),
         (t.strip(), "no body"),
-        ("gh pr create --body-file corpo-bom.md", "no --title"),
-        ("gh pr new --body-file corpo-bom.md", "no --title"),
+        ("gh pr create --body-file good-body.md", "no --title"),
+        ("gh pr new --body-file good-body.md", "no --title"),
     )
-    for cmd, trecho in casos:
-        d, msg = veredito(r, cmd)
-        assert d == "nega" and trecho in msg, (cmd, d, msg)
-    # com o corpo certo, os mesmos comandos passam
-    assert veredito(r, t + "--body-file corpo-bom.md")[0] == "passa"
-    assert veredito(r, t + "--body-file=corpo-bom.md")[0] == "passa"
+    for cmd, snippet in cases:
+        d, msg = verdict(r, cmd)
+        assert d == "deny" and snippet in msg, (cmd, d, msg)
+    # with the right body, the same commands pass
+    assert verdict(r, t + "--body-file good-body.md")[0] == "allow"
+    assert verdict(r, t + "--body-file=good-body.md")[0] == "allow"
 
 
-def test_hook_arquivo_de_corpo_grande_ou_nao_utf8_e_negado():
-    """Trava os limites do arquivo de corpo: 1 MB e UTF-8."""
-    r = _repo_com_corpos()
-    with open(os.path.join(r, "grande.md"), "w") as fh:
+def test_hook_body_file_that_is_big_or_not_utf8_is_denied():
+    """Pins the body file limits: 1 MB and UTF-8."""
+    r = _repo_with_bodies()
+    with open(os.path.join(r, "big.md"), "w") as fh:
         fh.write("x" * 1_000_001)
     with open(os.path.join(r, "latin.md"), "wb") as fh:
         fh.write(b"acentua\xe7\xe3o")
-    t = f'gh pr create --title "{TITULO_BOM}" '
-    assert "is over 1000 kB" in veredito(r, t + "--body-file grande.md")[1]
-    assert "UTF-8" in veredito(r, t + "--body-file latin.md")[1]
+    t = f'gh pr create --title "{GOOD_TITLE}" '
+    assert "is over 1000 kB" in verdict(r, t + "--body-file big.md")[1]
+    assert "UTF-8" in verdict(r, t + "--body-file latin.md")[1]
 
 
-def test_hook_help_e_ignorado():
-    """Trava --help/-h: pedir ajuda do comando nao e abrir PR."""
-    r = _repo_com_corpos()
+def test_hook_help_is_ignored():
+    """Pins --help/-h: asking for the command's help is not opening a PR."""
+    r = _repo_with_bodies()
     for cmd in ("gh pr create --help", "gh pr create -h", "gh pr edit --help", "agenfk pr create --help"):
-        assert veredito(r, cmd) == ("passagem", ""), cmd
-    assert veredito(r, "gh pr create --title Ajustes")[0] == "nega"
+        assert verdict(r, cmd) == ("passthrough", ""), cmd
+    assert verdict(r, "gh pr create --title Ajustes")[0] == "deny"
 
 
-def test_hook_edit_e_new_sao_conferidos_e_agenfk_so_cria():
-    """Trava GH_ACTIONS: `gh pr edit` com titulo ou corpo e `gh pr new` valem como create; edit de label nao."""
-    r = _repo_com_corpos()
-    d, msg = veredito(r, 'gh pr edit 12 --title "Ajustes"')
-    assert d == "nega" and "gh pr edit" in msg and "TITLE_GENERIC" in msg, (d, msg)
+def test_hook_edit_and_new_are_checked_and_agenfk_only_creates():
+    """Pins GH_ACTIONS: `gh pr edit` with a title or body and `gh pr new` count as create; a label edit does not."""
+    r = _repo_with_bodies()
+    d, msg = verdict(r, 'gh pr edit 12 --title "Ajustes"')
+    assert d == "deny" and "gh pr edit" in msg and "TITLE_GENERIC" in msg, (d, msg)
     assert "no body" not in msg and "no --title" not in msg
-    d, msg = veredito(r, "gh pr edit 12 --body-file corpo-ruim.md")
-    assert d == "nega" and "SECTION_MISSING:Scans" in msg, (d, msg)
-    assert veredito(r, f'gh pr edit 12 --title "{TITULO_BOM}" --body-file corpo-bom.md')[0] == "passa"
-    d, msg = veredito(r, "gh pr edit 12 --web")
-    assert d == "nega" and "browser" in msg, (d, msg)
-    d, msg = veredito(r, 'gh pr new --title "Ajustes" --body-file corpo-bom.md')
-    assert d == "nega" and "gh pr create" in msg and "TITLE_GENERIC" in msg, (d, msg)
-    assert veredito(r, f'gh pr new --title "{TITULO_BOM}" --body-file corpo-bom.md')[0] == "passa"
-    assert veredito(r, 'agenfk pr edit abc --title "Ajustes"') == ("passagem", "")
-    assert veredito(r, "gh pr edit 12 --add-reviewer fulano") == ("passagem", "")
-    assert veredito(r, "gh pr view 12 --json title") == ("passagem", "")
-    assert veredito(r, "gh pr -R o/r create --title Ajustes --body-file corpo-bom.md")[0] == "nega"
-    assert veredito(r, "gh pr --repo=o/r create --title Ajustes --body-file corpo-bom.md")[0] == "nega"
-    # o gh tambem aceita -R/--repo antes de `pr`; sem isso o gate deixava passar
-    assert veredito(r, "gh -R o/r pr create --title Ajustes --body-file corpo-bom.md")[0] == "nega"
-    assert veredito(r, "gh --repo o/r pr create --title Ajustes --body-file corpo-bom.md")[0] == "nega"
-    assert veredito(r, "gh --repo=o/r pr -R o/r create --title Ajustes --body-file corpo-bom.md")[0] == "nega"
-    assert veredito(r, f'gh -R o/r pr create --title "{TITULO_BOM}" --body-file corpo-bom.md')[0] == "passa"
+    d, msg = verdict(r, "gh pr edit 12 --body-file bad-body.md")
+    assert d == "deny" and "SECTION_MISSING:Scans" in msg, (d, msg)
+    assert verdict(r, f'gh pr edit 12 --title "{GOOD_TITLE}" --body-file good-body.md')[0] == "allow"
+    d, msg = verdict(r, "gh pr edit 12 --web")
+    assert d == "deny" and "browser" in msg, (d, msg)
+    d, msg = verdict(r, 'gh pr new --title "Ajustes" --body-file good-body.md')
+    assert d == "deny" and "gh pr create" in msg and "TITLE_GENERIC" in msg, (d, msg)
+    assert verdict(r, f'gh pr new --title "{GOOD_TITLE}" --body-file good-body.md')[0] == "allow"
+    assert verdict(r, 'agenfk pr edit abc --title "Ajustes"') == ("passthrough", "")
+    assert verdict(r, "gh pr edit 12 --add-reviewer someone") == ("passthrough", "")
+    assert verdict(r, "gh pr view 12 --json title") == ("passthrough", "")
+    assert verdict(r, "gh pr -R o/r create --title Ajustes --body-file good-body.md")[0] == "deny"
+    assert verdict(r, "gh pr --repo=o/r create --title Ajustes --body-file good-body.md")[0] == "deny"
+    # gh also accepts -R/--repo before `pr`; without this the gate let it through
+    assert verdict(r, "gh -R o/r pr create --title Ajustes --body-file good-body.md")[0] == "deny"
+    assert verdict(r, "gh --repo o/r pr create --title Ajustes --body-file good-body.md")[0] == "deny"
+    assert verdict(r, "gh --repo=o/r pr -R o/r create --title Ajustes --body-file good-body.md")[0] == "deny"
+    assert verdict(r, f'gh -R o/r pr create --title "{GOOD_TITLE}" --body-file good-body.md')[0] == "allow"
 
 
-def test_hook_prefiltro_nao_parseia_o_que_nao_menciona_pr():
-    """Trava MENTIONS_TOOL/MENTIONS_PR: comando sem `gh`/`agenfk` ou sem `pr` nem chega ao parser."""
-    chamadas = []
+def test_hook_prefilter_does_not_parse_what_does_not_mention_a_pr():
+    """Pins MENTIONS_TOOL/MENTIONS_PR: a command without `gh`/`agenfk` or without `pr` never reaches the parser."""
+    calls = []
     original = pr_gate.find_pr_commands
-    pr_gate.find_pr_commands = lambda *a, **k: chamadas.append(a) or []
+    pr_gate.find_pr_commands = lambda *a, **k: calls.append(a) or []
     try:
         for cmd in ("ls -la", "git status && echo pr", "gh issue list", "agenfk list", "echo ghx prx"):
             assert pr_gate.evaluate(cmd, ".") == (None, ""), cmd
-        assert chamadas == [], chamadas
+        assert calls == [], calls
         pr_gate.evaluate("gh pr list", ".")
         pr_gate.evaluate("agenfk pr create x", ".")
-        assert len(chamadas) == 2, chamadas
+        assert len(calls) == 2, calls
     finally:
         pr_gate.find_pr_commands = original
 
 
-# --- passagem para gate proprio -----------------------------------------------
+# --- pass-through to the project's own gate -----------------------------------
 
-def test_mcp_da_passagem_quando_o_projeto_tem_gate_proprio():
-    """Trava o desvio de evaluate_mcp: MCP com titulo ruim em repo com gate proprio nao e negado."""
+def test_mcp_passes_through_when_the_project_has_its_own_gate():
+    """Pins the evaluate_mcp bypass: an MCP call with a bad title in a repo with its own gate is not denied."""
     tool = "mcp__plugin_github_github__create_pull_request"
-    ruim = {"tool_name": tool, "tool_input": {"title": "Ajustes", "body": BOM_PT, "head": "x", "base": "main"}}
-    com_gate = _repo_com_corpos({".claude/skills/acme-pr-delivery/SKILL.md": "x"})
-    sem_gate = _repo_com_corpos()
-    assert decision(hook(dict(ruim, cwd=com_gate))) == ("passagem", "")
-    assert decision(hook(dict(ruim, cwd=sem_gate)))[0] == "nega"
-    # sem title / sem body
-    for campo, trecho in (("title", "no title"), ("body", "no body")):
-        entrada = dict(ruim["tool_input"], **{campo: "  "})
-        d, msg = decision(hook(dict(ruim, tool_input=entrada, cwd=sem_gate)))
-        assert d == "nega" and trecho in msg, (campo, d, msg)
+    bad = {"tool_name": tool, "tool_input": {"title": "Ajustes", "body": GOOD_PT, "head": "x", "base": "main"}}
+    gated = _repo_with_bodies({".claude/skills/acme-pr-delivery/SKILL.md": "x"})
+    ungated = _repo_with_bodies()
+    assert decision(hook(dict(bad, cwd=gated))) == ("passthrough", "")
+    assert decision(hook(dict(bad, cwd=ungated)))[0] == "deny"
+    # no title / no body
+    for field, snippet in (("title", "no title"), ("body", "no body")):
+        payload = dict(bad["tool_input"], **{field: "  "})
+        d, msg = decision(hook(dict(bad, tool_input=payload, cwd=ungated)))
+        assert d == "deny" and snippet in msg, (field, d, msg)
 
 
-def test_home_do_dono_nunca_conta_como_gate_proprio():
-    """Trava a exclusao do $HOME: a skill do squad instalada em ~/.claude nao e gate do projeto."""
-    r = _repo_com_corpos({".claude/skills/acme-pr-delivery/SKILL.md": "x"})
-    assert decision(hook(bash(r, RUIM), {"HOME": tempfile.mkdtemp()})) == ("passagem", "")
-    d, msg = decision(hook(bash(r, RUIM), {"HOME": r}))
-    assert d == "nega" and "TITLE_GENERIC" in msg, (d, msg)
+def test_owner_home_never_counts_as_the_projects_own_gate():
+    """Pins the $HOME exclusion: the squad skill installed in ~/.claude is not the project's gate."""
+    r = _repo_with_bodies({".claude/skills/acme-pr-delivery/SKILL.md": "x"})
+    assert decision(hook(bash(r, BAD), {"HOME": tempfile.mkdtemp()})) == ("passthrough", "")
+    d, msg = decision(hook(bash(r, BAD), {"HOME": r}))
+    assert d == "deny" and "TITLE_GENERIC" in msg, (d, msg)
     tool = "mcp__plugin_github_github__create_pull_request"
-    mcp = {"tool_name": tool, "cwd": r, "tool_input": {"title": "Ajustes", "body": BOM_PT}}
-    assert decision(hook(mcp, {"HOME": r}))[0] == "nega"
+    mcp = {"tool_name": tool, "cwd": r, "tool_input": {"title": "Ajustes", "body": GOOD_PT}}
+    assert decision(hook(mcp, {"HOME": r}))[0] == "deny"
 
 
-def test_gate_proprio_em_settings_so_conta_se_for_hook():
-    """Trava o 7d78583: `Bash(gh pr create:*)` em permissions libera o comando e NAO e gate; mencao em hooks e."""
-    permissao = json.dumps({"permissions": {"allow": ["Bash(gh pr create:*)"], "ask": ["Bash(gh pr new:*)"]}})
-    gancho = json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
-        {"type": "command", "command": "~/.claude/hooks/meu-gate.sh gh pr create"}]}]}})
-    casos = (
-        ({".claude/settings.json": permissao}, "nega"),
-        ({".claude/settings.local.json": permissao}, "nega"),
-        ({".claude/settings.json": gancho}, "passagem"),
-        ({".claude/settings.local.json": gancho}, "passagem"),
-        ({".claude/settings.json": json.dumps({"hooks": {}, "permissions": {"allow": ["Bash(gh pr create:*)"]}})}, "nega"),
-        ({".claude/settings.json": json.dumps({"hooks": "gh pr create"})}, "passagem"),
-        ({".claude/settings.json": "{nao e json gh pr create"}, "nega"),
-        ({".claude/settings.json": "[1, 2]"}, "nega"),
-        ({".claude/hooks/config.json": '{"cmd": "gh pr create"}'}, "passagem"),
-        ({".claude/hooks/nada.sh": "echo oi\n"}, "nega"),
-        ({".claude/skills/prs-stack/SKILL.md": "x"}, "nega"),
-        ({".claude/skills/pull-request/SKILL.md": "x"}, "passagem"),
+def test_own_gate_in_settings_only_counts_if_it_is_a_hook():
+    """Pins 7d78583: `Bash(gh pr create:*)` in permissions allows the command and is NOT a gate; a mention in hooks is."""
+    permission = json.dumps({"permissions": {"allow": ["Bash(gh pr create:*)"], "ask": ["Bash(gh pr new:*)"]}})
+    hooks_cfg = json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "~/.claude/hooks/my-gate.sh gh pr create"}]}]}})
+    cases = (
+        ({".claude/settings.json": permission}, "deny"),
+        ({".claude/settings.local.json": permission}, "deny"),
+        ({".claude/settings.json": hooks_cfg}, "passthrough"),
+        ({".claude/settings.local.json": hooks_cfg}, "passthrough"),
+        ({".claude/settings.json": json.dumps({"hooks": {}, "permissions": {"allow": ["Bash(gh pr create:*)"]}})}, "deny"),
+        ({".claude/settings.json": json.dumps({"hooks": "gh pr create"})}, "passthrough"),
+        ({".claude/settings.json": "{not json gh pr create"}, "deny"),
+        ({".claude/settings.json": "[1, 2]"}, "deny"),
+        ({".claude/hooks/config.json": '{"cmd": "gh pr create"}'}, "passthrough"),
+        ({".claude/hooks/nothing.sh": "echo hi\n"}, "deny"),
+        ({".claude/skills/prs-stack/SKILL.md": "x"}, "deny"),
+        ({".claude/skills/pull-request/SKILL.md": "x"}, "passthrough"),
     )
-    for files, esperado in casos:
-        r = _repo_com_corpos(files)
-        d, msg = decision(hook(bash(r, RUIM)))
-        assert d == esperado, (list(files), d, msg)
-    # in-process: o retorno diz o que achou
-    r = _repo_com_corpos({".claude/settings.json": gancho})
+    for files, expected in cases:
+        r = _repo_with_bodies(files)
+        d, msg = decision(hook(bash(r, BAD)))
+        assert d == expected, (list(files), d, msg)
+    # in-process: the return value says what it found
+    r = _repo_with_bodies({".claude/settings.json": hooks_cfg})
     assert pr_gate.own_pr_gate(r) == ".claude/settings.json"
-    assert pr_gate.own_pr_gate(_repo_com_corpos({".claude/settings.json": permissao})) is None
+    assert pr_gate.own_pr_gate(_repo_with_bodies({".claude/settings.json": permission})) is None
     assert pr_gate.own_pr_gate(tempfile.mkdtemp()) is None
     assert pr_gate.own_pr_gate(None) is None
 
 
-def test_gate_proprio_so_olha_a_raiz_do_repositorio():
-    """Trava o uso de repo_root: .claude/ numa subpasta nao e gate; a raiz vista de uma subpasta e."""
-    r = _repo_com_corpos({".claude/skills/acme-pr-delivery/SKILL.md": "x", "sub/.claude/settings.json": "{}"})
+def test_own_gate_only_looks_at_the_repository_root():
+    """Pins the use of repo_root: .claude/ in a subfolder is not a gate; the root seen from a subfolder is."""
+    r = _repo_with_bodies({".claude/skills/acme-pr-delivery/SKILL.md": "x", "sub/.claude/settings.json": "{}"})
     assert pr_gate.own_pr_gate(os.path.join(r, "sub")) == ".claude/skills/acme-pr-delivery"
-    r2 = _repo_com_corpos({"sub/.claude/skills/acme-pr-delivery/SKILL.md": "x"})
+    r2 = _repo_with_bodies({"sub/.claude/skills/acme-pr-delivery/SKILL.md": "x"})
     assert pr_gate.own_pr_gate(os.path.join(r2, "sub")) is None
 
 
-# --- config hostil do repositorio ---------------------------------------------
+# --- hostile repository config ------------------------------------------------
 
-def _repo_hostil():
-    """Repo com fsmonitor, diff.external e textconv apontando para scripts que criam sentinelas."""
-    r = repo({"CLAUDE.md": "Títulos de PR em português.\n", "corpo-bom.md": BOM_PT, "app.py": "a\n", "x.dat": "1\n"})
-    sent = tempfile.mkdtemp(prefix="pr-sentinela-")
-    for nome in ("fsmonitor", "external", "textconv"):
-        path = os.path.join(sent, nome + ".sh")
+def _hostile_repo():
+    """A repo with fsmonitor, diff.external and textconv pointing at scripts that create sentinels."""
+    r = repo({"CLAUDE.md": "Títulos de PR em português.\n", "good-body.md": GOOD_PT, "app.py": "a\n", "x.dat": "1\n"})
+    sent = tempfile.mkdtemp(prefix="pr-sentinel-")
+    for name in ("fsmonitor", "external", "textconv"):
+        path = os.path.join(sent, name + ".sh")
         with open(path, "w") as fh:
-            fh.write(f'#!/bin/sh\ntouch "{sent}/{nome}"\ncat "$2" 2>/dev/null\n')
+            fh.write(f'#!/bin/sh\ntouch "{sent}/{name}"\ncat "$2" 2>/dev/null\n')
         os.chmod(path, 0o755)
     with open(os.path.join(r, ".gitattributes"), "w") as fh:
         fh.write("*.dat diff=evil\n")
     git(r, "add", "-A")
-    git(r, "commit", "-q", "-m", "Atributos")
+    git(r, "commit", "-q", "-m", "Attributes")
     git(r, "checkout", "-q", "-b", "feat")
     with open(os.path.join(r, "app.py"), "w") as fh:
         fh.write("b\n")
     with open(os.path.join(r, "x.dat"), "w") as fh:
         fh.write("2\n")
-    git(r, "commit", "-q", "-am", "Muda")
+    git(r, "commit", "-q", "-am", "Change")
     git(r, "config", "core.fsmonitor", os.path.join(sent, "fsmonitor.sh"))
     git(r, "config", "diff.external", os.path.join(sent, "external.sh"))
     git(r, "config", "diff.evil.textconv", os.path.join(sent, "textconv.sh"))
     return r, sent
 
 
-def _sentinelas(sent):
+def _sentinels(sent):
     return sorted(n for n in os.listdir(sent) if not n.endswith(".sh"))
 
 
-def test_config_hostil_do_repo_nao_executa_nada_no_gate():
-    """Trava o 7d78583: fsmonitor, diff.external e textconv do repo nao rodam no hook nem no pr_check."""
-    r, sent = _repo_hostil()
-    # controle: com a config hostil o git puro EXECUTA os scripts; sem isso o teste nao provaria nada
+def test_hostile_repo_config_runs_nothing_in_the_gate():
+    """Pins 7d78583: the repo's fsmonitor, diff.external and textconv do not run in the hook or in pr_check."""
+    r, sent = _hostile_repo()
+    # control: with the hostile config plain git RUNS the scripts; without this the test would prove nothing
     env = {**os.environ, **GIT_ENV}
     subprocess.run(["git", "-C", r, "status"], capture_output=True, env=env)
     subprocess.run(["git", "-C", r, "diff", "main...HEAD"], capture_output=True, env=env)
     subprocess.run(["git", "-C", r, "-c", "diff.external=", "diff", "--no-ext-diff", "main...HEAD"],
                    capture_output=True, env=env)
-    assert _sentinelas(sent) == ["external", "fsmonitor", "textconv"], _sentinelas(sent)
-    for n in _sentinelas(sent):
+    assert _sentinels(sent) == ["external", "fsmonitor", "textconv"], _sentinels(sent)
+    for n in _sentinels(sent):
         os.unlink(os.path.join(sent, n))
 
-    cmd = f'gh pr create --title "{TITULO_BOM}" --body-file corpo-bom.md'
-    assert decision(hook(bash(r, cmd), {"FAKE_GH_OUT": ""}))[0] == "passa"
+    cmd = f'gh pr create --title "{GOOD_TITLE}" --body-file good-body.md'
+    assert decision(hook(bash(r, cmd), {"FAKE_GH_OUT": ""}))[0] == "allow"
     mcp = {"tool_name": "mcp__plugin_github_github__create_pull_request", "cwd": r,
-           "tool_input": {"title": TITULO_BOM, "body": BOM_PT}}
-    assert decision(hook(mcp))[0] == "passa"
-    p = subprocess.run([sys.executable, "-I", CHECK, os.path.join(r, "corpo-bom.md"), "--repo", r,
-                        "--base", "main", "--title", TITULO_BOM], capture_output=True, text=True, env=env)
+           "tool_input": {"title": GOOD_TITLE, "body": GOOD_PT}}
+    assert decision(hook(mcp))[0] == "allow"
+    p = subprocess.run([sys.executable, "-I", "-B", CHECK, os.path.join(r, "good-body.md"), "--repo", r,
+                        "--base", "main", "--title", GOOD_TITLE], capture_output=True, text=True, env=env)
     assert p.returncode == 0, p.stdout
     assert pr_check.changed_files(r, "main") == ["app.py", "x.dat"]
     assert pr_check.detect_lang(r)[0] == "pt"
-    assert _sentinelas(sent) == [], _sentinelas(sent)
+    assert _sentinels(sent) == [], _sentinels(sent)
 
-    # o inventario le o diff inteiro: aqui diff.external e textconv teriam rodado
-    p = subprocess.run([sys.executable, "-I", INVENTORY, "--repo", r, "--base", "main", "--format", "json"],
+    # the inventory reads the whole diff: diff.external and textconv would have run here
+    p = subprocess.run([sys.executable, "-I", "-B", INVENTORY, "--repo", r, "--base", "main", "--format", "json"],
                        capture_output=True, text=True, env=env)
     assert p.returncode == 0, p.stderr
-    assert _sentinelas(sent) == [], _sentinelas(sent)
+    assert _sentinels(sent) == [], _sentinels(sent)
 
 
-
-def test_todo_git_do_gate_sai_sem_fsmonitor_e_o_diff_sem_driver_externo():
-    """Trava o 7d78583 pelo argv: nenhuma chamada de git do pr_check, do hook e do inventario omite
-    `-c core.fsmonitor=false`, e todo `diff` leva --no-ext-diff e --no-textconv (o git so executa o
-    script de fsmonitor em `status`; o argv e a unica prova de que o flag continua la)."""
+def test_every_git_call_of_the_gate_drops_fsmonitor_and_diff_has_no_external_driver():
+    """Pins 7d78583 through argv: no git call from pr_check, the hook or the inventory omits
+    `-c core.fsmonitor=false`, and every `diff` carries --no-ext-diff and --no-textconv (git only runs the
+    fsmonitor script on `status`; the argv is the only proof the flag is still there)."""
     real = shutil.which("git")
     spy = tempfile.mkdtemp(prefix="pr-spy-")
     log = os.path.join(spy, "argv")
@@ -922,32 +947,32 @@ def test_todo_git_do_gate_sai_sem_fsmonitor_e_o_diff_sem_driver_externo():
         fh.write(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{log}"\nexec "{real}" "$@"\n')
     os.chmod(os.path.join(spy, "git"), 0o755)
     env = {**os.environ, **GIT_ENV, "PATH": spy + os.pathsep + os.environ["PATH"]}
-    r = repo({"CLAUDE.md": "Títulos de PR em português.\n", "corpo-bom.md": BOM_PT, "a.py": "1\n"})
+    r = repo({"CLAUDE.md": "Títulos de PR em português.\n", "good-body.md": GOOD_PT, "a.py": "1\n"})
     git(r, "checkout", "-q", "-b", "feat")
     with open(os.path.join(r, "a.py"), "w") as fh:
         fh.write("2\n")
-    git(r, "commit", "-q", "-am", "Muda")
+    git(r, "commit", "-q", "-am", "Change")
 
-    def chamadas():
+    def calls():
         with open(log) as fh:
             return [l.strip() for l in fh if l.strip()]
 
-    subprocess.run([sys.executable, "-I", HOOK],
-                   input=json.dumps(bash(r, f'gh pr create --title "{TITULO_BOM}" --body-file corpo-bom.md')),
+    subprocess.run([sys.executable, "-I", "-B", HOOK],
+                   input=json.dumps(bash(r, f'gh pr create --title "{GOOD_TITLE}" --body-file good-body.md')),
                    capture_output=True, text=True, env={**env, "HOME": tempfile.mkdtemp()})
-    subprocess.run([sys.executable, "-I", CHECK, os.path.join(r, "corpo-bom.md"), "--repo", r, "--base", "main"],
+    subprocess.run([sys.executable, "-I", "-B", CHECK, os.path.join(r, "good-body.md"), "--repo", r, "--base", "main"],
                    capture_output=True, text=True, env=env)
-    sem_politica = repo(commits=["Corrige o login quando a senha tem acento"])  # idioma sai do git log
-    subprocess.run([sys.executable, "-I", CHECK, os.path.join(r, "corpo-bom.md"), "--repo", sem_politica],
+    no_policy = repo(commits=["Corrige o login quando a senha tem acento"])  # the language comes from git log
+    subprocess.run([sys.executable, "-I", "-B", CHECK, os.path.join(r, "good-body.md"), "--repo", no_policy],
                    capture_output=True, text=True, env=env)
-    por_hook_e_check = chamadas()
-    assert any(" diff " in f" {c} " for c in por_hook_e_check) and any("rev-parse" in c for c in por_hook_e_check) \
-        and any(" log " in f" {c} " for c in por_hook_e_check), por_hook_e_check
-    subprocess.run([sys.executable, "-I", INVENTORY, "--repo", r, "--base", "main"],
+    by_hook_and_check = calls()
+    assert any(" diff " in f" {c} " for c in by_hook_and_check) and any("rev-parse" in c for c in by_hook_and_check) \
+        and any(" log " in f" {c} " for c in by_hook_and_check), by_hook_and_check
+    subprocess.run([sys.executable, "-I", "-B", INVENTORY, "--repo", r, "--base", "main"],
                    capture_output=True, text=True, env=env)
-    todas = chamadas()
-    assert len(todas) > len(por_hook_e_check), todas
-    for c in todas:
+    all_calls = calls()
+    assert len(all_calls) > len(by_hook_and_check), all_calls
+    for c in all_calls:
         assert "-c core.fsmonitor=false" in c, c
         if " diff " in f" {c} ":
             assert "--no-ext-diff" in c and "--no-textconv" in c, c

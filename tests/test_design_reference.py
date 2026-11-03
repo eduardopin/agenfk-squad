@@ -399,6 +399,31 @@ def test_no_temporary_folder_still_gives_a_verdict():
     assert "--bg" not in a["tokens"], "without a temporary folder the limit is the swept root: %s" % a["tokens"]
 
 
+def reads_outside_with(root, system_temps, tmpdir):
+    """Sweep root with SYSTEM_TEMPS swapped (the real /tmp must not get a .git in a test) and $TMPDIR
+    pointing at tmpdir; True when the OUTSIDE token above root was read through a relative @import."""
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); import sweep; "
+            "sweep.SYSTEM_TEMPS = tuple(sys.argv[3:]); sys.exit(sweep.main([sys.argv[2], '--json']))")
+    p = subprocess.run([sys.executable, "-I", "-B", "-c", code, os.path.dirname(SCRIPT), root, *system_temps],
+                       capture_output=True, text=True, timeout=60,
+                       env=dict(os.environ, TMPDIR=tmpdir, TEMP=tmpdir, TMP=tmpdir))
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)["tokens"].get("--bg") == "#aa0000"
+
+
+# 5o. /tmp and /var/tmp are barred as the repository of a relative @import even when $TMPDIR is elsewhere
+def test_literal_system_temporary_folders_are_barred_even_with_tmpdir_elsewhere():
+    assert "/tmp" in sw.SYSTEM_TEMPS and "/var/tmp" in sw.SYSTEM_TEMPS, sw.SYSTEM_TEMPS
+    base = project({"h/.git/HEAD": "x\n", "h/outside.css": OUTSIDE,
+                    "h/proj/src/index.css": '@import "../../outside.css";'})
+    h, root = os.path.join(base, "h"), os.path.join(base, "h", "proj")
+    elsewhere = project({})
+    assert reads_outside_with(root, (), elsewhere), "control: no system temporary folder in the way, it is read"
+    assert not reads_outside_with(root, (h,), elsewhere), "the repository is a literal system temporary folder"
+    assert not reads_outside_with(root, (os.path.join(h, "tmp"),), elsewhere), \
+        "the repository is an ancestor of a literal system temporary folder"
+
+
 # 5c. A vocabulary of its own: the use in the CSS (body, a, focus, h1) says which token plays the role
 def test_css_usage_names_the_roles_of_an_unknown_vocabulary():
     voc = project({"src/globals.css": """
@@ -555,6 +580,62 @@ def test_hostile_text_parses_in_linear_time():
          "--font-body": "Inter, sans-serif"}, {"--bg": "#000"})
     assert sw.next_font_tokens("import { Inter } from 'next/font/google'\nconst inter = Inter({ subsets: "
                                "['latin'], variable: '--font-inter' })") == {"--font-inter": '"Inter"'}
+
+
+# 5n. Single regexes where two quantifiers fought over one whitespace run (cubic or quadratic, 14 s to
+# minutes). One re call cannot be interrupted by the time budget, so each has to be linear on its own.
+def test_single_regex_attacks_finish_fast():
+    timed({"DESIGN.md": "#" + " " * 60000}, 2, "--json")
+    timed({"DESIGN.md": "#" + "\t" * 60000}, 2, "--json")
+    timed({"DESIGN.md": "# " + " " * 20000 + "x" * 20000}, 2, "--json")
+    for prop in ("background", "color", "font-family"):
+        timed({"t.css": "body{%s: " % prop + "var(--a " * 120000 + ";}"}, 2, "--json")
+    timed({"t.css": ":focus-visible{outline: " + "var(--a " * 120000 + ";}"}, 2, "--json")
+    timed({"theme.ts": "theme =" + " " * 150000}, 2, "--json")
+    timed({"theme.ts": "createTheme(" + "\n" * 150000}, 2, "--json")
+    # Same results as before on the ordinary shapes.
+    _, dark = sw.spec_tokens("# Palette\n--bg: #fff;\n## Dark mode\n--bg: #000;\n# End\n--bg: #f00;\n")
+    assert dark == {"--bg": "#000"}, dark
+    _, dark = sw.spec_tokens("#\n\n  Dark mode\n--bg: #111;\n")
+    assert dark == {"--bg": "#111"}, "an empty heading followed by a dark line opens the same section: %s" % dark
+    _, dark = sw.spec_tokens("#\tescuro\n--bg: #222;\n")
+    assert dark == {"--bg": "#222"}, dark
+    assert sw.spec_tokens("#  light palette\n--bg: #fff;\n")[1] == {}, "no dark word, no dark section"
+    usage = {}
+    sw.css_usage("body", "background: var(--bg, #fff) url(x.png); color: var(--fg", usage)
+    assert usage == {"bg": "var(--bg, #fff)"}, "the closed var() is found, the unclosed one is not: %s" % usage
+    usage = {}
+    sw.css_usage("a", "color: var( --link )", usage)
+    assert usage == {"accent": "var( --link )"}, usage
+    theme = sw.theme_tokens("const theme = createTheme( deepmerge ( {palette:{primary:'#0f766e'}}))\n"
+                            "export const t2 = extendTheme({ colors: { bg: '#fff' } })")
+    assert theme == {"--palette-primary": "#0f766e", "--colors-bg": "#fff"}, theme
+
+
+# 5p. ~100 KB of hostile text in every kind of file the sweep reads: each file is swept in under 2 s.
+# The prefix puts each parser in the state where its regexes look for more; the run is what they look at.
+HOSTILE_FILES = {
+    "DESIGN.md": ["", "# ", "- `bg`: ", "| bg | "],
+    "docs/design-system.md": ["# "],
+    "t.css": [":root{--a: ", "body{background: ", "@import "],
+    "tailwind.config.js": ["colors:{", "module.exports={theme:{colors:{a:"],
+    "theme.ts": ["theme =", "createTheme("],
+    "app/layout.tsx": ["import x from 'next/font/google'\nInter({"],
+    "tokens.json": ['{"color":{"bg":{"$value":"'],
+    "theme.json": ['{"a":'],
+}
+HOSTILE_RUNS = [" ", "\t", "#", "var(--a", "{", "(", "'", '"', " \t#var(--a {('\"\n"]
+
+
+def test_hostile_text_in_every_file_kind_is_swept_fast():
+    for path, prefixes in sorted(HOSTILE_FILES.items()):
+        for prefix in prefixes:
+            for chunk in HOSTILE_RUNS:
+                text = prefix + (chunk * (100_000 // len(chunk) + 1))[:100_000]
+                try:
+                    timed({path: text}, 2, "--json")
+                except AssertionError as e:
+                    raise AssertionError(f"{path} {prefix!r} + {chunk!r} * 100 KB: {e}") from None
 
 
 # 5g. Limits against a large repository: files and depth

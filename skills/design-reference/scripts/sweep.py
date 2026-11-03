@@ -178,20 +178,22 @@ def rel(root, path):
 
 
 IMPORT_LEVELS = 3   # how far above the swept root the repository of a relative @import may start
+SYSTEM_TEMPS = ("/tmp", "/var/tmp")   # system temporary folders, barred even when $TMPDIR points elsewhere
 
 
 def import_limit(root):
     """Boundary of a relative @import: the nearest ancestor of root (root itself up to IMPORT_LEVELS
     above it) that holds a .git, so a monorepo app reaches its sibling token package. If that ancestor
-    is a filesystem root, $HOME, the system temporary folder or an ancestor of one of them, or there
-    is no .git within reach, or the temporary folder cannot be found, the boundary is root itself."""
+    is a filesystem root, $HOME, the system temporary folder (the one $TMPDIR names and those in
+    SYSTEM_TEMPS, barred even when $TMPDIR is elsewhere) or an ancestor of one of them, or there is
+    no .git within reach, or the temporary folder cannot be found, the boundary is root itself."""
     root = os.path.realpath(root)
     try:
         temp = tempfile.gettempdir()
     except OSError:   # no writable temporary folder: it cannot be ruled out, so stay at root
         return root
     guarded = []
-    for p in (os.path.expanduser("~"), temp):
+    for p in (os.path.expanduser("~"), temp, *SYSTEM_TEMPS):
         if p and p != "~":
             guarded.append(os.path.realpath(p))
     d = root
@@ -432,6 +434,7 @@ USAGE = [  # (selector, property, role): where the CSS itself says which token p
     (r"^(:focus-visible|\*:focus-visible)$", r"outline(-color)?", "accent"),
 ]
 APPLY = {"bg": "bg", "text": "fg", "font": "font-body"}
+RE_USAGE_VAR = re.compile(r"var\(\s*(--[\w-]+)[^)]*\)")
 
 
 def css_usage(selector, body, usage):
@@ -441,7 +444,9 @@ def css_usage(selector, body, usage):
             continue
         for m in re.finditer(r"(?:^|;)\s*%s\s*:\s*([^;]+)" % prop, body):
             value = m.group(m.lastindex).strip()
-            found = re.search(r"var\(\s*(--[\w-]+)[^)]*\)", value)
+            # A closed var() can only end at the last ")": searching past it, every unclosed "var(--a"
+            # re-read the rest of the value to its end (quadratic; 120k of them took 50 s). Same match.
+            found = RE_USAGE_VAR.search(value, 0, value.rfind(")") + 1)
             if role.startswith("font") or found or looks_like_color(value):
                 usage.setdefault(role, value if role.startswith("font") or not found else found.group(0))
     if sel in ("body", "html"):
@@ -572,13 +577,19 @@ def tailwind_tokens(text):
     return toks
 
 
+# The \s* after the optional group met the \s* after "=" whenever the group did not match: "theme ="
+# and 150k spaces with no "{" split that run between the two in every way (quadratic, 35 s). The last
+# \s* now lives inside the group; the language accepted is the same.
+RE_THEME = re.compile(r"(?:createTheme|extendTheme|createTokens|defineConfig|createSystem|"
+                      r"MantineThemeOverride|theme)\s*(?:=|\()\s*(?:\w+\s*\(\s*)?\{")
+
+
 def theme_tokens(text):
     """theme.ts/js from MUI, Chakra, Mantine and the like: everything becomes a flattened token."""
     text = re.sub(r"//[^\n]*", "", strip_comments(text))
     toks = {}
     end = -1
-    for m in re.finditer(r"(?:createTheme|extendTheme|createTokens|defineConfig|createSystem|"
-                         r"MantineThemeOverride|theme)\s*(?:=|\()\s*(?:\w+\s*\()?\s*\{", text):
+    for m in RE_THEME.finditer(text):
         if m.start() < end:
             continue
         obj, end = js_object(text, m.end() - 1)
@@ -652,6 +663,12 @@ def json_tokens(text, file_name):
 
 # ---------------------------------------------------------------- written spec
 
+# (?=(\s*))\1 is an atomic \s* (Python 3.10 has no \s*+): \s* and .* overlapped, so the regex re-read
+# the whitespace run after every "#" once per length of \s* ("#" + 60k spaces took 28 s). Only m.end()
+# is read where it is used, so the extra group changes nothing.
+RE_DARK_HEADING = re.compile(r"^#+(?!#)(?=(\s*))\1.*(?:dark|escuro).*$", re.M | re.I)
+
+
 def spec_tokens(text):
     # Linear on hostile text: the spec is cut at MAX_SPEC_CHARS, the line prefix no longer crosses
     # newlines ([\s>*-]* did, from every line start to the end of a run of blank lines) and the
@@ -673,7 +690,7 @@ def spec_tokens(text):
         name = re.sub(r"t[i\u00ed]tulo", "display", name).replace("corpo", "body")
         toks.setdefault("--" + re.sub(r"[\s.]+", "-", name), m.group(2).strip())
     dark = {}
-    m = re.search(r"^#+(?!#)\s*.*(?:dark|escuro).*$", text, re.M | re.I)
+    m = RE_DARK_HEADING.search(text)
     if m:
         section = text[m.end():]
         end = re.search(r"^#+\s", section, re.M)

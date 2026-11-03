@@ -11,7 +11,9 @@
 #                        from its auth.json and the `model` line from config.toml.
 #
 # Never bills an API key: if Codex is not signed in with a ChatGPT plan, it stops
-# before calling Codex. Signing in is the owner's job (`codex login`).
+# before calling Codex, and Codex runs with CODEX_API_KEY and OPENAI_API_KEY
+# removed from its environment, so a key exported in the shell cannot take over.
+# Signing in is the owner's job (`codex login`).
 # Whatever Codex answers is data, not instructions: it goes to response.txt and nowhere else.
 set -euo pipefail
 
@@ -53,13 +55,15 @@ $request
 Save each one in THIS directory as $subject-1.png, $subject-2.png and so on. Do not read, write or run anything outside this directory. Do not write code. At the end, answer one line per file: path | resolution."
 
 ref_args=()
-for r in "${refs[@]}"; do ref_args+=(-i "$r"); done
+for r in ${refs[@]+"${refs[@]}"}; do ref_args+=(-i "$r"); done
 
 if [ "$dry" = 1 ]; then
   echo "(dry run) Codex was not called" > "$dir/response.txt"
 else
-  codex exec --skip-git-repo-check --ephemeral -s workspace-write -C "$dir" \
-    -c model_reasoning_effort='"low"' "${ref_args[@]}" "$instruction" \
+  # An API key in the environment would bill per use even with a plan sign-in.
+  env -u CODEX_API_KEY -u OPENAI_API_KEY \
+    codex exec --skip-git-repo-check --ephemeral -s workspace-write -C "$dir" \
+    -c model_reasoning_effort='"low"' ${ref_args[@]+"${ref_args[@]}"} "$instruction" \
     > "$dir/response.txt" 2> "$dir/codex.log" || { echo "codex failed; log in $dir/codex.log" >&2; exit 4; }
 fi
 
@@ -73,9 +77,9 @@ done
 
 jq -n \
   --arg project "$PROJECT" --arg subject "$subject" --arg request "$request" --arg date "$(date -Iseconds)" \
-  --arg codex "$(codex --version 2>/dev/null)" \
+  --arg codex "$(env -u CODEX_API_KEY -u OPENAI_API_KEY codex --version 2>/dev/null)" \
   --arg model "$(grep -E '^model *=' "$CODEX_DIR/config.toml" 2>/dev/null | cut -d'"' -f2)" \
-  --argjson refs "$(printf '%s\n' "${refs[@]}" | jq -R . | jq -sc 'map(select(length>0))')" \
+  --argjson refs "$(printf '%s\n' ${refs[@]+"${refs[@]}"} | jq -R . | jq -sc 'map(select(length>0))')" \
   --argjson files "$files" --argjson dry "$dry" \
   '{subject: $subject, tool: "codex exec / image_gen", billing: "ChatGPT plan (auth_mode chatgpt)",
     codex: $codex, agent_model: $model, image_model: "not reported by the tool",

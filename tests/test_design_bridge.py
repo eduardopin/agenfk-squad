@@ -9,11 +9,13 @@ must stop BEFORE calling codex.
 
     python3 tests/test_design_bridge.py
 
-Needs node, bash, jq, file and sha256sum on PATH.
+Needs node, bash, jq, file and sha256sum on PATH. Without one of them it prints
+a single SKIP line naming what is missing and exits 0.
 """
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -27,6 +29,7 @@ GPT = os.path.join(SKILL, "scripts", "gpt-image.sh")
 TEST_FLOOR = 26
 
 FAILURES = []
+TOOLS = ("node", "bash", "jq", "file", "sha256sum")
 
 
 def check(name, cond, detail=""):
@@ -60,11 +63,15 @@ def sandbox(auth_mode):
     with open(png, "wb") as f:
         f.write(png_1x1())
     marker = os.path.join(base, "codex-called")
+    keys = os.path.join(base, "codex-keys")
     with open(os.path.join(bin_, "codex"), "w") as f:
         f.write(f"""#!/usr/bin/env bash
 [ "$1" = "--version" ] && {{ echo "codex-cli 0.0.0-test"; exit 0; }}
 touch '{marker}'
+env | grep -E '^(CODEX|OPENAI)_API_KEY=' > '{keys}'
+[ "${{FAKE_CODEX:-}}" = fail ] && {{ echo "boom" >&2; exit 1; }}
 while [ $# -gt 0 ]; do [ "$1" = "-C" ] && dir="$2"; shift; done
+[ "${{FAKE_CODEX:-}}" = empty ] && {{ echo "no image"; exit 0; }}
 cp '{png}' "$dir/stub-1.png"
 echo "$dir/stub-1.png | 1 x 1"
 """)
@@ -76,13 +83,20 @@ echo "$dir/stub-1.png | 1 x 1"
         f.write('model = "test-model"\n')
     env = dict(os.environ, PATH=bin_ + os.pathsep + os.environ["PATH"], CODEX_HOME=home,
                DESIGN_BRIDGE_INBOX=os.path.join(base, "inbox"))
-    return env, marker
+    for name in ("CODEX_API_KEY", "OPENAI_API_KEY", "FAKE_CODEX"):
+        env.pop(name, None)
+    return env, marker, keys
 
 
 def gpt(env, *args):
     p = subprocess.run(["bash", GPT, *args], capture_output=True, text=True, env=env, cwd=ROOT)
     return p.returncode, p.stdout.strip(), p.stderr
 
+
+missing = [t for t in TOOLS if shutil.which(t) is None]
+if missing:
+    print("SKIP test_design_bridge: missing on PATH: " + ", ".join(missing))
+    sys.exit(0)
 
 # 1. motion-figma.mjs: node tests, with a floor.
 p = subprocess.run(["node", "--test", "motion-figma.test.mjs"], capture_output=True, text=True,
@@ -133,23 +147,25 @@ for path in sorted(shipped):
     check(f"{rel} is not a symlink", not os.path.islink(path))
 
 # 4. gpt-image.sh: never calls codex without a ChatGPT-plan sign-in.
-env, marker = sandbox(None)
+env, marker, keys = sandbox(None)
 code, _, err = gpt(env, "stub", "x")
 check("no sign-in: exits 3", code == 3, err)
 check("no sign-in: codex was not called", not os.path.exists(marker))
 check("no sign-in: asks the owner to sign in", "codex login" in err, err)
 
-env, marker = sandbox("apikey")
+env, marker, keys = sandbox("apikey")
 code, _, err = gpt(env, "stub", "x")
 check("API-key sign-in: exits 3", code == 3, err)
 check("API-key sign-in: codex was not called", not os.path.exists(marker))
 check("API-key sign-in: says it would be new spend", "new spend" in err, err)
 
-env, marker = sandbox("chatgpt")
+env, marker, keys = sandbox("chatgpt")
 code, _, err = gpt(env, "Bad Subject", "x")
 check("subject not in kebab-case: exits 2", code == 2, err)
 code, _, err = gpt(env, "stub", "x", "--variations", "5")
 check("more than 4 variations: exits 2", code == 2, err)
+code, _, err = gpt(env, "stub", "x", "--ref", os.path.join(ROOT, "no-such-ref.png"))
+check("missing --ref file: exits 2", code == 2 and "reference does not exist" in err, err)
 code, folder, err = gpt(env, "stub", "x", "--dry-run")
 check("dry run: exits 0 without calling codex", code == 0 and not os.path.exists(marker), err)
 
@@ -168,6 +184,27 @@ check("origin.json records the request, project and agent model",
 check("the folder stays outside the repository", not os.path.realpath(folder).startswith(ROOT), folder)
 check("the folder honours DESIGN_BRIDGE_INBOX",
       os.path.realpath(folder).startswith(os.path.realpath(env["DESIGN_BRIDGE_INBOX"])), folder)
+
+# 5. An API key exported in the shell never reaches codex.
+env, marker, keys = sandbox("chatgpt")
+env.update(CODEX_API_KEY="test-codex-key", OPENAI_API_KEY="test-openai-key")
+code, folder, err = gpt(env, "stub", "a request")
+check("keys in the env: exits 0 on the ChatGPT plan", code == 0, err)
+seen = read(keys) if os.path.exists(keys) else "codex not called"
+check("keys in the env: codex sees neither CODEX_API_KEY nor OPENAI_API_KEY", seen == "", seen)
+code, folder, err = gpt(env, "stub", "x", "--ref", os.path.join(SKILL, "SKILL.md"))
+check("an existing --ref is accepted and recorded", code == 0 and json.loads(
+    read(os.path.join(folder, "origin.json")))["references"] == [os.path.realpath(os.path.join(SKILL, "SKILL.md"))],
+    err)
+
+# 6. Codex failing, or saving nothing, is reported with its own exit code.
+env, marker, keys = sandbox("chatgpt")
+env["FAKE_CODEX"] = "fail"
+code, _, err = gpt(env, "stub", "x")
+check("codex fails: exits 4 and points to the log", code == 4 and "codex.log" in err, err)
+env["FAKE_CODEX"] = "empty"
+code, _, err = gpt(env, "stub", "x")
+check("codex saves no image: exits 5", code == 5 and "no image saved" in err, err)
 
 print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall green")
 sys.exit(1 if FAILURES else 0)

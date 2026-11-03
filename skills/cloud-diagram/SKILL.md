@@ -30,7 +30,9 @@ python3 -I ~/.claude/skills/design-reference/scripts/sweep.py <root> --css
 
 Paste the output in place of the `--ds-*` block in `template.html`; the rest
 of the page reads only from it. With no design system in the project, the
-built-in default stays (the neutral sheet). The provider's category colours do
+built-in default stays (the neutral sheet). If
+`design-reference/scripts/sweep.py` is not installed, the built-in default
+stays too, and the line says the sweep was not run. The provider's category colours do
 not change with the project and live only inside the diagram. The condensed
 face on the labels (`--label`) still holds; if the project has a condensed
 face, it goes there. Say in one line which system the page wears.

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Check a .drawio diagram against the cloud-diagram skill's contract.
 
-    python3 -I diagram_check.py diagram.drawio [other.drawio ...] [--allow TERM]
+    python3 -I diagram_check.py [--allow TERM] [--] diagram.drawio [other.drawio ...]
+    python3 -I diagram_check.py --help
+
+A path that starts with - goes after --.
 
 Prints one `FAIL <rule>: [page] <reason>` line per broken rule and exits 1,
 or `ok <file>` and exits 0. A `WARN` line never fails. Exits 2 on a usage
@@ -23,7 +26,9 @@ Rules that fail:
                 exempt
   lexicon       no label carries a word from the writing skill's banned lexicon
                 (a label that reads as AI-written); --allow TERM or
-                <!-- writing: allow TERM --> downgrades it to WARN
+                <!-- writing: allow TERM --> downgrades it to WARN. Without the
+                writing skill beside this one, a built-in list of 13 words
+                applies and a `note:` line on stderr says so and why
   status        some label or page name states the drawing's status: CURRENT
                 with a date (YYYY-MM-DD) or PROPOSED; without it the reader
                 takes a proposal for the system that is running
@@ -50,14 +55,19 @@ from pathlib import Path
 sys.dont_write_bytecode = True   # importing slop_lint must not leave __pycache__ in the skill
 # The lexicon lives in the writing skill, this one's sibling (skills/writing in the repo,
 # ~/.claude/skills/writing installed). Without it, a minimal built-in lexicon applies, so
-# the gate never passes blank.
+# the gate never passes blank, and main() says so on stderr.
 _WRITING = Path(__file__).resolve().parents[2] / "writing" / "scripts"
+LEXICON_FALLBACK = None   # why the built-in lexicon is in use, or None when the writing skill's is
 try:
     sys.path.insert(0, str(_WRITING))
     from slop_lint import ALLOW_RE, BANNED_LEXICON, strip_accents  # noqa: E402
-except ImportError:
+except ImportError as e:
     import unicodedata
 
+    if isinstance(e, ModuleNotFoundError) and e.name == "slop_lint":
+        LEXICON_FALLBACK = "the writing skill is not installed (no writing/scripts/slop_lint.py beside this skill)"
+    else:
+        LEXICON_FALLBACK = f"the writing skill's slop_lint does not export ALLOW_RE, BANNED_LEXICON and strip_accents ({e})"
     ALLOW_RE = re.compile(r"<!--\s*(?:writing|escrita):\s*allow\s+(.+?)\s*-->", re.I)
     # Detection data, not prose: the Portuguese words stay, owners label in either language.
     BANNED_LEXICON = {w: "say what the component does" for w in (
@@ -301,6 +311,12 @@ def check(text, allowed=()):
 def main(argv):
     paths, allowed, args = [], [], iter(argv)
     for a in args:
+        if a in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        if a == "--":                         # everything after it is a path, even "-x.drawio"
+            paths.extend(args)
+            break
         if a == "--allow":
             term = next(args, None)
             if term is None:
@@ -310,13 +326,16 @@ def main(argv):
         elif a.startswith("--allow="):
             allowed.append(a.split("=", 1)[1])
         elif a.startswith("-"):
-            print(f"usage: unknown option {a}", file=sys.stderr)
+            print(f"usage: unknown option {a} (a path that starts with - goes after --)", file=sys.stderr)
             return 2
         else:
             paths.append(a)
     if not paths:
-        print("usage: diagram_check.py diagram.drawio [other.drawio ...] [--allow TERM]", file=sys.stderr)
+        print("usage: diagram_check.py [--allow TERM] [--] diagram.drawio [other.drawio ...]", file=sys.stderr)
         return 2
+    if LEXICON_FALLBACK:
+        print(f"note: lexicon check uses the built-in list of {len(BANNED_LEXICON)} words: {LEXICON_FALLBACK}",
+              file=sys.stderr)
     failed = unreadable = False
     for path in paths:
         try:

@@ -129,6 +129,7 @@ def test_the_writing_skill_lexicon_is_used_when_it_is_installed():
                        "stub.drawio")
         code, out = check(stub, script=copy)
         assert code == 1 and "FAIL lexicon" in out and "zorbleflux" in out and "stub word" in out, out
+        assert "built-in list" not in out, out
         # the stub's lexicon replaces the built-in one, it does not add to it
         builtin = variant(swap(read(CLEAN), ('value="ECS checkout service"', 'value="Seamless checkout service"')),
                           "builtin.drawio")
@@ -137,6 +138,70 @@ def test_the_writing_skill_lexicon_is_used_when_it_is_installed():
         assert not [b for b, _, _ in os.walk(writing) if os.path.basename(b) == "__pycache__"]
     finally:
         shutil.rmtree(tree)
+
+
+def _lone_check(writing_stub=None):
+    """diagram_check.py copied into a skills/ tree; writing_stub, when given, is its slop_lint.py."""
+    tree = tempfile.mkdtemp(prefix="cloud-diagram-")
+    scripts = os.path.join(tree, "skills", "cloud-diagram", "scripts")
+    os.makedirs(scripts)
+    shutil.copy(CHECK, scripts)
+    if writing_stub is not None:
+        writing = os.path.join(tree, "skills", "writing", "scripts")
+        os.makedirs(writing)
+        with open(os.path.join(writing, "slop_lint.py"), "w", encoding="utf-8") as f:
+            f.write(writing_stub)
+    return tree, os.path.join(scripts, "diagram_check.py")
+
+
+def test_built_in_lexicon_applies_with_no_writing_skill_and_says_so():
+    tree, copy = _lone_check()
+    try:
+        slop = variant(swap(read(CLEAN), ('value="ECS checkout service"', 'value="Seamless checkout service"')),
+                       "slop.drawio")
+        code, out = check(slop, script=copy)
+        assert code == 1 and "FAIL lexicon" in out and "'seamless'" in out, out
+        note = [l for l in out.splitlines() if l.startswith("note:")]
+        assert len(note) == 1 and "built-in list of 13 words" in note[0] and "not installed" in note[0], out
+        assert "WARN" not in note[0] and "FAIL" not in note[0], note
+        code, out = check(CLEAN, script=copy)
+        assert code == 0 and "built-in list of 13 words" in out and "WARN" not in out, out
+    finally:
+        shutil.rmtree(tree)
+
+
+def test_writing_skill_with_the_wrong_names_falls_back_with_a_note():
+    # slop_lint is there but exports LEXICON, not BANNED_LEXICON: the gate must not pass blank.
+    tree, copy = _lone_check("import re\nALLOW_RE = re.compile('x')\nLEXICON = {'zorbleflux': 'stub'}\n"
+                             "def strip_accents(t):\n    return t\n")
+    try:
+        slop = variant(swap(read(CLEAN), ('value="ECS checkout service"', 'value="Seamless checkout service"')),
+                       "slop.drawio")
+        code, out = check(slop, script=copy)
+        assert code == 1 and "FAIL lexicon" in out and "'seamless'" in out, out
+        note = [l for l in out.splitlines() if l.startswith("note:")]
+        assert len(note) == 1 and "built-in list of 13 words" in note[0] and "does not export" in note[0], out
+        assert "WARN" not in note[0] and "FAIL" not in note[0], note
+    finally:
+        shutil.rmtree(tree)
+
+
+def test_check_help_exits_0_and_a_dash_path_goes_after_double_dash():
+    for flag in ("-h", "--help"):
+        r = subprocess.run([sys.executable, "-I", "-B", CHECK, flag], capture_output=True, text=True)
+        assert r.returncode == 0 and "Check a .drawio diagram" in r.stdout and "[--allow TERM] [--]" in r.stdout, (
+            flag, r.returncode, r.stdout + r.stderr)
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        shutil.copy(CLEAN, os.path.join(tmp, "-clean.drawio"))
+        r = subprocess.run([sys.executable, "-I", "-B", CHECK, "--", "-clean.drawio"], capture_output=True,
+                           text=True, cwd=tmp)
+        assert r.returncode == 0 and "ok -clean.drawio" in r.stdout, r.stdout + r.stderr
+        r = subprocess.run([sys.executable, "-I", "-B", CHECK, "-clean.drawio"], capture_output=True,
+                           text=True, cwd=tmp)
+        assert r.returncode == 2 and "unknown option -clean.drawio" in r.stderr, r.stdout + r.stderr
+    finally:
+        shutil.rmtree(tmp)
 
 
 def _boxes(n):
@@ -224,6 +289,8 @@ def test_skill_is_generic_english_and_documents_the_rules():
                  "design-reference/scripts/sweep.py", "diagram_check.py", "references/template.html",
                  "references/example.html", "render.sh", "## Origin"):
         assert term in md, term
+    assert re.search(r"`design-reference/scripts/sweep\.py`\s+is\s+not\s+installed", md), \
+        "SKILL.md says what to do when the sweep is not installed"
     for p in ("references/template.html", "references/example.html", "references/inventory-and-drawio.md",
               "fixtures/clean.drawio", "scripts/probe.js", "scripts/render.sh", "THIRD_PARTY_NOTICES.md"):
         assert os.path.exists(os.path.join(SKILL, p)), p
@@ -256,11 +323,7 @@ def test_render_without_chrome_exits_2_and_names_the_way_forward():
     # A PATH holding only what render.sh needs before it looks for Chrome: no browser on it.
     tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
     try:
-        bin_dir = os.path.join(tmp, "bin")
-        os.makedirs(bin_dir)
-        os.symlink(shutil.which("dirname"), os.path.join(bin_dir, "dirname"))
-        env = {k: v for k, v in os.environ.items() if k != "CHROME"}
-        env["PATH"] = bin_dir
+        env = _no_chrome_env(tmp)
         r = subprocess.run([BASH, RENDER, TEMPLATE, os.path.join(tmp, "out")], capture_output=True, text=True,
                            env=env, timeout=60)
         assert r.returncode == 2 and "no Chrome/Chromium on PATH" in r.stdout and "$CHROME" in r.stdout, (
@@ -269,6 +332,39 @@ def test_render_without_chrome_exits_2_and_names_the_way_forward():
         r = subprocess.run([BASH, RENDER, TEMPLATE, os.path.join(tmp, "out")], capture_output=True, text=True,
                            env=env, timeout=60)
         assert r.returncode == 2 and "no Chrome at $CHROME=" in r.stdout, (r.returncode, r.stdout + r.stderr)
+        assert not os.path.exists(os.path.join(tmp, "out")), "nothing is written before Chrome is found"
+    finally:
+        shutil.rmtree(tmp)
+
+
+def _no_chrome_env(tmp):
+    bin_dir = os.path.join(tmp, "bin")
+    os.makedirs(bin_dir)
+    os.symlink(shutil.which("dirname"), os.path.join(bin_dir, "dirname"))
+    env = {k: v for k, v in os.environ.items() if k != "CHROME"}
+    env["PATH"] = bin_dir
+    return env
+
+
+def test_render_help_exits_0_and_a_dash_page_goes_after_double_dash():
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        env = _no_chrome_env(tmp)         # help needs no browser and no tool on PATH
+        for flag in ("-h", "--help"):
+            r = subprocess.run([BASH, RENDER, flag], capture_output=True, text=True, env=env, timeout=60)
+            assert r.returncode == 0 and "render.sh [--] <page.html>" in r.stdout and "status=NO-DIAGRAM" in r.stdout, (
+                flag, r.returncode, r.stdout + r.stderr)
+            assert not r.stdout.lstrip().startswith("#!"), r.stdout
+        shutil.copy(TEMPLATE, os.path.join(tmp, "-page.html"))
+        # after --, -page.html is the page: render.sh goes on and stops only for the missing Chrome
+        r = subprocess.run([BASH, RENDER, "--", "-page.html", "out"], capture_output=True, text=True, env=env,
+                           cwd=tmp, timeout=60)
+        assert r.returncode == 2 and "no Chrome/Chromium on PATH" in r.stdout, (r.returncode, r.stdout + r.stderr)
+        r = subprocess.run([BASH, RENDER, "-page.html", "out"], capture_output=True, text=True, env=env,
+                           cwd=tmp, timeout=60)
+        assert r.returncode == 3 and "unknown option -page.html" in r.stderr, (r.returncode, r.stdout + r.stderr)
+        r = subprocess.run([BASH, RENDER], capture_output=True, text=True, env=env, timeout=60)
+        assert r.returncode == 3 and "usage: render.sh" in r.stderr, (r.returncode, r.stdout + r.stderr)
         assert not os.path.exists(os.path.join(tmp, "out")), "nothing is written before Chrome is found"
     finally:
         shutil.rmtree(tmp)
@@ -305,6 +401,7 @@ def test_render_passes_the_template_and_fails_without_status():
         env = _offline(tmp)
         r = _render(env, _page(tmp, read(TEMPLATE), "ok.html"), os.path.join(tmp, "ok"))
         assert r.returncode == 0 and "status=ok" in r.stdout and "problems=0" in r.stdout, r.stdout + r.stderr
+        assert "diagrams=1 " in r.stdout, r.stdout
         none = re.sub(r"<div><dt>Status</dt><dd>[^<]*</dd></div>", "", read(TEMPLATE))
         r = _render(env, _page(tmp, none, "none.html"), os.path.join(tmp, "none"))
         assert r.returncode == 1 and "status=MISSING" in r.stdout and "no Status cell" in r.stdout, r.stdout
@@ -321,11 +418,30 @@ def test_render_passes_the_example_and_catches_a_crossing_arrow():
         env = _offline(tmp)
         r = _render(env, _page(tmp, read(EXAMPLE), "example.html"), os.path.join(tmp, "example"))
         assert r.returncode == 0 and "status=ok" in r.stdout and "problems=0" in r.stdout, r.stdout + r.stderr
+        assert "diagrams=1 " in r.stdout, r.stdout
         # a vertical arrow dropped through the request row crosses it away from any junction
         crossed = swap(read(EXAMPLE), ('<path class="ar" d="M779 474H609"',
                                        '<path class="ar" d="M474 150V420"/>\n<path class="ar" d="M779 474H609"'))
         r = _render(env, _page(tmp, crossed, "crossed.html"), os.path.join(tmp, "crossed"))
         assert r.returncode == 1 and "arrow x arrow" in r.stdout, r.stdout
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_render_fails_a_page_with_no_diagram_and_reads_a_dash_page_after_double_dash():
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        env = _offline(tmp)
+        empty = _page(tmp, "<main><h1>Checkout</h1><p>No drawing on this page.</p></main>\n", "empty.html")
+        r = _render(env, empty, os.path.join(tmp, "empty"))
+        assert r.returncode == 1 and "diagrams=0 " in r.stdout and "status=NO-DIAGRAM" in r.stdout, r.stdout
+        assert "status=ok" not in r.stdout and "no diagram found" in r.stdout, r.stdout
+        # a relative page whose name starts with - and a relative output folder
+        _page(tmp, read(TEMPLATE), "-ok.html")
+        r = subprocess.run([BASH, RENDER, "--", "-ok.html", "dash", "1100"], capture_output=True, text=True,
+                           timeout=300, env=env, cwd=tmp)
+        assert r.returncode == 0 and "diagrams=1 " in r.stdout and "status=ok" in r.stdout, r.stdout + r.stderr
+        assert os.path.exists(os.path.join(tmp, "dash", "shot-light-1100.png")), os.listdir(tmp)
     finally:
         shutil.rmtree(tmp)
 

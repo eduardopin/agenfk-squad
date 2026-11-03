@@ -108,8 +108,8 @@ which side is bigger and why.
 
 ## 4. Infrastructure PRs and tests
 
-Do not ask an infrastructure PR for mutation or adversarial tests, and do not
-count their absence as a failure. Ask for what proves IaC: the plan summary,
+Do not ask an infrastructure PR for adversarial tests, and do not count their
+absence as a failure. Ask for what proves IaC: the plan summary,
 `terraform validate`, `terraform test` where the stack promises something,
 and the scans.
 

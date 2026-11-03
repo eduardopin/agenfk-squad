@@ -1,14 +1,15 @@
 ---
 name: ci-cost
-description: The squad's method for spending fewer CI minutes without loosening a gate — measure first (the billing API plus each run's jobs, the per-job rounded minute, minutes spent on cancelled jobs), then cut in order of gain - fewer and heavier jobs, the expensive job waiting for the cheap gates, PR mutation over the changed LINES (`scripts/changed-ranges.mjs` + `mutation-since.sh`, Stryker), a `paths` filter on the expensive job, duplicated tasks, the PR secret scan reading only the PR's commits. Use when the GitHub Actions quota runs out or gets close, when designing or reviewing a workflow, when a mutation or dry-run job dominates the bill, or when asked "how much does CI cost", "why is the PR slow", "where can we cut in CI".
+description: The squad's method for spending fewer CI minutes without loosening a gate — measure first (the billing API plus each run's jobs, the per-job rounded minute, minutes spent on cancelled jobs), then cut in order of gain - fewer and heavier jobs, the expensive job waiting for the cheap gates, a project's own PR mutation job narrowed to the changed LINES (`scripts/changed-ranges.mjs` + `mutation-since.sh`, Stryker), a `paths` filter on the expensive job, duplicated tasks, the PR secret scan reading only the PR's commits. Use when the GitHub Actions quota runs out or gets close, when designing or reviewing a workflow, when a mutation or dry-run job dominates the bill, or when asked "how much does CI cost", "why is the PR slow", "where can we cut in CI".
 ---
 
 # ci-cost — measure, then cut in order of gain
 
 The failure this method prevents: cutting on a hunch. The job that "looks"
 heavy is rarely the one that dominates the bill, and the easy cut (dropping a
-test, skipping mutation) is exactly the forbidden one. **Never cut review,
-tests or the mutation gate to save money**: cut what runs for nothing.
+test, skipping a required check) is exactly the forbidden one. **Never cut
+review, tests or a gate the project requires to save money**: cut what runs
+for nothing.
 
 ## 0. The project rules
 
@@ -64,9 +65,9 @@ it is proven now). A cut without its trade-off written down does not go in.
    `needs: [gates, test]` + `if: ${{ !cancelled() && needs.gates.result == 'success' && needs.test.result == 'success' }}`.
    A red commit, or one superseded by the next push, burns no minutes there.
    Only on a job that is **not** a required check (the name stays the same).
-3. **PR mutation over the changed lines** (§3). The PR's question: "is the
-   code THIS branch wrote tested?". The rest of the scope belongs to the
-   scheduled full run.
+3. **If the project runs PR mutation, only over the changed lines** (§3).
+   The PR's question: "is the code THIS branch wrote tested?". The rest of
+   the scope belongs to the scheduled full run.
 4. **A `paths` filter on the expensive PR job** (deploy dry run, image build):
    only the inputs no suite proves — Dockerfile, entrypoint, manifests,
    lockfile, build tsconfig, the bootstrap file, the workflow itself. On push,
@@ -92,6 +93,11 @@ not run) and changing the runner. Those are the owner's decisions, with a
 quote from `finops`.
 
 ## 3. Mutation by lines (Stryker)
+
+Only for a project that already runs mutation testing in its own CI. The
+squad's delivery flow has no mutation step (the `verifier` judges test
+strength by reading the tests and reproducing the suite), and this skill
+does not add one: it makes an existing job cheaper.
 
 `scripts/changed-ranges.mjs` turns `git diff -U0 <merge-base> HEAD` into
 `path:start-end` entries for Stryker 10's `--mutate`; a new file goes in

@@ -418,13 +418,13 @@ def _problems(pr, lang):
     return problems, body, None
 
 
-def _verdict(denials, notes, langs):
+def _verdict(denials, langs):
     if denials:
         return "deny", ("PR format gate (pull-request skill). Fix and run again "
                         "(title: ~/.claude/skills/pull-request/SKILL.md; body: "
                         "templates/body.md):\n\n" + "\n\n".join(denials))
     head = "PR format gate passed (language " + ", ".join(sorted(langs)) + ")."
-    return "allow", "\n\n".join([head] + notes)
+    return "allow", head
 
 
 class _Langs:
@@ -444,7 +444,7 @@ def evaluate(command, cwd):
     """(decision, message) for a Bash command; decision None when it neither opens nor edits a PR."""
     if not (MENTIONS_TOOL.search(command) and MENTIONS_PR.search(command)):
         return None, ""
-    denials, notes, langs, checked = [], [], set(), False
+    denials, langs, checked = [], set(), False
     lang_of = _Langs()
     for pr in find_pr_commands(command, cwd):
         if pr.action == "edit" and pr.title is None and pr.body is None and pr.body_file is None \
@@ -463,7 +463,7 @@ def evaluate(command, cwd):
             denials.append(f"{label}:\n" + "\n".join(f"  {p}" for p in problems))
     if not checked:
         return None, ""
-    return _verdict(denials, notes, langs)
+    return _verdict(denials, langs)
 
 
 def evaluate_mcp(tool_input, cwd):
@@ -474,15 +474,15 @@ def evaluate_mcp(tool_input, cwd):
     title, body = tool_input.get("title"), tool_input.get("body")
     label = "create_pull_request (MCP)"
     if not isinstance(title, str) or not title.strip():
-        return _verdict([f"{label}: no title."], [], {lang})
+        return _verdict([f"{label}: no title."], {lang})
     if not isinstance(body, str) or not body.strip():
-        return _verdict([f"{label}: no body. Write it from the pull-request skill template."], [], {lang})
+        return _verdict([f"{label}: no body. Write it from the pull-request skill template."], {lang})
     problems = (pr_check.check_title(title, lang)
                 + pr_check.check_body(body, pr_check.detect_kind(body, []), lang)
                 + pr_check.repository_template_problems(body, cwd))
     if problems:
-        return _verdict([f"{label}:\n" + "\n".join(f"  {p}" for p in problems)], [], {lang})
-    return _verdict([], [], {lang})
+        return _verdict([f"{label}:\n" + "\n".join(f"  {p}" for p in problems)], {lang})
+    return _verdict([], {lang})
 
 
 def decide(payload):

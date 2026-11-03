@@ -27,6 +27,10 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+# The skill lives in a versioned repo and `python3 -I` ignores PYTHONDONTWRITEBYTECODE: without this,
+# loading pr-evidence by path below writes skills/pr-evidence/scripts/__pycache__.
+sys.dont_write_bytecode = True
+
 # --- sections ---------------------------------------------------------------
 
 # The hook runs before the owner approves, in a repo that may carry hostile config:
@@ -595,7 +599,7 @@ def _check_placeholders(text):
     return [Problem("PLACEHOLDER", f"Template placeholders left in the body: {shown}")]
 
 
-def check_body(text, kind="app", lang="pt"):
+def check_body(text, kind="app", lang="en"):
     problems = _check_opening(text) + _check_placeholders(text)
     found = _keyed(sections(text), ALIASES)
     order = [ALIASES[h] for h in map(_norm, headings(text)) if h in ALIASES]

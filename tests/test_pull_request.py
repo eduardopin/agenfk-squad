@@ -15,9 +15,8 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True  # the skill lives in a versioned repo: no __pycache__
-# Every child below runs `python -I -B`: -I ignores PYTHONDONTWRITEBYTECODE, and without -B pr_check would
-# write a .pyc into skills/pr-evidence/ (it loads pr_evidence by path), which turns
-# tests/test_bundle_contracts.py red.
+# The children below run `python -I -B` so a regression cannot litter this checkout; the scripts must not
+# need it, and test_scripts_run_as_documented_write_no_bytecode proves that on a copy, without -B.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "skills", "pull-request")
 HOOK = os.path.join(SKILL, "hooks", "pr_gate.py")
@@ -422,6 +421,50 @@ def test_hook_with_an_internal_error_warns_and_does_not_break():
     assert p.stdout.strip() == "" and "internal error" in p.stderr, (p.stdout, p.stderr)
     p = subprocess.run([sys.executable, "-I", "-B", HOOK], input="this is not json", capture_output=True, text=True)
     assert p.returncode == 0 and p.stdout.strip() == ""
+
+
+def test_hook_outside_a_git_repo_falls_back_to_en():
+    """Pins the hook's fallback: with no repository to read a language from, the gate checks in en."""
+    outside = tempfile.mkdtemp(prefix="pr-norepo-")
+    assert pr_check.repo_root(outside) is None
+    tool = "mcp__plugin_github_github__create_pull_request"
+    payload = {"tool_name": tool, "cwd": outside,
+               "tool_input": {"title": "Show the guided tour notice once per browser", "body": GOOD_EN}}
+    d, msg = decision(hook(payload))
+    assert d == "allow" and "language en" in msg, (d, msg)
+    payload["tool_input"].update(title="Move a exportação para um job em segundo plano", body=GOOD_PT)
+    d, msg = decision(hook(payload))
+    assert d == "deny", (d, msg)
+
+
+def test_scripts_run_as_documented_write_no_bytecode():
+    """Pins that `python3 -I` (no -B) on the scripts and the hook leaves no __pycache__ in the skills:
+    -I ignores PYTHONDONTWRITEBYTECODE, and pr_check loads pr-evidence by path."""
+    copy = tempfile.mkdtemp(prefix="pr-copy-")
+    try:
+        for name in ("pull-request", "pr-evidence"):
+            shutil.copytree(os.path.join(ROOT, "skills", name), os.path.join(copy, "skills", name),
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        scripts = os.path.join(copy, "skills", "pull-request", "scripts")
+        r = repo({".github/pull_request_template.md": "## Summary\n", "good-body.md": GOOD_EN})
+        body = os.path.join(r, "good-body.md")
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+        env["HOME"] = tempfile.mkdtemp(prefix="pr-home-")
+        runs = [[os.path.join(scripts, "pr_check.py"), body, "--repo", r],
+                [os.path.join(scripts, "inventory.py"), "--repo", r, "--base", "HEAD"],
+                [os.path.join(copy, "skills", "pull-request", "hooks", "pr_gate.py")]]
+        payload = json.dumps({"tool_name": "mcp__plugin_github_github__create_pull_request", "cwd": r,
+                              "tool_input": {"title": "Show the guided tour notice once per browser", "body": GOOD_EN}})
+        for argv in runs:
+            p = subprocess.run([sys.executable, "-I", *argv], input=payload, capture_output=True, text=True,
+                               env=env, timeout=60)
+            assert "Traceback" not in p.stderr, (argv, p.stderr)
+        assert "TEMPLATE_SECTION_MISSING" in subprocess.run(
+            [sys.executable, "-I", *runs[0]], capture_output=True, text=True, env=env, timeout=60).stdout
+        caches = [d for d, _, _ in os.walk(copy) if os.path.basename(d) == "__pycache__"]
+        assert caches == [], caches
+    finally:
+        shutil.rmtree(copy, ignore_errors=True)
 
 
 # --- inventory and review -----------------------------------------------------

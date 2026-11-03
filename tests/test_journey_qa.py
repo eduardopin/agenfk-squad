@@ -7,7 +7,8 @@ Self-checking: the exit code is the verdict.
 
 The skill ships a Node CLI (scripts/jqa.mjs, no required dependency). The Node
 tests in tests/journey_qa/ run through this file when node >= 20 is on PATH
-(the 3.12 CI leg sets Node up) and are skipped with a reason otherwise.
+(setup-node puts it there on every CI leg, Linux and Windows) and are skipped
+with a reason otherwise.
 No browser, no network, no model.
 """
 import glob
@@ -39,6 +40,8 @@ def node_version():
 
 NODE_MAJOR = node_version()
 NODE_REASON = "node >= 20 not found on PATH"
+# Passing Node tests in tests/journey_qa/ today (36 in core, 6 in driver); a lower count means one was lost.
+NODE_TESTS_FLOOR = 42
 
 
 def read(path):
@@ -154,6 +157,17 @@ class SkillContract(unittest.TestCase):
                     hits.append(f"{os.path.basename(path)}:{n}")
         self.assertEqual(hits, [])
 
+    def test_node_tests_import_local_files_by_url(self):
+        # import() of a bare absolute path works on POSIX and fails on Windows, where D:\... reads as the
+        # scheme "d:". Relative specifiers, node: builtins and pathToFileURL(...) work everywhere.
+        hits = []
+        for path in sorted(glob.glob(os.path.join(NODE_TESTS, "*.mjs"))):
+            for n, line in enumerate(read(path).splitlines(), 1):
+                for arg in re.findall(r"\bimport\(\s*([^)]*)", line):
+                    if not re.match(r"$|[\"'`](\.\.?/|node:)|pathToFileURL\(", arg.strip()):
+                        hits.append(f"{os.path.basename(path)}:{n}: import({arg.strip()}")
+        self.assertEqual(hits, [])
+
     def test_no_required_dependency(self):
         pkg = json.loads(read(os.path.join(SKILL, "scripts", "package.json")))
         self.assertFalse(pkg.get("dependencies"), "scripts/package.json must not require dependencies")
@@ -162,8 +176,9 @@ class SkillContract(unittest.TestCase):
 class NodeSide(unittest.TestCase):
     @unittest.skipIf(NODE_MAJOR is None or NODE_MAJOR < 20, NODE_REASON)
     def test_help_exits_zero(self):
+        # Node writes UTF-8 to a pipe; the locale default (cp1252 on Windows) cannot decode every byte of it.
         r = subprocess.run(["node", os.path.join(SKILL, "scripts", "jqa.mjs"), "--help"],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("jqa", r.stdout + r.stderr)
 
@@ -172,11 +187,11 @@ class NodeSide(unittest.TestCase):
         files = sorted(glob.glob(os.path.join(NODE_TESTS, "*.test.mjs")))
         self.assertTrue(files, "no Node test files found")
         r = subprocess.run(["node", "--test", "--test-reporter=tap", *files],
-                           capture_output=True, text=True, timeout=600)
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=600)
         self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-1000:])
         passed = re.search(r"^# pass (\d+)", r.stdout, re.M)
         self.assertIsNotNone(passed)
-        self.assertGreaterEqual(int(passed.group(1)), 27, "fewer Node tests passed than were ported")
+        self.assertGreaterEqual(int(passed.group(1)), NODE_TESTS_FLOOR, "fewer Node tests passed than exist")
 
 
 if __name__ == "__main__":

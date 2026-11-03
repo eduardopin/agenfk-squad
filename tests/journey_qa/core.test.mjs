@@ -3,20 +3,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, truncateSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 const FIX = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures");
 const S = join(ROOT, "skills", "journey-qa", "scripts");
 const JQA = join(S, "jqa.mjs");
-const { parseStrictJson } = await import(join(S, "lib", "json.mjs"));
-const { loadTemplate, validateDocument, DOCUMENTS } = await import(join(S, "lib", "schema.mjs"));
-const { validateReport, syncReport, checkCapabilities, isExplicitOrigin } = await import(join(S, "lib", "report.mjs"));
-const { appendEvidence, verifyLedger } = await import(join(S, "lib", "ledger.mjs"));
-const { leakCheck, buildPacket } = await import(join(S, "lib", "packet.mjs"));
-const arch = await import(join(S, "lib", "arch.mjs"));
+// import() takes a URL: a bare Windows path (D:\...) reads as the scheme "d:" and is refused.
+const lib = (...p) => import(pathToFileURL(join(S, "lib", ...p)).href);
+const { parseStrictJson } = await lib("json.mjs");
+const { loadTemplate, validateDocument, DOCUMENTS } = await lib("schema.mjs");
+const { validateReport, syncReport, checkCapabilities, isExplicitOrigin } = await lib("report.mjs");
+const { appendEvidence, verifyLedger } = await lib("ledger.mjs");
+const { leakCheck, buildPacket } = await lib("packet.mjs");
+const arch = await lib("arch.mjs");
 
 const tmp = () => mkdtempSync(join(tmpdir(), "jqa-test-"));
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -236,7 +238,7 @@ test("CLI: render does not overwrite an input without .json; --out creates folde
 });
 
 test("spawn: commands do not carry the prompt as an argument and run outside the repository", async () => {
-  const { spawnCommand, actorWorkdir } = await import(join(S, "lib", "packet.mjs"));
+  const { spawnCommand, actorWorkdir } = await lib("packet.mjs");
   for (const h of ["claude", "pi"]) assert.ok(spawnCommand(h).args.every((a) => a.length < 200), h);
   assert.ok(spawnCommand("codex").stdin);
   assert.ok(!spawnCommand("claude").args.includes("--bare"));
@@ -303,7 +305,7 @@ test("infra: terraform and kubernetes find the seeded risks", () => {
 });
 
 test("packet language follows the card locale: pt* gets Portuguese, anything else English; leak check works in English", async () => {
-  const { spawnActor } = await import(join(S, "lib", "packet.mjs"));
+  const { spawnActor } = await lib("packet.mjs");
   const act = (dir, id, argv) => spawnSync(process.execPath, [join(dir, "actors", id, "act.mjs"), ...argv], { encoding: "utf8" });
   const pt = loadTemplate("actor-card");
   assert.equal(pt.locale, "pt-BR");
@@ -409,7 +411,9 @@ test("pi and custom actors run jailed: HOME empty, env cleared, only the actor f
   const s = a.join(" ");
   assert.ok(s.includes(`--tmpfs ${home}`) && s.includes("--tmpfs /run") && s.includes("--clearenv") && s.includes("--unshare-ipc"));
   assert.ok(s.includes("--bind /tmp/actor /tmp/actor"));
-  assert.ok(s.includes("--tmpfs /srv/proj/qa-runs") && !s.includes("--tmpfs /srv/proj/qa-runs/r1"), "the whole qa-runs folder is masked wherever it lives");
+  // jailArgs resolves the run path on the host (D:\srv\... on Windows), so the expectation goes through the same resolve().
+  const runs = resolve("/srv/proj/qa-runs");
+  assert.ok(s.includes(`--tmpfs ${runs}`) && !s.includes(`--tmpfs ${join(runs, "r1")}`), "the whole qa-runs folder is masked wherever it lives");
   assert.ok(!s.includes("OPENAI_API_KEY"), "only the chosen provider's key passes");
   assert.ok(s.includes("--setenv OPENROUTER_API_KEY k") && s.includes("--setenv LANG C"));
   assert.ok(!s.includes("AWS_SECRET_ACCESS_KEY") && !s.includes("SSH_AUTH_SOCK"));

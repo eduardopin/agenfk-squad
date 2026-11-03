@@ -1,7 +1,7 @@
 // Contract, ledger, packet, architecture and infra tests. No browser, no network.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, truncateSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -438,4 +438,72 @@ test("actor spawn plans pi inside bwrap and refuses without a jail unless --unsa
   }
   const free = spawnSync(process.execPath, [JQA, "actor", "spawn", "ana", "--host", "pi", "--unsandboxed", "--run", join(run, "r"), "--json"], { encoding: "utf8" });
   assert.match(JSON.parse(free.stdout).command, /^pi -p /);
+});
+
+// Upload staging: what an actor token may hand to the browser.
+function uploadSetup() {
+  const base = tmp();
+  const actor = join(base, "actor");
+  const uploads = join(base, "uploads");
+  mkdirSync(actor);
+  writeFileSync(join(base, "outside.txt"), "secret");
+  return { base, actor, uploads };
+}
+
+test("upload staging: a file inside the actor folder is staged", async () => {
+  const { stageUploads } = await import("../../skills/journey-qa/scripts/lib/driver/upload.mjs");
+  const { actor, uploads } = uploadSetup();
+  writeFileSync(join(actor, "photo.txt"), "fictitious");
+  const r = stageUploads(actor, uploads, [join(actor, "photo.txt")]);
+  assert.equal(r.ok, true);
+  assert.equal(r.paths.length, 1);
+});
+
+test("upload staging: a file outside the actor folder is refused as privileged", async () => {
+  const { stageUploads } = await import("../../skills/journey-qa/scripts/lib/driver/upload.mjs");
+  const { base, actor, uploads } = uploadSetup();
+  const r = stageUploads(actor, uploads, [join(base, "outside.txt")]);
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "privileged");
+  assert.equal(stageUploads(actor, uploads, [join(base, "missing.txt")]).code, "privileged");
+  assert.equal(existsSync(uploads), false, "nothing is staged on refusal");
+});
+
+test("upload staging: a symlink pointing outside the actor folder is refused", async (t) => {
+  const { stageUploads } = await import("../../skills/journey-qa/scripts/lib/driver/upload.mjs");
+  const { base, actor, uploads } = uploadSetup();
+  try { symlinkSync(join(base, "outside.txt"), join(actor, "link.txt")); } catch { return t.skip("symlinks unavailable"); }
+  const r = stageUploads(actor, uploads, [join(actor, "link.txt")]);
+  assert.equal(r.ok, false);
+  assert.equal(r.code, "privileged");
+});
+
+test("upload staging: a file over 50 MB is refused (sparse file, nothing written)", async () => {
+  const { stageUploads, MAX_UPLOAD_BYTES } = await import("../../skills/journey-qa/scripts/lib/driver/upload.mjs");
+  assert.equal(MAX_UPLOAD_BYTES, 50 * 1024 * 1024);
+  const { actor, uploads } = uploadSetup();
+  const big = join(actor, "big.bin");
+  writeFileSync(big, "");
+  truncateSync(big, MAX_UPLOAD_BYTES + 1);
+  assert.equal(stageUploads(actor, uploads, [big]).code, "privileged");
+  truncateSync(big, 1024);
+  assert.equal(stageUploads(actor, uploads, [big]).ok, true, "a file under the limit passes");
+});
+
+test("upload staging: the browser receives a private copy with the same bytes", async () => {
+  const { stageUploads } = await import("../../skills/journey-qa/scripts/lib/driver/upload.mjs");
+  const { actor, uploads } = uploadSetup();
+  const src = join(actor, "photo.txt");
+  writeFileSync(src, "original bytes");
+  const r = stageUploads(actor, uploads, [src]);
+  const copy = r.paths[0];
+  assert.ok(copy.startsWith(uploads + "/") || copy.startsWith(uploads + "\\"), "the copy lives under the staging folder");
+  assert.notEqual(copy, src);
+  assert.equal(readFileSync(copy, "utf8"), "original bytes");
+  writeFileSync(src, "changed after the check");
+  assert.equal(readFileSync(copy, "utf8"), "original bytes", "changing the source later does not change what is uploaded");
+  if (process.platform !== "win32") {
+    assert.equal(statSync(copy).mode & 0o777, 0o600);
+    assert.equal(statSync(join(copy, "..")).mode & 0o777, 0o700);
+  }
 });

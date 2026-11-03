@@ -2,6 +2,7 @@
 // Holds Playwright contexts (one per actor), enforces the origin allowlist and
 // action budgets, and writes every observation to the evidence ledger + trace.
 // Started by `jqa browser start`; talks HTTP on 127.0.0.1 with a bearer token.
+import { stageUploads } from "./upload.mjs";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -735,43 +736,9 @@ function actorRequest(actorId, body) {
   }
   const args = (body.args ?? []).map(String);
   if (body.cmd === "upload") {
-    // The driver reads the file, not the actor: with an actor token it may only hand over files from the actor's own
-    // folder, or a jailed actor could make the browser upload any host file to the product. The bytes are copied at
-    // check time (no symlink followed, same inode as the checked path) into a driver-only folder, and that copy is what
-    // the browser uploads, so swapping the path after the check changes nothing.
-    let root = null;
-    try { root = realpathSync(actorWorkdir(runDir, actorId)); } catch {}
-    const refuse = { ok: false, code: "privileged", text: "upload: only files in the actor's own folder can be uploaded" };
-    const staged = [args[0]];
-    for (const f of args.slice(1)) {
-      let data = null;
-      try {
-        const real = realpathSync(f);
-        if (!root || !real.startsWith(root + sep)) return refuse;
-        const fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW);
-        try {
-          const st = fstatSync(fd);
-          if (!st.isFile() || st.size > 50 * 1024 * 1024) return refuse;
-          // Judge the file actually opened, not a name: on Linux the kernel reports the open descriptor's path, so a
-          // directory swapped between the check and the open is caught. Elsewhere (no jail exists there) compare inodes.
-          if (existsSync("/proc/self/fd")) {
-            if (!readlinkSync(`/proc/self/fd/${fd}`).startsWith(root + sep)) return refuse;
-          } else {
-            const now = statSync(real);
-            if (st.ino !== now.ino || st.dev !== now.dev) return refuse;
-          }
-          data = readFileSync(fd);
-        } finally { closeSync(fd); }
-        const dir = join(jqaDir, "uploads", randomBytes(8).toString("hex"));
-        mkdirSync(dir, { recursive: true, mode: 0o700 });
-        const copy = join(dir, basename(real));
-        writeFileSync(copy, data, { mode: 0o600 });
-        staged.push(copy);
-      } catch {
-        return refuse;
-      }
-    }
-    args.splice(0, args.length, ...staged);
+    const r = stageUploads(actorWorkdir(runDir, actorId), join(jqaDir, "uploads"), args.slice(1));
+    if (!r.ok) return r;
+    args.splice(1, args.length, ...r.paths);
   }
   return { cmd: body.cmd, actor: actorId, args, flags };
 }

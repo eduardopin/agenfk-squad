@@ -141,7 +141,7 @@ The dispatch ceilings exist because of one week of October 2026: orchestrators
 with 420-966k of context, 249 sub-agents (64% of the consumption), five projects
 orchestrating overnight and one card judged five times.
 """
-import fcntl
+import errno
 import hashlib
 import json
 import os
@@ -150,6 +150,12 @@ import shlex
 import subprocess
 import sys
 import time
+
+WINDOWS = os.name == "nt"
+if WINDOWS:
+    import msvcrt
+else:
+    import fcntl
 
 HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, ".claude", "squad")
@@ -212,6 +218,9 @@ CD = re.compile(r"(?:^|(?P<sep>&&|\|\||[;&|(\n{\"']|\b(?:then|else|do)\b))[ \t]*
 CD_WORD = re.compile(r"(?<![\w.~/\\-])cd(?=[\s;&|)\"']|$)")     # every cd, `builtin cd` too
 ELSEWHERE = re.compile(r"\bGIT_(?:DIR|WORK_TREE)=|--git-dir\b|--work-tree\b|\benv\b[^;&|\n]*[ \t]-C\b|\b(?:pushd|popd)\b")
 LITERAL_DIR = re.compile(r"[A-Za-z0-9._/~+,@%=-]+")
+# Git Bash on Windows: C:/work/repo, or /c/work/repo. A backslash path is not literal: bash reads \ as an escape.
+WIN_DIR = re.compile(r"[A-Za-z]:/[A-Za-z0-9._/~+,@%=-]*")
+MSYS_DRIVE = re.compile(r"/([A-Za-z])(?=/|$)")
 TURN_CLI = re.compile(AT + r"(?:\S*/)?squad-turn(?:\.py)?\s+(request|release|status)\b(?:\s+#?(\d+))?")
 # What merge_text() may treat as data. Anything else on the line, or any doubt, counts as code.
 OPAQUE = re.compile(r"\$[({'\[]|`|[<>]\(|<<")      # substitutions, ANSI-C quotes, heredocs
@@ -237,6 +246,45 @@ def ctx_lib():
     sys.path.insert(0, SCRIPTS)
     import session_context  # noqa: E402  (same weights and same reading as the report)
     return session_context
+
+
+def lock_file(fh, block=True):
+    """Exclusive lock on an open file, released when it is closed. True when
+    taken; with block=False, False when someone else holds it."""
+    if WINDOWS:
+        fh.seek(0)
+        while True:
+            try:
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)     # LK_LOCK gives up after 10 s
+                return True
+            except OSError as e:
+                if e.errno not in (errno.EACCES, errno.EDEADLOCK):    # anything but "someone else holds it" is a real failure
+                    raise
+                if not block:
+                    return False
+                time.sleep(0.02)
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+        return True
+    except OSError:
+        if block:
+            raise
+        return False
+
+
+def owned_by_me(info):
+    """The file belongs to the user running the hook. Windows has no uid: the
+    profile's ACL is what keeps another user out, and that is not ours to check."""
+    return WINDOWS or info.st_uid == os.getuid()
+
+
+def detached_kwargs(windows=None):
+    """Popen arguments that leave the child running after the hook returns."""
+    if WINDOWS if windows is None else windows:
+        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP. Not DETACHED_PROCESS: a child with no console makes every
+        # console program it runs (git, gh, herdr) open a window of its own.
+        return {"creationflags": 0x08000000 | 0x00000200, "close_fds": True}
+    return {"start_new_session": True, "close_fds": True}
 
 
 def safe(s):
@@ -302,6 +350,7 @@ def harness(p):
     if c in ("claude", "codex", "pi", "omp"):
         return c
     path = str(p.get("transcript_path") or "")
+    path = path.replace("\\", "/")
     if "/.omp/" in path:
         return "omp"
     if "/.pi/" in path:
@@ -917,8 +966,10 @@ def run_dir(text, end, cwd, dirs=()):
             return None
     for words in [m.group("arg").split()[:1] or ["~"] for m in cds] + [[d] for d in dirs]:
         w = words[0]
-        if w == "-" or not LITERAL_DIR.fullmatch(w):
+        if w == "-" or not (LITERAL_DIR.fullmatch(w) or (WINDOWS and WIN_DIR.fullmatch(w))):
             return None
+        if WINDOWS:
+            w = MSYS_DRIVE.sub(lambda m: m.group(1).upper() + ":", w, count=1) if MSYS_DRIVE.match(w) else w
         w = os.path.expanduser(w)
         if not os.path.isabs(w) and not where:
             return None
@@ -977,7 +1028,7 @@ def turn_open(repo):
     os.makedirs(TURN, exist_ok=True)
     path = os.path.join(TURN, hashlib.sha1(repo.encode()).hexdigest()[:16] + ".json")
     lock = open(path + ".lock", "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    lock_file(lock)
     d = load(path)
     d["repo"] = repo
     d.pop("queue", None)          # the long queue of earlier versions: nobody waits in line any more
@@ -1530,6 +1581,18 @@ def subagent_stop(p):
 
 
 HANDOFF_PATH = re.compile(r"[A-Za-z0-9_./-]+/handoffs/[A-Za-z0-9_.-]+\.md")
+# A Windows profile can hold spaces, accents and 8.3 short names (FABIOT~1); a drive letter is required (no UNC shares)
+HANDOFF_PATH_WIN = re.compile(r"[A-Za-z]:/(?:(?=[^/]*[\w~])[\w .~()-]+/)*handoffs/[\w.-]+\.md")   # a segment holds a word character: no "...", no " "
+
+
+def handoff_path_ok(path, windows=None):
+    """An absolute path to a handoff file with no parent segment. On POSIX it holds no character a shell
+    would read; a Windows profile may hold spaces, parentheses and ~ (8.3 names), which is safe because the
+    pickup is handed the sealed copy (sealed_copy in squad-switch.py), never this path."""
+    if WINDOWS if windows is None else windows:
+        path = path.replace("\\", "/")
+        return bool(HANDOFF_PATH_WIN.fullmatch(path)) and ".." not in path.split("/")
+    return bool(HANDOFF_PATH.fullmatch(path)) and path.startswith("/") and ".." not in path.split("/")
 
 
 def own_handoff(transcript, since, client="claude"):
@@ -1550,7 +1613,8 @@ def own_handoff(transcript, since, client="claude"):
     family = client in ("pi", "omp")
     marker = b'"toolCall"' if family else b'"Write"'
     for raw in reversed(lines):
-        if b"handoffs/" not in raw or marker not in raw:
+        # a Windows path is JSON-escaped in the transcript: handoffs\\name.md
+        if (b"handoffs/" not in raw and b"handoffs\\\\" not in raw) or marker not in raw:
             continue
         try:
             rec = json.loads(raw)
@@ -1586,23 +1650,31 @@ def own_handoff(transcript, since, client="claude"):
                 content = inp.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
-            if not HANDOFF_PATH.fullmatch(path) or not os.path.isabs(path) or ".." in path.split("/"):
+            if not handoff_path_ok(path):
                 continue
             try:
                 info = os.lstat(path)
             except OSError:
                 continue
             import stat as _stat
-            if not (_stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+            if not (_stat.S_ISREG(info.st_mode) and owned_by_me(info)
                     and info.st_mtime >= since - 5):
                 return None            # the last handoff Write is the one that counts; it does not fall back to an old one
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
             try:
                 with open(path, "rb") as fh:
-                    same = hashlib.sha256(fh.read()).hexdigest() == digest
+                    data = fh.read()
             except OSError:
-                same = False
-            return (path, digest) if same else None
+                return None
+            wrote = content.encode("utf-8")
+            if WINDOWS:
+                # a Windows editor or tool may store the same text with CRLF line ends: same text, other bytes.
+                # POSIX keeps the byte-for-byte rule. The digest handed on is the one of the bytes on disk,
+                # which is what the switch checks.
+                data_cmp, wrote = data.replace(b"\r\n", b"\n"), wrote.replace(b"\r\n", b"\n")
+            else:
+                data_cmp = data
+            same = data_cmp == wrote
+            return (path, hashlib.sha256(data).hexdigest()) if same else None
     return None
 
 
@@ -1701,7 +1773,7 @@ Branch: {git_out(cwd, 'branch', '--show-current')}
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:     # the sha256 below is of these exact bytes
             fh.write(body)
         os.replace(tmp, path)
     except OSError:
@@ -1753,9 +1825,12 @@ def news_after(transcript, handoff):
             lines = fh.read().split(b"\n")
     except OSError:
         return 0
+    # the transcript is JSON: a Windows path is there with its backslashes escaped (C:\\x\\a.md)
+    names = {handoff.encode(), json.dumps(handoff)[1:-1].encode(),
+             json.dumps(handoff, ensure_ascii=False)[1:-1].encode("utf-8")}
     n = 0
     for raw in reversed(lines):
-        if b'"Write"' in raw and handoff.encode() in raw and b'"assistant"' in raw:
+        if b'"Write"' in raw and any(name in raw for name in names) and b'"assistant"' in raw:
             return n
         if b"<task-notification>" not in raw or b'"user"' not in raw:
             continue
@@ -1773,7 +1848,7 @@ def news_after(transcript, handoff):
 
 def spawn(*args):
     subprocess.Popen([sys.executable, *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+                     stderr=subprocess.DEVNULL, **detached_kwargs())
 
 
 def here(name):
@@ -1895,10 +1970,10 @@ def main():
     # parallel calls of the same session read and write the same state: one at a time
     os.makedirs(STATE, exist_ok=True)
     for d in (BASE, STATE):       # the umask only applies to what is created now
-        if os.stat(d).st_mode & 0o077:
+        if not WINDOWS and os.stat(d).st_mode & 0o077:
             os.chmod(d, 0o700)
     lock = open(os.path.join(STATE, f".{safe(p['session_id'])}.lock"), "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    lock_file(lock)
     if event == "PreToolUse":
         pre_tool(p)
     elif event == "PostToolUse":

@@ -17,6 +17,12 @@ import tempfile
 sys.dont_write_bytecode = True  # the skill lives in a versioned repo: no __pycache__
 # The children below run `python -I -B` so a regression cannot litter this checkout; the scripts must not
 # need it, and test_scripts_run_as_documented_write_no_bytecode proves that on a copy, without -B.
+
+if os.name == "nt":
+    # its scripts and fakes run through bash and POSIX tools; the pull-request skill is not yet verified on Windows
+    print("skipped: the pull-request skill is not yet verified on Windows")
+    sys.exit(0)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "skills", "pull-request")
 HOOK = os.path.join(SKILL, "hooks", "pr_gate.py")

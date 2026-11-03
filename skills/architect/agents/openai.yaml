@@ -1,0 +1,6 @@
+interface:
+  display_name: "Architect"
+  short_description: "Resources, PRs and parallel delivery with predictability"
+  default_prompt: "Use $architect to plan this app: publish the table of resources and PRs with owners, dependencies and estimates before creation, and coordinate application, platform and tests in parallel."
+policy:
+  allow_implicit_invocation: true

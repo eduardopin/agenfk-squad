@@ -296,6 +296,23 @@ def test_relative_paths_use_forward_slashes_on_windows_too():
 OUTSIDE = ":root{--bg:#aa0000;--fg:#00aa00}"
 
 
+FIGMA_OUT = "https://www.figma.com/file/outsidemark/brand"
+# Each read site of the sweep with a file whose text, when read, puts "outsidemark" in --json.
+SYMLINK_SITES = [
+    ("DESIGN.md", "# Outsidemark\n" + FIGMA_OUT + "\n"),
+    ("docs/brand.md", "# Brand\n" + FIGMA_OUT + "\n"),
+    ("tailwind.config.ts", "export default { theme: { extend: { colors: { outsidemark: '#aa0000', "
+                           "background: '#fdfcfb' } } } }"),
+    ("tokens.json", json.dumps({"color": {"outsidemark": {"$value": "#aa0000"}}})),
+    ("theme.json", json.dumps({"color": {"outsidemark": {"$value": "#aa0000"}}})),
+    ("theme.ts", "export const theme = { outsidemark: '#aa0000', background: '#fdfcfb' }"),
+    ("layout.tsx", "import { Inter } from 'next/font/google'\n"
+                   "const inter = Inter({ subsets: ['latin'], variable: '--font-outsidemark' })"),
+    ("package.json", json.dumps({"name": "@outsidemark/ui"})),
+    ("README.md", "# p\n" + FIGMA_OUT + "\n"),
+]
+
+
 # 5k. A symlink inside the swept root whose target is outside it is not read; one that stays inside is
 def test_symlink_out_of_the_root_is_not_read():
     base = project({"outside/x.css": OUTSIDE, "proj/README.md": "# p\n", "proj/vendor/real.css": OUTSIDE})
@@ -313,14 +330,35 @@ def test_symlink_out_of_the_root_is_not_read():
     a = finding(root)
     assert a["verdict"] == "project" and a["tokens"].get("--bg") == "#aa0000", a
 
+    # Every other place the sweep reads a file: the same symlink out is not read, and one that stays
+    # inside the root is (the control proves the marker would show if the file were read).
+    for name, text in SYMLINK_SITES:
+        base = project({"outside/" + os.path.basename(name): text,
+                        "proj/vendor/" + os.path.basename(name): text, "proj/.keep": ""})
+        root = os.path.join(base, "proj")
+        here = os.path.join(root, name)
+        os.makedirs(os.path.dirname(here), exist_ok=True)
+        if not link(os.path.join(base, "outside", os.path.basename(name)), here):
+            return
+        code, out, err = run(root, "--json")
+        assert code == 0, (name, err)
+        assert "outsidemark" not in out.lower(), (name, out)
+        os.remove(here)
+        link(os.path.join(root, "vendor", os.path.basename(name)), here)
+        assert "outsidemark" in json.dumps(finding(root)).lower(), (name, "control: inside the root it is read")
+
 
 # 5l. A relative @import stops at the repository: never above it, never a repo that is $HOME, the
 # system temporary folder or an ancestor of one, never a .git more than three levels up
 def test_relative_import_never_leaves_the_repository():
-    imp = '@import "../../outside.css";'
-    base = project({"outside.css": OUTSIDE, "repo/.git/HEAD": "x\n", "repo/app/src/index.css": imp})
+    # From repo/app/src, ../../../outside.css is base/outside.css: one level above the repository.
+    up = '@import "../../../outside.css";'
+    base = project({"outside.css": OUTSIDE, "repo/.git/HEAD": "x\n", "repo/app/src/index.css": up})
+    assert os.path.isfile(os.path.normpath(os.path.join(base, "repo", "app", "src", "../../../outside.css")))
     a = finding(os.path.join(base, "repo", "app"))
     assert a["verdict"] == "neutral" and "--bg" not in a["tokens"], a
+
+    imp = '@import "../../outside.css";'
 
     base = project({"h/.git/HEAD": "x\n", "h/outside.css": OUTSIDE, "h/proj/src/index.css": imp})
     h, root = os.path.join(base, "h"), os.path.join(base, "h", "proj")
@@ -339,6 +377,26 @@ def test_relative_import_never_leaves_the_repository():
     base = project({k.replace("a/", "", 1) if not k.startswith(".") else k: v for k, v in deep.items()})
     a = finding(os.path.join(base, "b", "c", "d"))
     assert a["tokens"].get("--bg") == "#aa0000", "three levels up is in reach: %s" % a["tokens"]
+
+
+# 5m. No writable temporary folder (gettempdir raises): the sweep still gives a verdict, and a relative
+# @import falls back to the swept root, since the temporary folder can no longer be ruled out
+def test_no_temporary_folder_still_gives_a_verdict():
+    base = project({".git/HEAD": "x\n", "brand.css": OUTSIDE, "app/src/index.css": '@import "../../brand.css";',
+                    "app/src/own.css": ":root{--fg:#111111;--accent:#0f766e}"})
+    app = os.path.join(base, "app")
+    assert finding(app)["tokens"].get("--bg") == "#aa0000", "control: with a temporary folder the repo is in reach"
+    no_temp = ("import runpy, sys, tempfile\n"
+               "def gone():\n    raise FileNotFoundError('No usable temporary directory found')\n"
+               "tempfile.gettempdir = gone\n"
+               "sys.argv = [sys.argv[1]] + sys.argv[2:]\n"
+               "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+    p = subprocess.run([sys.executable, "-I", "-B", "-c", no_temp, SCRIPT, app, "--json"],
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    a = json.loads(p.stdout)
+    assert a["verdict"] == "project" and a["tokens"].get("--accent") == "#0f766e", a
+    assert "--bg" not in a["tokens"], "without a temporary folder the limit is the swept root: %s" % a["tokens"]
 
 
 # 5c. A vocabulary of its own: the use in the CSS (body, a, focus, h1) says which token plays the role

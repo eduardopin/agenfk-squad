@@ -155,12 +155,12 @@ def inside(path, limit):
         return False
 
 
-def read(path, limit=None):
-    """Regular files only (no symlink to /dev/zero, no FIFO), never more than MAX_BYTES, and, with a
-    limit, never a file whose real target is outside it: a symlink in the repository that points at
-    ~/.config or another project would carry that file's text into --json."""
+def read(path, limit):
+    """Regular files only (no symlink to /dev/zero, no FIFO), never more than MAX_BYTES, and never a
+    file whose real target is outside limit (a real path, required): a symlink in the repository that
+    points at ~/.config or another project would carry that file's text into --json."""
     try:
-        if limit is not None and not inside(path, limit):
+        if not inside(path, limit):
             return ""
         st = os.stat(path)
         if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
@@ -184,10 +184,14 @@ def import_limit(root):
     """Boundary of a relative @import: the nearest ancestor of root (root itself up to IMPORT_LEVELS
     above it) that holds a .git, so a monorepo app reaches its sibling token package. If that ancestor
     is a filesystem root, $HOME, the system temporary folder or an ancestor of one of them, or there
-    is no .git within reach, the boundary is root itself."""
+    is no .git within reach, or the temporary folder cannot be found, the boundary is root itself."""
     root = os.path.realpath(root)
+    try:
+        temp = tempfile.gettempdir()
+    except OSError:   # no writable temporary folder: it cannot be ruled out, so stay at root
+        return root
     guarded = []
-    for p in (os.path.expanduser("~"), tempfile.gettempdir()):
+    for p in (os.path.expanduser("~"), temp):
         if p and p != "~":
             guarded.append(os.path.realpath(p))
     d = root

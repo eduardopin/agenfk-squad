@@ -11,7 +11,7 @@ The format is the Agent Skills standard (`SKILL.md` + folders). What changes bet
 | **pi** (any provider/model) | `.pi/skills/` or `.agents/skills/` (trusted project) or `~/.pi/agent/skills/` | `/skill:journey-qa`, implicit, or `pi --skill <folder>` | Driver | `jqa actor spawn --host pi` (`pi -p --no-session --no-context-files --no-skills --no-extensions` inside a bubblewrap jail on Linux) |
 | **Claude Desktop and claude.ai** | Chat: upload the skill ZIP (`journey-qa/` folder at the root) in Settings > Capabilities > Skills; the upload syncs to the account, so Desktop and web both get it. Desktop's Code tab is Claude Code: it reads `~/.claude/skills/` of the machine it runs on | Natural-language request | Claude in Chrome (`host_tools`) when available; the driver requires the execution environment to have Node, Playwright and a browser | New conversation with only `PACKET.md`; otherwise declared single mode |
 | **Others** (Cursor, Gemini CLI, custom agents) | `.agents/skills/journey-qa/` or a directory the host documents | As the host defines | Driver if there is a shell | `jqa actor spawn --host custom --cmd "…{PROMPT_FILE}"` |
-| **Chat only** | Paste `portable/JOURNEY-QA.md` into the instructions | — | Host tools, if any | Declared single mode |
+| **Chat only** | Paste `SKILL.md` and the files in `roles/` into the instructions | — | Host tools, if any | Declared single mode |
 
 Paths and flags checked against the vendors' documentation on 2026-10-23; versions change. If a path is not discovered, use what the host documents.
 
@@ -33,7 +33,7 @@ Paths and flags checked against the vendors' documentation on 2026-10-23; versio
 
 ## pi
 
-- Works with any provider configured in pi (`--provider`, `--model`). For smaller models: use the driver (compact snapshot with refs), short journeys per actor, `act.mjs` instead of long commands, and measure with the lab (`evals/`) before trusting it.
+- Works with any provider configured in pi (`--provider`, `--model`). For smaller models: use the driver (compact snapshot with refs), short journeys per actor, `act.mjs` instead of long commands, and compare runs by hand against a known result until an evaluation lab exists, before trusting it.
 - Projects must be marked as trusted for pi to load skills from `.pi/skills`/`.agents/skills`.
 - `pi -p --no-session --no-context-files --no-skills --tools bash` is the most isolated actor: no AGENTS.md, no skills, only a shell.
 

@@ -145,6 +145,15 @@ class SkillContract(unittest.TestCase):
                     hits.append(f"{os.path.relpath(path, ROOT)}:{n}")
         self.assertEqual(hits, [])
 
+    def test_references_name_only_files_that_ship(self):
+        # portable/ and evals/ belong to the upstream development repository and are not part of the skill.
+        hits = []
+        for path in glob.glob(os.path.join(SKILL, "references", "*.md")):
+            for n, line in enumerate(read(path).splitlines(), 1):
+                if re.search(r"\b(portable|evals)/", line):
+                    hits.append(f"{os.path.basename(path)}:{n}")
+        self.assertEqual(hits, [])
+
     def test_no_required_dependency(self):
         pkg = json.loads(read(os.path.join(SKILL, "scripts", "package.json")))
         self.assertFalse(pkg.get("dependencies"), "scripts/package.json must not require dependencies")

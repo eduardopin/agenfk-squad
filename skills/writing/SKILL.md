@@ -26,9 +26,7 @@ publishing and posting always belong to the owner. `$WRITING` is this skill's
 directory (`~/.claude/skills/writing`); the scripts are Python stdlib, run them
 with `python3 -I`.
 
-## 1. Five jobs
-
-Pick one before you start.
+## 1. Five jobs: pick one before you start
 
 | Job | Trigger | Output |
 |---|---|---|

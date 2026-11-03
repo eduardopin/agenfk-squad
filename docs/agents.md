@@ -156,9 +156,8 @@ the tests (owner decision, 16/10/2026).
 **Independent reviewer, read-only, in a clean context.**
 
 Judges a card's branch against its acceptance criteria. Runs the suite itself,
-ties each criterion to evidence, judges test strength by reading (with a
-single targeted break when reading cannot settle it, never a required round),
-and hunts for regressions, broken integration and security flaws.
+ties each criterion to evidence, judges test strength by reading and by the
+suite it reproduced (it never breaks production code), and hunts for regressions, broken integration and security flaws.
 
 - **Dispatch when:** REVIEW, ADVERSARIAL and VERIFY of any flow;
   before every PR; whenever the one asking for approval is the one who wrote

@@ -71,9 +71,9 @@ memory of this document.
   the card says. An adversarial pass tries to make it do something else. Asked
   to do both at once, a reviewer does the first and calls it the second.
 - **No step that breaks code to grade the tests.** It was the slowest check
-  and is out of the flow (owner decision, 16/10/2026). The verifier judges test
-  strength by reading and, when reading cannot settle one claimed test, by a
-  single targeted break of the line it guards; never as a required round.
+  and is out of the flow (owner decision, 16/10/2026). The verifier does not
+  break production code; it judges test strength by reading and by the suite
+  it reproduced.
 - **VERIFY by the main session.** The session that advances the card must
   hold the evidence itself. It did not write the code and did not review it;
   it checks that each criterion maps to something that was run.

@@ -64,17 +64,12 @@ counts.** A total lower than the base = a test was removed.
 
 #### No breaking round
 
-A round that breaks production code to grade the tests (targeted or by tool)
-is **not part** of the gate: owner decision, 16/10/2026. Do not demand it and
-do not fail a branch for lacking it. The gate is: the suite reproduced green
-by you, each acceptance criterion with evidence (`file:line` or command
-output), and the reading below.
-
-Judge test strength by reading: does each claimed test assert the behaviour
-its criterion names, or only that the code ran? When reading cannot settle
-whether one claimed test can fail, a single targeted break of the line it
-guards, in your scratch worktree, run against that test alone and reverted to
-a clean `git status`, is allowed; it is never a required round.
+Breaking production code to grade the tests (targeted or by tool) is **not
+part** of the gate: owner decision, 16/10/2026. Do not run it, do not ask for
+it, do not fail a branch for lacking it. The gate is: the suite reproduced
+green by you, each acceptance criterion with evidence (`file:line` or command
+output), and the reading below. Judge test strength by reading each claimed
+test against the behaviour its criterion names, and by the suite you ran.
 
 ### Then, what nobody was looking at
 

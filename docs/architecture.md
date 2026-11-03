@@ -14,7 +14,7 @@ agenfk-squad/
 │   └── vendor/               third-party skills, Apache-2.0, unmodified
 ├── hooks/
 │   ├── squad-router.py       UserPromptSubmit: suggests the agent for the request
-│   ├── squad-watch.py        the watcher: six hook events
+│   ├── squad-watch.py        the watcher: seven hook events
 │   ├── squad-switch.py       detached: clears the pane and calls the pickup
 │   └── squad-turn.py         the merge queue CLI (`squad-turn`)
 ├── flows/squad-delivery.json the AgenFK flow whose steps match the agents

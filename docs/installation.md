@@ -140,7 +140,7 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 | Script | Events |
 |---|---|
 | `squad-router.py` | `UserPromptSubmit` |
-| `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `Stop`, `PreCompact` |
+| `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `PreCompact` |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
 them when needed.

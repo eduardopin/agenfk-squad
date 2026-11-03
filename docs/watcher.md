@@ -1,7 +1,7 @@
 # The watcher
 
 `hooks/squad-watch.py` is one Python file, standard library only, registered on
-six Claude Code hook events. It reads the transcript of every session and
+seven Claude Code hook events. It reads the transcript of every session and
 sub-session, does a fixed piece of arithmetic, and acts. It never crashes a
 session: any error ends silently with exit code 0 and a line in
 `~/.claude/squad/watch-errors.log`.

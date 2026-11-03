@@ -85,6 +85,7 @@ CLAUDE_CONFIG_DIR=/tmp/claude-test HOME=/tmp/claude-test-home ./install.sh
 python3 tests/test_watch.py
 python3 tests/test_vendor.py
 python3 tests/test_agents.py
+python3 tests/test_heartbeat.py
 python3 -m py_compile hooks/*.py skills/session-context/scripts/session_context.py
 bash -n install.sh
 ```
@@ -192,7 +193,7 @@ makes the agent rigid everywhere else. Explain the reason for the rule instead.
 | Who gets dispatched for what | `CLAUDE.md`, `hooks/squad-router.py` |
 | What an agent may do | `agents/<name>.md` |
 | When a session is told to hand off | `handoff_math` in `skills/session-context/scripts/session_context.py` |
-| What happens at each hook event | `hooks/squad-watch.py` (`pre_tool`, `post_tool`, `subagent_stop`, `stop`) |
+| What happens at each hook event | `hooks/squad-watch.py` (`pre_tool`, `post_tool`, `subagent_stop`, `stop`, `precompact`) |
 | The dispatch brake | `pre_dispatch` in `hooks/squad-watch.py` |
 | The merge queue | the `turn_*` functions in `hooks/squad-watch.py`, `hooks/squad-turn.py` |
 | The session switch | `hooks/squad-switch.py` |

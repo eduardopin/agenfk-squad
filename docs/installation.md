@@ -42,7 +42,7 @@ It links, into `${CLAUDE_CONFIG_DIR:-~/.claude}`:
 | `agents/<name>.md` | each file in `agents/` |
 | `skills/<name>` | each skill directory that has a `SKILL.md`, including those in `skills/vendor/` |
 | `CLAUDE.md` | `CLAUDE.md` |
-| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py` | the four files in `hooks/` |
+| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py` | the files in `hooks/` |
 
 and, so that the merge queue can be called by name:
 
@@ -51,6 +51,16 @@ and, so that the merge queue can be called by name:
 | `~/.local/bin/squad-turn` | `hooks/squad-turn.py` |
 
 Make sure `~/.local/bin` is on your `PATH`.
+
+On Linux, when the systemd user manager runs with your `HOME`, it also writes
+`~/.config/systemd/user/squad-wake.service` and `squad-wake.timer` and enables
+the timer: `squad-wake.py` scans the herdr panes every 2 minutes and wakes a
+session that stopped without delivering (see
+[Waking a stopped session](watcher.md#waking-a-stopped-session)). The service
+reads `~/.claude/squad/wake.env`, if present, for `SQUAD_WAKE=0` and the
+thresholds. Elsewhere (macOS, a container, no user manager) the installer
+prints `SKIPPED squad-wake.timer` with the command to run every 2 minutes from
+cron or launchd, and does not fail. Windows is not covered yet.
 
 ### What it will not do
 
@@ -151,7 +161,7 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 | `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `PreCompact` |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
-them when needed.
+them when needed. `squad-wake.py` is not a hook either: the timer runs it.
 
 `PreCompact` has no matcher, so it covers both a manual `/compact` and an
 auto-compact. Its timeout is longer because it runs three `git` commands
@@ -210,6 +220,7 @@ want it gone.
 ```bash
 export SQUAD_WATCH=0     # the whole watcher
 export SQUAD_SWITCH=0    # only the automatic session switch
+# squad-wake runs from the timer, outside your shell: put SQUAD_WAKE=0 in ~/.claude/squad/wake.env
 export SQUAD_TURN=0      # only the merge queue
 ```
 

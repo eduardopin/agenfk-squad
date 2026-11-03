@@ -34,6 +34,9 @@ pane is not left stuck, unless the session is working. Giving up before the
 /clear rearms the watcher (synthetic Stop with squad_rearm): it decides again
 on the session's next Stop, with the handoff and the owner's request of then.
 
+Before sending the pickup it records switches/<new-session>.pickup (the copy's
+path): squad-wake resends the pickup if it never reaches the new transcript.
+
 Every step goes to ~/.claude/squad/switches.log. Any doubt = give up: the
 handoff is already written and the owner does the switch by hand.
 """
@@ -140,6 +143,18 @@ def claim(session):
         return True
     except OSError:
         return False
+
+
+def pending(session, copy):
+    """Records the new session's pickup: if it never becomes a request in the
+    transcript (prompt lost, pane busy), squad-wake sends it again."""
+    try:
+        os.umask(0o077)
+        os.makedirs(CLAIMS, exist_ok=True)
+        with open(os.path.join(CLAIMS, f"{session}.pickup"), "w", encoding="utf-8") as fh:
+            fh.write(copy)
+    except OSError:
+        pass
 
 
 def read_note(path):
@@ -265,6 +280,7 @@ def main():
     if read_checked(copy, copy_digest) is None:     # the copy is rechecked right before sending
         log(pane, f"{session[:8]} -> {new[:8]} CLEARED, but the handoff copy does not match: pickup NOT sent; original at {handoff}")
         return 1
+    pending(new, copy)                              # squad-wake sends it again if the pickup does not land
     rc, _ = herdr("agent", "prompt", pane, f"{PICKUP} {copy}" if PICKUP.startswith("/") else PICKUP, timeout=20)
     log(pane, f"{session[:8]} -> {new[:8]} " + ("pickup sent" if rc == 0 else "CLEARED, but the pickup was not accepted: run /clear-pickup pickup")
         + (" (with a note on background tasks)" if note else ""))

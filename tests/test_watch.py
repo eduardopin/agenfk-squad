@@ -7,8 +7,10 @@ fake herdr, and never touches ~/.claude.
 
     python3 tests/test_watch.py
 """
+import atexit
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -23,8 +25,21 @@ import session_context as cx  # noqa: E402
 M = 1_000_000
 
 
+_HOMES = []
+
+
 def home():
-    return tempfile.mkdtemp(prefix="watch-")
+    h = tempfile.mkdtemp(prefix="watch-")
+    _HOMES.append(h)
+    return h
+
+
+@atexit.register
+def _remove_homes():
+    # every test creates a throwaway HOME; without this /tmp (tmpfs) runs out of inodes
+    # when several sessions run the suite all day long
+    for h in _HOMES:
+        shutil.rmtree(h, ignore_errors=True)
 
 
 def run_proc(h, event, sid, transcript, extra=None, env=None):
@@ -280,6 +295,9 @@ def test_ordered_handoff_switches_session_and_calls_the_pickup():
     with open(prompts[1].split()[-1]) as fh, open(handoff) as orig:
         assert fh.read() == orig.read()                  # the new session reads this session's handoff
     assert state(h, sid)["switched"] is True
+    assert abs(state(h, sid)["switched_ts"] - time.time()) < 120   # squad-wake measures a stuck switch from here
+    with open(os.path.join(h, ".claude", "squad", "switches", "ffffffff-9999.pickup")) as fh:
+        assert fh.read() == prompts[1].split()[-1]       # squad-wake resends it if it does not land
 
 
 def test_dispatch_denied_at_the_ceiling_arms_the_switch():
@@ -363,6 +381,72 @@ def test_no_slot_light_session_implements_here():
     assert "SLOT FREE" in said(run(h, "PostToolUse", sid, tr))
     assert said(run(h, "PostToolUse", sid, tr)) == "nothing"   # announces once
     assert "DISPATCH DENIED" not in dispatch(h, sid, tr)
+
+
+def git_repo(h, name):
+    d = os.path.join(h, name)
+    os.makedirs(d, exist_ok=True)
+    subprocess.run(["git", "init", "-q", d], check=True)
+    return d
+
+
+def orchestrators_in(h, n, repo):
+    """n other main sessions with a live sub-session, recorded in `repo`."""
+    folder = os.path.join(h, ".claude", "squad", "watch")
+    os.makedirs(folder, exist_ok=True)
+    for i in range(n):
+        with open(os.path.join(folder, f"other{i}.sub{i}.json"), "w") as fh:
+            fh.write("{}")
+        with open(os.path.join(folder, f"other{i}.main.json"), "w") as fh:
+            json.dump({"repo": os.path.realpath(os.path.join(repo, ".git"))}, fh)
+
+
+def test_orchestrator_slots_are_per_repository():
+    h = home()
+    sid = "12345678-0014"
+    tr = session(h, sid, 60_000, 0.0)
+    mine, other = git_repo(h, "mine"), git_repo(h, "other")
+    orchestrators_in(h, 6, other)          # 6 orchestrating in ANOTHER repository: the slot here is free
+
+    def dispatch_in(cwd):
+        return said(run(h, "PreToolUse", sid, tr, {"cwd": cwd, "tool_name": "Agent", "tool_input": {
+            "subagent_type": "developer", "prompt": "card ABC-1"}}))
+    assert "DISPATCH DENIED" not in dispatch_in(mine)
+    assert state(h, sid)["repo"] == os.path.realpath(os.path.join(mine, ".git"))
+    out = dispatch_in(other)               # in the other repository the 6 slots are taken
+    assert "DISPATCH DENIED" in out and "in this repository" in out, out
+
+
+def test_worktrees_of_the_same_repository_share_the_slots():
+    h = home()
+    sid = "12345678-0015"
+    tr = session(h, sid, 60_000, 0.0)
+    root = git_repo(h, "root")
+    subprocess.run(["git", "-C", root, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+                    "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    wt = os.path.join(h, "wt")
+    subprocess.run(["git", "-C", root, "worktree", "add", "-q", wt], check=True)
+    orchestrators_in(h, 6, root)           # 6 orchestrating in the root: its worktree has no slot
+    out = said(run(h, "PreToolUse", sid, tr, {"cwd": wt, "tool_name": "Agent", "tool_input": {
+        "subagent_type": "developer", "prompt": "card ABC-1"}}))
+    assert "DISPATCH DENIED" in out and "in this repository" in out, out
+    # denied because the worktree IS that repository, not because its repository is unknown
+    assert state(h, sid)["repo"] == os.path.realpath(os.path.join(root, ".git")), state(h, sid)
+
+
+def test_rearm_clears_the_switch_time():
+    h = home()
+    sid = "12345678-0016"
+    tr = session(h, sid, 60_000, 0.0)
+    folder = os.path.join(h, ".claude", "squad", "watch")
+    for initial in ({"switched": True, "switched_ts": 1.0}, {"switched": False, "switched_ts": 1.0},
+                    {"switched_ts": 1.0}, {}):
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, f"{sid}.main.json"), "w") as fh:
+            json.dump(dict(initial, ctx_level=2), fh)
+        run(h, "Stop", sid, tr, {"squad_rearm": True})
+        st = state(h, sid)
+        assert "switched" not in st and "switched_ts" not in st, (initial, st)
 
 
 def test_no_slot_reviewer_waits_for_the_slot_without_handoff():

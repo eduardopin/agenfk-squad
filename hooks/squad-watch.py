@@ -75,7 +75,10 @@ Thresholds, by environment variable:
   SQUAD_CTX_WARN (0) SQUAD_CTX_HANDOFF (0)  absolute thresholds in tokens, off by default
   SQUAD_CTX_CEILING (800000)    above this, dispatch denied and handoff ordered
   SQUAD_MAX_SUBS      (60)      sub-sessions per main session
-  SQUAD_MAX_ORCH      (6)       sessions orchestrating sub-agents at the same time
+  SQUAD_MAX_ORCH      (6)       sessions orchestrating sub-agents at the same time, PER
+                                repository (common git directory: worktrees count
+                                together); a session with no recorded repository
+                                counts in every one
   SQUAD_ORCH_HERE     (500000)  no orchestrator slot: below this the card is done
                                 in the session itself; from here up, handoff with
                                 the plan and a new session
@@ -518,8 +521,22 @@ def review_key(p):
     return f"{safe(kind)}:{m.group(0) if m else 'no-card'}"
 
 
-def other_orchestrators(session):
-    """Other main sessions with a live sub-session right now."""
+def repo_of(session, cwd, st=None):
+    """The session's repository (common git directory), recorded in its state:
+    orchestrator slots are split by it. git only runs when the cwd changes."""
+    path = state_path(session, "")
+    st = load(path) if st is None else st
+    if cwd and st.get("repo_cwd") != cwd:
+        st["repo_cwd"] = cwd
+        st["repo"] = git_dir(cwd)
+        save(path, st)
+    return st.get("repo", "")
+
+
+def other_orchestrators(session, repo=""):
+    """Other main sessions with a live sub-session right now, in the same
+    repository. With no known repository (on either side) the session counts:
+    doubt does not open a slot."""
     own, live, now = safe(session), set(), time.time()
     try:
         for name in os.listdir(STATE):
@@ -530,6 +547,8 @@ def other_orchestrators(session):
                 live.add(sid)
     except OSError:
         pass
+    if repo:
+        live = {sid for sid in live if load(state_path(sid, "")).get("repo", "") in ("", repo)}
     return len(live)
 
 
@@ -582,6 +601,7 @@ def pre_dispatch(p):
     Every denial goes out with the path along which the work continues."""
     session = p.get("session_id")
     st = load(state_path(session, ""))
+    repo = repo_of(session, str(p.get("cwd") or ""), st)
     ctx, why, handoff = st.get("ctx", 0), None, False
     brief = keep_brief(session, p)
     if ctx >= MAIN_CEIL:
@@ -593,8 +613,8 @@ def pre_dispatch(p):
         handoff = True
         why = (f"this session has already dispatched {st['subs']} sub-sessions (ceiling {MAX_SUBS}). " + plan(
             "The new session, with the count reset, dispatches that plan.", brief))
-    elif other_orchestrators(session) >= MAX_ORCH:
-        cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents right now"
+    elif other_orchestrators(session, repo) >= MAX_ORCH:
+        cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents in this repository right now"
         if review_key(p):
             st["wait_slot"] = True
             why = (f"{cap}, and a review is not something you do yourself (whoever writes does not approve). Carry on "
@@ -648,9 +668,9 @@ def dispatch_notice(session, st, ctx):
         st["ceil_warned"] = True
         out.append(f"[squad-watch] DISPATCH NOTICE — context {k(ctx)}, orchestrator ceiling "
                    f"{k(MAIN_CEIL)}. {tail}")
-    full = ctx >= ORCH_HERE and other_orchestrators(session) >= MAX_ORCH
+    full = ctx >= ORCH_HERE and other_orchestrators(session, st.get("repo", "")) >= MAX_ORCH
     if full and not st.get("orch_warned"):
-        out.append(f"[squad-watch] DISPATCH NOTICE — all {MAX_ORCH} orchestrator slots are taken "
+        out.append(f"[squad-watch] DISPATCH NOTICE — all {MAX_ORCH} orchestrator slots of this repository are taken "
                    f"and this session is at {k(ctx)}. {tail} A reviewer waits for the SLOT FREE notice.")
     st["orch_warned"] = full
     return out
@@ -1455,7 +1475,7 @@ def post_tool(p):
                         st.pop(key, None)
                 st["ctx_level"] = 2 if st.get("ordered") else level   # a handoff already ordered does not disarm
                 out += dispatch_notice(session, st, ctx)
-    if not agent and st.get("wait_slot") and other_orchestrators(session) < MAX_ORCH:
+    if not agent and st.get("wait_slot") and other_orchestrators(session, st.get("repo", "")) < MAX_ORCH:
         st.pop("wait_slot")
         out.append("[squad-watch] SLOT FREE: there is an orchestrator slot again. The dispatch that was denied "
                    "for lack of a slot (the reviewer, or the next card) can now go through an agent.")
@@ -1610,6 +1630,7 @@ def can_switch():
     return bool(os.environ.get("HERDR_PANE_ID")) and os.environ.get("SQUAD_SWITCH") != "0"
 
 
+WAKE_PREFIX = "[squad-watch] WAKE"       # the prompt squad-wake.py sends
 # Bilingual on purpose: these read what the owner types, in Portuguese or English.
 RESUME = re.compile(r"clear-pickup\s+pickup|\bretom|\bresum|\bpick\s+(?:it\s+|this\s+)?(?:back\s+)?up\b", re.I)
 ASKED_TO_STOP = re.compile(r"handoff|hand-off|pickup|/clear|pausa|pausar|encerr|fechar o dia|por hoje|pode parar"
@@ -1623,8 +1644,8 @@ def prompt(p):
     mentions "handoff" in its text: that is not the owner speaking. And
     `/clear-pickup pickup` is a request to resume, not to stop."""
     text = str(p.get("prompt") or "")
-    if text.lstrip().startswith("<task-notification>"):
-        return
+    if text.lstrip().startswith(("<task-notification>", WAKE_PREFIX)):
+        return                            # a task return or squad-wake: not the owner speaking
     path = state_path(p["session_id"], "")
     st = load(path)
     st["prompt_ts"] = time.time()
@@ -1807,11 +1828,15 @@ def stop(p):
     session = p["session_id"]
     path = state_path(session, "")
     st = load(path)
+    # squad-wake reads when the session stopped and whether a live task was left, which wakes it by itself
+    st["last_stop"] = {"ts": time.time(), "bg": len(running(p))}
+    save(path, st)
     if st.get("ctx_level", 0) < 2 and not st.get("switched"):
         early_handoff(p, path, st)
         return
     if p.get("squad_rearm"):              # squad-switch gave up before clearing: the next Stop decides again
-        if st.pop("switched", None):
+        if st.pop("switched", None) or st.pop("switched_ts", None):
+            st.pop("switched_ts", None)
             save(path, st)
         return
     if st.get("switched"):
@@ -1868,6 +1893,7 @@ def stop(p):
         save(path, st)
         return
     st["switched"] = True
+    st["switched_ts"] = time.time()       # squad-wake measures a stuck switch from here
     save(path, st)
     note = switch_note(session, st.get("bg") if expired else [])
     spawn(here("squad-switch.py"), pane, session, ho[0], ho[1], *([note] if note else []))

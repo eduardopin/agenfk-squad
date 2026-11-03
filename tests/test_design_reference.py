@@ -11,6 +11,7 @@ customer, a person), list them in SQUAD_PRIVATE_TERMS, comma-separated. The
 list lives in your environment, never in the repository.
 """
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -64,10 +65,24 @@ def run(root, *flags, **kw):
     return p.returncode, p.stdout, p.stderr
 
 
-def finding(root):
-    code, out, err = run(root, "--json")
+def finding(root, **kw):
+    code, out, err = run(root, "--json", **kw)
     assert code == 0, err
     return json.loads(out)
+
+
+def skipped(case, why):
+    print(f"     skipped: {case} ({why})")
+
+
+def link(target, name):
+    """A symlink, or False where the platform does not allow one (Windows without the privilege)."""
+    try:
+        os.symlink(target, name)
+        return True
+    except (OSError, NotImplementedError, AttributeError) as e:
+        skipped(f"symlink {os.path.basename(name)}", type(e).__name__)
+        return False
 
 
 def css_vars(text, block=":root {"):
@@ -251,9 +266,11 @@ def test_dtcg_tokens_resolve_aliases_lists_and_dark_mode():
     assert a["dark"].get("bg") == "#020617", a["dark"]
 
 
-# 5b. Monorepo: the app imports the token package by relative path, outside the swept root
+# 5b. Monorepo: the app imports the token package by relative path, outside the swept root but inside
+# the repository (the nearest ancestor with a .git)
 def test_relative_css_import_reaches_the_sibling_token_package():
     mono = project({
+        ".git/HEAD": "ref: refs/heads/main\n",
         "packages/brand/tokens.css": ":root{--brand:#04cc98;--bg:#f8fafc;--fg:#000f3b}.dark{--bg:#020617}",
         "packages/app/src/index.css": '@import "tailwindcss";\n@import "../../brand/tokens.css";\n'
                                       "body{font-family:var(--font-sans)}",
@@ -261,6 +278,67 @@ def test_relative_css_import_reaches_the_sibling_token_package():
     a = finding(os.path.join(mono, "packages", "app"))
     assert a["roles"]["accent"] == "#04cc98", a["roles"]
     assert "../brand/tokens.css" in a["evidence"], a["evidence"]
+
+
+def test_relative_paths_use_forward_slashes_on_windows_too():
+    real_os = sw.os
+
+    class WinOs:
+        path, sep = ntpath, "\\"
+    sw.os = WinOs
+    try:
+        r = sw.rel("C:\\repo\\packages\\app", "C:\\repo\\packages\\brand\\tokens.css")
+    finally:
+        sw.os = real_os
+    assert r == "../brand/tokens.css", r
+
+
+OUTSIDE = ":root{--bg:#aa0000;--fg:#00aa00}"
+
+
+# 5k. A symlink inside the swept root whose target is outside it is not read; one that stays inside is
+def test_symlink_out_of_the_root_is_not_read():
+    base = project({"outside/x.css": OUTSIDE, "proj/README.md": "# p\n", "proj/vendor/real.css": OUTSIDE})
+    root = os.path.join(base, "proj")
+    os.makedirs(os.path.join(root, "src"))
+    if not link(os.path.join(base, "outside", "x.css"), os.path.join(root, "src", "linked.css")):
+        return
+    code, out, err = run(root, "--json")
+    assert code == 0, err
+    a = json.loads(out)
+    assert a["verdict"] == "neutral" and "#aa0000" not in out, out
+    # vendor/ is not walked: the only way in to real.css is a symlink that stays inside the root.
+    os.remove(os.path.join(root, "src", "linked.css"))
+    link(os.path.join(root, "vendor", "real.css"), os.path.join(root, "src", "linked.css"))
+    a = finding(root)
+    assert a["verdict"] == "project" and a["tokens"].get("--bg") == "#aa0000", a
+
+
+# 5l. A relative @import stops at the repository: never above it, never a repo that is $HOME, the
+# system temporary folder or an ancestor of one, never a .git more than three levels up
+def test_relative_import_never_leaves_the_repository():
+    imp = '@import "../../outside.css";'
+    base = project({"outside.css": OUTSIDE, "repo/.git/HEAD": "x\n", "repo/app/src/index.css": imp})
+    a = finding(os.path.join(base, "repo", "app"))
+    assert a["verdict"] == "neutral" and "--bg" not in a["tokens"], a
+
+    base = project({"h/.git/HEAD": "x\n", "h/outside.css": OUTSIDE, "h/proj/src/index.css": imp})
+    h, root = os.path.join(base, "h"), os.path.join(base, "h", "proj")
+    assert finding(root)["tokens"].get("--bg") == "#aa0000", "control: an ordinary repository reads it"
+    for case, env in (("repo is $HOME", {"HOME": h, "USERPROFILE": h}),
+                      ("repo is an ancestor of $HOME", {"HOME": os.path.join(h, "users", "me"),
+                                                         "USERPROFILE": os.path.join(h, "users", "me")}),
+                      ("repo is the temporary folder", {"TMPDIR": h, "TEMP": h, "TMP": h})):
+        a = finding(root, env=dict(os.environ, **env))
+        assert a["verdict"] == "neutral" and "--bg" not in a["tokens"], (case, a)
+
+    deep = {".git/HEAD": "x\n", "a/b/c/x.css": OUTSIDE, "a/b/c/d/src/index.css": '@import "../../x.css";'}
+    base = project(deep)
+    a = finding(os.path.join(base, "a", "b", "c", "d"))
+    assert "--bg" not in a["tokens"], "a .git four levels up is out of reach: %s" % a["tokens"]
+    base = project({k.replace("a/", "", 1) if not k.startswith(".") else k: v for k, v in deep.items()})
+    a = finding(os.path.join(base, "b", "c", "d"))
+    assert a["tokens"].get("--bg") == "#aa0000", "three levels up is in reach: %s" % a["tokens"]
 
 
 # 5c. A vocabulary of its own: the use in the CSS (body, a, focus, h1) says which token plays the role
@@ -328,13 +406,16 @@ def test_device_symlink_fifo_and_deep_nesting_are_survived():
         code, out, err = run(zero, "--css", preexec_fn=lambda: __import__("resource").setrlimit(
             __import__("resource").RLIMIT_AS, (1_500_000_000, 1_500_000_000)))
         assert code == 0 and "#0f766e" in out, (code, err[-300:])
-    fifo = project({"tokens.css": TOKENS})
-    os.mkfifo(os.path.join(fifo, "theme.css"))
-    try:
-        code, out, err = run(fifo, "--css", timeout=30)
-    except subprocess.TimeoutExpired:
-        raise AssertionError("hung opening the FIFO")
-    assert code == 0 and "#0f766e" in out, err[-200:]
+    if hasattr(os, "mkfifo"):
+        fifo = project({"tokens.css": TOKENS})
+        os.mkfifo(os.path.join(fifo, "theme.css"))
+        try:
+            code, out, err = run(fifo, "--css", timeout=30)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("hung opening the FIFO")
+        assert code == 0 and "#0f766e" in out, err[-200:]
+    else:
+        skipped("FIFO", "no os.mkfifo on this platform")
     deep = project({"a.css": TOKENS + "a{" * 20000})
     code, out, err = run(deep, "--css")
     assert code == 0 and "#0f766e" in out and "Traceback" not in err, (code, err[-300:])
@@ -405,6 +486,10 @@ def test_hostile_text_parses_in_linear_time():
     timed({"tokens.css": ":root{--a:#fff}" + "/* " * 300000}, 3)
     timed({"tailwind.config.js": "module.exports={theme:{colors:{a:'" + "\\" * 60 + "x\n}}}"}, 3)
     timed({"layout.tsx": "import x from 'next/font/google'\n" + " b({" * 200000}, 3)
+    # A long run of spaces or of [\w$-] where no key starts: re-read from every one of its characters.
+    timed({"tailwind.config.js": "colors:{" + " " * 900000}, 2)
+    timed({"theme.js": "theme = {" + " " * 900000}, 2)
+    timed({"tailwind.config.js": "colors:{" + "a" * 900000}, 2)
     # Same tokens as before on the ordinary shapes the regexes were rewritten for.
     assert sw.spec_tokens("- `Background`: #ffffff\n\n> font-body: Inter, sans-serif\n| Accent | `#0f766e` |\n"
                           "--border: #ddd;\n## Dark\n--bg: #000;\n") == (

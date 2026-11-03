@@ -17,6 +17,17 @@ the result. It is not once per piece. In a monorepo, run it on the workspace
 the piece belongs to: the sweep follows relative CSS `@import` to the token
 package.
 
+What the sweep reads stays inside the project:
+
+- A symlink whose real target is outside the swept root is not read; one that
+  points inside it is.
+- A relative `@import` is followed only within the repository: the nearest
+  ancestor of the swept root that holds a `.git`, looking at most three levels
+  up. If that ancestor is a filesystem root, `$HOME`, the system temporary
+  folder or an ancestor of one of them, or there is no `.git` within reach,
+  the boundary is the swept root itself. A token package outside that
+  boundary is not read: run the sweep on a root that contains it.
+
 ```bash
 S=~/.claude/skills/design-reference/scripts/sweep.py   # or ../design-reference/scripts/ from another skill
 python3 -I "$S" <root>          # 3–8 line summary: system, where it was found, conflicts

@@ -18,6 +18,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 import time
 
 IGNORED = {"node_modules", "dist", "build", ".git", ".next", ".nuxt", ".svelte-kit", ".turbo",
@@ -144,9 +145,23 @@ def safe(value):
     return level == 0
 
 
-def read(path):
-    """Regular files only (no symlink to /dev/zero, no FIFO), and never more than MAX_BYTES."""
+def inside(path, limit):
+    """The real target of path (symlinks and ../ resolved) lies under limit, itself a real path."""
     try:
+        real = os.path.normcase(os.path.realpath(path))
+        limit = os.path.normcase(limit)
+        return os.path.commonpath([real, limit]) == limit
+    except ValueError:   # another drive on Windows
+        return False
+
+
+def read(path, limit=None):
+    """Regular files only (no symlink to /dev/zero, no FIFO), never more than MAX_BYTES, and, with a
+    limit, never a file whose real target is outside it: a symlink in the repository that points at
+    ~/.config or another project would carry that file's text into --json."""
+    try:
+        if limit is not None and not inside(path, limit):
+            return ""
         st = os.stat(path)
         if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
             return ""
@@ -158,7 +173,34 @@ def read(path):
 
 
 def rel(root, path):
-    return os.path.relpath(path, root)
+    """Path relative to root, always with "/": the evidence and the conflicts read the same on Windows."""
+    return os.path.relpath(path, root).replace(os.sep, "/")
+
+
+IMPORT_LEVELS = 3   # how far above the swept root the repository of a relative @import may start
+
+
+def import_limit(root):
+    """Boundary of a relative @import: the nearest ancestor of root (root itself up to IMPORT_LEVELS
+    above it) that holds a .git, so a monorepo app reaches its sibling token package. If that ancestor
+    is a filesystem root, $HOME, the system temporary folder or an ancestor of one of them, or there
+    is no .git within reach, the boundary is root itself."""
+    root = os.path.realpath(root)
+    guarded = []
+    for p in (os.path.expanduser("~"), tempfile.gettempdir()):
+        if p and p != "~":
+            guarded.append(os.path.realpath(p))
+    d = root
+    for _ in range(IMPORT_LEVELS + 1):
+        if os.path.lexists(os.path.join(d, ".git")):
+            if os.path.dirname(d) == d or any(inside(g, d) for g in guarded):
+                return root
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return root
 
 
 def looks_like_font(name, value):
@@ -421,19 +463,20 @@ def css_tokens(text, usage=None):
     return light, dark
 
 
-def imports(path, text, seen, depth=0):
-    """CSS @import by relative path (a monorepo's token package, for instance)."""
+def imports(path, text, seen, limit, depth=0):
+    """CSS @import by relative path (a monorepo's token package, for instance), only within limit
+    (import_limit): an @import "../../x.css" never reads outside the repository."""
     seen.add(os.path.realpath(path))
     out = []
     if depth > 3:
         return out
     for m in re.finditer(r"@import\s+(?:url\()?['\"](\.{1,2}/[^'\"]+\.css)['\"]", text):
         target = os.path.normpath(os.path.join(os.path.dirname(path), m.group(1)))
-        if os.path.realpath(target) in seen or not os.path.isfile(target):
+        if os.path.realpath(target) in seen or not inside(target, limit) or not os.path.isfile(target):
             continue
-        content = read(target)
+        content = read(target, limit)
         out.append((target, content))
-        out += imports(target, content, seen, depth + 1)
+        out += imports(target, content, seen, limit, depth + 1)
     return out
 
 
@@ -444,6 +487,7 @@ RE_JS_KEY = re.compile(r"\s*(?:['\"]([^'\"]+)['\"]|([\w$-]+))\s*:\s*")
 # backtracked through every way of pairing the backslashes (exponential).
 RE_JS_STRING = re.compile(r"(['\"`])((?:\\.|(?!\1)[^\\\n])*)\1")
 RE_JS_STOP = re.compile(r"[,}\n]")
+RE_JS_RUN = re.compile(r"\s+|[\w$-]+")
 
 
 def js_object(text, start):
@@ -464,7 +508,13 @@ def js_object(text, start):
                 if not stack:
                     return out, i
                 stack.pop()
-            i += 1
+                i += 1
+                continue
+            # No key at i means no key anywhere in the same run of spaces or of [\w$-]: the regex reaches
+            # the same end of the run. Skip the whole run; stepping one character at a time re-read the
+            # rest of it at every step (900 KB of spaces after `colors:{` took ~50 s).
+            run = RE_JS_RUN.match(text, i)
+            i = run.end() if run else i + 1
             continue
         key = m.group(1) or m.group(2)
         i = m.end()
@@ -688,6 +738,8 @@ def sweep(root):
 
 def _sweep(root):
     root = os.path.abspath(root)
+    real_root = os.path.realpath(root)
+    limit = import_limit(root)
     t0 = time.monotonic()
     _budget.update(deadline=t0 + MAX_SECONDS, hit=False)
     sources = []          # (level, label, file, light, dark)
@@ -726,11 +778,11 @@ def _sweep(root):
             a = os.path.basename(path)
             al = a.lower()
             r = rel(root, path)
-            rl = r.lower().replace(os.sep, "/")
+            rl = r.lower()
             if al in ("design.md", "product.md", "ui.md", "brand.md", "design-system.md") or re.match(
                     r"^docs/(design|brand|ui|style)[\w-]*\.(md|mdx)$", rl) or re.match(
                     r"^docs/design[\w-]*/[\w-]+\.(md|mdx)$", rl):
-                text = read(path)
+                text = read(path, real_root)
                 light, dark = spec_tokens(text)
                 spec.append(r)
                 if light or dark:
@@ -739,27 +791,27 @@ def _sweep(root):
                 if al == "design.md" and not package_name:
                     package_name = spec_title(text)
             elif al.endswith((".css", ".scss", ".pcss", ".postcss", ".less")):
-                text = read(path)
+                text = read(path, real_root)
                 if "--" not in text and "@import" not in text:
                     continue
-                for f, f_text in [(path, text)] + imports(path, text, seen):
+                for f, f_text in [(path, text)] + imports(path, text, seen, limit):
                     light, dark = css_tokens(f_text, usage)
                     if len(light) + len(dark) >= 2:
                         sources.append((2, "css", rel(root, f), light, dark))
             elif al.endswith(".tokens.json") or al in ("tokens.json", "design-tokens.json", "theme.json"):
-                light, dark = json_tokens(read(path), al)
+                light, dark = json_tokens(read(path, real_root), al)
                 if light or dark:
                     sources.append((2, "tokens", r, light, dark))
             elif re.match(r"tailwind\.config\.(js|cjs|mjs|ts|cts|mts)$", al):
-                toks = tailwind_tokens(read(path))
+                toks = tailwind_tokens(read(path, real_root))
                 if toks:
                     sources.append((2, "tailwind", r, toks, {}))
             elif re.match(r"(theme|tema|tokens)\.(ts|tsx|js|jsx|mjs|cjs)$", al):
-                toks = theme_tokens(read(path))
+                toks = theme_tokens(read(path, real_root))
                 if toks:
                     sources.append((1, "theme", r, toks, {}))
             elif re.match(r"(layout|_app|_document|fonts?)\.(ts|tsx|js|jsx)$", al):
-                toks = next_font_tokens(read(path))
+                toks = next_font_tokens(read(path, real_root))
                 if toks:
                     sources.append((2, "next-font", r, toks, {}))
             elif al == "components.json":
@@ -767,7 +819,7 @@ def _sweep(root):
                 evidence.append(r)
             elif al == "package.json":
                 try:
-                    pkg = json.loads(read(path))
+                    pkg = json.loads(read(path, real_root))
                 except ValueError:
                     continue
                 if r == "package.json":
@@ -790,7 +842,7 @@ def _sweep(root):
                     if name not in components:
                         components.append(name)
             elif al.startswith("readme"):
-                figma += RE_FIGMA.findall(read(path))
+                figma += RE_FIGMA.findall(read(path, real_root))
         except (RecursionError, ValueError, MemoryError) as error:   # a hostile file does not bring the sweep down
             conflicts.append(f"{rel(root, path)} skipped: {type(error).__name__}")
         except OutOfTime:
@@ -802,7 +854,7 @@ def _sweep(root):
 
     _budget["deadline"] = time.monotonic() + MAX_SECONDS
     # Global token by name: the highest level wins, then the shallowest.
-    sources.sort(key=lambda s: (-s[0], s[2].count(os.sep), s[2]))
+    sources.sort(key=lambda s: (-s[0], s[2].count("/"), s[2]))
     global_light, global_dark = {}, {}
     for _, _, _, light, dark in sources:
         for k, v in light.items():

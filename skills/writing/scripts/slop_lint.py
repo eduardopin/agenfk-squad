@@ -643,11 +643,13 @@ def check_rhythm(prose, findings):
                 "WARN", "uniform-rhythm", located[0][0],
                 f"uniform sentence length (mean {mean:.0f}, deviation {sd:.1f} "
                 "words); vary the rhythm", ""))
-        long_ones = [(st, s) for (st, s), ln in zip(located, lengths) if ln > 45]
-        for st, s in long_ones[:5]:
+        # the count is the one already measured above: a regex inside the f-string broke
+        # Python < 3.12 and, in raw form, matched only backslashes and "w" (always 0 words)
+        long_ones = [(st, s, ln) for (st, s), ln in zip(located, lengths) if ln > 45]
+        for st, s, ln in long_ones[:5]:
             findings.append(Finding(
                 "WARN", "long-sentence", st,
-                f"sentence of {len(re.findall(r'[\\w]+', s))} words", s[:120]))
+                f"sentence of {ln} words", s[:120]))
 
     openers: dict[str, list[int]] = {}
     for start, para in paras:

@@ -95,6 +95,23 @@ def test_slop_lint_passes_every_clean_fixture():
         assert code == 0 and re.search(r"\b0 ERROR\b", out), (path, code, out[-500:])
 
 
+def test_long_sentence_warning_counts_the_words():
+    """Defect: the count lived inside an f-string with a backslash (SyntaxError before
+    Python 3.12) and its raw string matched only backslashes and 'w', so every long
+    sentence was reported as having 0 words."""
+    # the splitter needs a capital after the full stop
+    long_one = "Start " + " ".join(f"word{i}" for i in range(59)) + "."
+    short = ["Plain " + " ".join(["plain"] * (n - 1)) + "." for n in (4, 9, 6, 14, 5, 11, 7, 20)]
+    with tempfile.TemporaryDirectory() as d:
+        doc = os.path.join(d, "long.md")
+        with open(doc, "w", encoding="utf-8") as fh:
+            fh.write("# Title\n\n" + " ".join(short) + " " + long_one + "\n")
+        code, out = py("slop_lint.py", "--json", doc)
+    found = [f for fs in json.loads(out).values() for f in fs]
+    msgs = [str(f) for f in found if "long-sentence" in str(f)]
+    assert msgs and any("sentence of 60 words" in m for m in msgs), (code, msgs or out[-500:])
+
+
 def _lint_checks(name):
     code, out = py("slop_lint.py", "--json", os.path.join(FIX, name))
     rep = json.loads(out)

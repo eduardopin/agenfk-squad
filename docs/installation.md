@@ -112,6 +112,14 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 10 }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [

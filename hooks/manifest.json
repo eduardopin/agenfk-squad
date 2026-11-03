@@ -10,28 +10,17 @@
     {
       "script": "squad-router.py",
       "timeout": 5,
-      "events": [
-        "UserPromptSubmit"
-      ]
+      "events": ["UserPromptSubmit"]
     },
     {
       "script": "squad-watch.py",
       "timeout": 10,
-      "events": [
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PostToolUse",
-        "PostToolUseFailure",
-        "SubagentStop",
-        "Stop"
-      ]
+      "events": ["UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStop", "Stop"]
     },
     {
       "script": "squad-watch.py",
       "timeout": 20,
-      "events": [
-        "PreCompact"
-      ]
+      "events": ["PreCompact"]
     }
   ]
 }

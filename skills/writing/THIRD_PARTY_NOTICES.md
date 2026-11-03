@@ -6,8 +6,8 @@ repository's licence (see `LICENSE` and `NOTICE` at the root).
 
 ## humanizer
 
-MIT License. Copyright (c) the humanizer authors. Distributed at
-`blader/humanizer`.
+MIT License. Copyright (c) 2025 Siqi Chen. Distributed at
+`blader/humanizer` (licence read from its `LICENSE` on 2026-11-03).
 
 The pattern catalogue in `references/patterns.md`, the false-positive
 discipline in `references/false-positives.md` and part of the English lexicon
@@ -43,17 +43,19 @@ attribution is kept because the analysis is theirs.
 
 ## no-ai-slop
 
-By petergyang, distributed at `petergyang/no-ai-slop`. No licence file ships
-with the upstream skill. Voice preservation, the minimum-effective-edit
-principle, the portability test, the Detect job and part of the lexicon in
-`scripts/slop_lint.py` derive from it; the rules are restated in this skill's
-own words, not copied.
+MIT License. Copyright (c) 2026 Peter Yang. Distributed at
+`petergyang/no-ai-slop` (licence read from its `LICENSE` on 2026-11-03). Voice
+preservation, the minimum-effective-edit principle, the portability test, the
+Detect job and part of the lexicon in `scripts/slop_lint.py` derive from it; the
+rules are restated in this skill's own words. The MIT permission notice in the
+humanizer section above applies to this material too, with this copyright line.
 
 ## claudekit `brand`
 
-MIT License, per the upstream repository. The brand-voice axes in
-`references/voice-profile.md` are restated from it. The MIT permission notice
-above applies to that material as well.
+From `mrgoonie/claudekit-skills`. No licence file was found at that
+repository's root on 2026-11-03, so no licence is claimed here. Only the idea of
+the brand-voice axes in `references/voice-profile.md` is taken; the text is
+written in this skill's own words and no file or passage is copied.
 
 ## caveman
 

@@ -73,7 +73,8 @@ def test_rendered_document_names_every_rule_of_the_check():
 def test_notices_carry_the_licences():
     notices = read("THIRD_PARTY_NOTICES.md")
     for needle in ("humanizer", "Permission is hereby granted", "no-ai-slop",
-                   "Apache License, Version 2.0", "Julius Brussee"):
+                   "Apache License, Version 2.0", "Julius Brussee",
+                   "Copyright (c) 2025 Siqi Chen", "Copyright (c) 2026 Peter Yang"):
         assert needle in notices, needle
 
 

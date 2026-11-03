@@ -13,7 +13,7 @@ reporting a network import as data theft, or shipping telemetry that leaks data.
 Read project instructions and the active card/flow first. Use existing tools,
 suite commands, contract conventions and telemetry backends. No added packages,
 paid tools or external scans without the owner's approval. This skill adds no
-mutation gate and waives no gate already required by the project's flow.
+gate of its own and waives no gate already required by the project's flow.
 
 ## 1. Select one checklist
 

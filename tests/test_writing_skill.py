@@ -78,6 +78,13 @@ def test_notices_carry_the_licences():
         assert needle in notices, needle
 
 
+def test_no_file_claims_a_licence_the_notices_do_not():
+    """The notices claim no licence for claudekit `brand`; no other file may say MIT for it."""
+    for name in ("SKILL.md", "references/voice-profile.md"):
+        text = " ".join(read(name).split())
+        assert "claudekit `brand` (MIT)" not in text and "`brand` skill (MIT)" not in text, name
+
+
 def test_visuals_send_cloud_diagrams_to_their_skill():
     vis = read("references", "visuals.md")
     assert "`cloud-diagram`" in vis and "inventory before geometry" in " ".join(vis.lower().split())

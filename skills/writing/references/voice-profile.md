@@ -129,6 +129,7 @@ that exists today); a claim without proof does not go in.
 - Active voice, sentence case, each element with one job only: a label labels,
   an example exemplifies.
 
-Origin: the voice axes, paired traits and proof next to the message are
-summarised from the claudekit `brand` skill (MIT); the microcopy rules from
+Origin: the idea of the voice axes, paired traits and proof next to the
+message comes from the claudekit `brand` skill (no licence claimed; written in
+this skill's own words, see `THIRD_PARTY_NOTICES.md`); the microcopy rules from
 `frontend-design` (Anthropic) and `design-reference`.

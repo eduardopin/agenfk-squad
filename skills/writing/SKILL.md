@@ -334,7 +334,7 @@ AgenFK card and handoff. The pattern catalogue and the false-positive
 discipline come from `humanizer` (MIT), based on Wikipedia's [Signs of AI
 writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing); voice
 preservation, the portability test and the Detect job come from `no-ai-slop`
-(petergyang); lean mode, commit, Compress and the evidence discipline come
-from `caveman` (Apache-2.0); the brand-voice axes from claudekit `brand`
-(MIT). The cloud diagram rules moved to `cloud-diagram`. Licences and
-attributions in `THIRD_PARTY_NOTICES.md`.
+(petergyang, MIT); lean mode, commit, Compress and the evidence discipline come
+from `caveman` (Apache-2.0); the idea of the brand-voice axes from claudekit
+`brand` (no licence claimed, own words). The cloud diagram rules moved to
+`cloud-diagram`. Licences and attributions in `THIRD_PARTY_NOTICES.md`.

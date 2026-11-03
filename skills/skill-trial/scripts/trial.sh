@@ -53,17 +53,18 @@ mkdir -p "$OUT/ghcfg"
 
 # The trial's Bash runs as the user. bwrap gives it its own PID namespace and a
 # fresh /proc (the host's /proc/<pid>/root would lead straight back to the real
-# HOME), a private /tmp and /run/user, no /mnt (the Windows drives), HOME
-# read-only with every credential path emptied, and writable only the trial
-# folder and the Claude Code state paths it must write. ~/.claude.json is a
+# HOME), a private /tmp, /dev/shm and /run/user, no /mnt (the Windows drives),
+# the whole filesystem read-only with every credential path under HOME emptied,
+# and writable only those private tmpfs mounts, the output folder and the trial
+# folder. ~/.claude.json is a
 # per-trial copy kept outside $OUT and deleted after the trial. The OAuth file
 # stays the real one: the claude process needs it and a refresh rotates it, so
 # the token is readable inside the jail. The credential list below is a list,
-# not a rule: a secret kept anywhere else under HOME stays readable. Network stays open for the API; with
-# the keys hidden, a push or an API call has nothing to sign with.
+# not a rule: a secret kept anywhere else under HOME stays readable. Network
+# stays open for the API; with the keys hidden, a push or an API call has nothing to sign with.
 jail() {
   local T="$1" cfg="$2"
-  local a=(--dev-bind / / --unshare-pid --proc /proc --new-session --die-with-parent
+  local a=(--ro-bind / / --dev /dev --tmpfs /dev/shm --unshare-pid --proc /proc --new-session --die-with-parent
            --tmpfs /tmp --tmpfs "/run/user/$(id -u)" --ro-bind "$HOME" "$HOME"
            # Every bind that opens a path goes before the masks below, so none
            # of them can bring a masked credential path back.

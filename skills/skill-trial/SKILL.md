@@ -76,8 +76,9 @@ works.
   `resolv.conf`, HOME read-only with `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/infra`
   and the other credential paths emptied, and git with no global config and no
   SSH. A copy of `~/.claude.json` is bound in and deleted after the trial. Only
-  the trial folder is writable. The credential paths are a fixed list in
-  `trial.sh` (`jail()`), not a rule: anything else under HOME, such as a token
+  the output folder and a private `/tmp`, `/dev/shm` and `/run/user` are
+  writable; the rest of the filesystem, `/var/tmp` included, is read-only.
+  The credential paths are a fixed list in `trial.sh` (`jail()`), not a rule: anything else under HOME, such as a token
   in a file nobody listed, is readable, and the network is open. `--out` is
   refused when it is, holds or sits inside `~/.claude`, `~/.config`, `~/.local`,
   `~/.ssh` or `~/.aws`. The network stays open for the API, and the

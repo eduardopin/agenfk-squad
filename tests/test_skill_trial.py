@@ -234,6 +234,7 @@ class TrialRunTests(Tmp):
             '{ ls "$HOME/.ssh" "$HOME/.aws" "$HOME/.terraform.d" "$HOME/.config/glab-cli" "$HOME/.config/op"'
             ' "$HOME/.config/atlassian"; cat "$HOME/.npmrc" "$HOME/.terraformrc" "$HOME/.pypirc"; touch "$HOME/planted" 2>/dev/null && echo HOME-WRITABLE;'
             '  touch ./ok && echo TRIAL-WRITABLE;'
+            '  for d in /var/tmp /dev/shm /run/lock /etc; do touch $d/planted 2>/dev/null && echo "WRITABLE:$d"; done;'
             "  echo PIDS=$(ls /proc | grep -c '^[0-9]');"
             '  echo RUN=$(ls /run/user/$(id -u) | wc -l); echo MNT=$(ls /mnt/c 2>/dev/null | wc -l); } > probe.txt 2>&1\n')
         (fake / 'claude').chmod(0o755)
@@ -247,6 +248,10 @@ class TrialRunTests(Tmp):
         self.assertNotIn('secret', probe)
         self.assertNotIn('HOME-WRITABLE', probe)
         self.assertFalse((home / 'planted').exists())
+        self.assertNotIn('WRITABLE:/var/tmp', probe)
+        self.assertNotIn('WRITABLE:/run/lock', probe)
+        self.assertNotIn('WRITABLE:/etc', probe)
+        self.assertFalse(Path('/var/tmp/planted').exists())
         self.assertIn('TRIAL-WRITABLE', probe)
         # own PID namespace: the host's /proc/<pid>/root would lead back to the real HOME
         self.assertLess(int(probe.split('PIDS=')[1].split()[0]), 10)

@@ -54,7 +54,8 @@ Make sure `~/.local/bin` is on your `PATH`.
 
 On Linux, when the systemd user manager runs with your `HOME`, it also writes
 `~/.config/systemd/user/squad-wake.service` and `squad-wake.timer` and enables
-the timer: `squad-wake.py` scans the herdr panes every 2 minutes and wakes a
+the timer (a unit already there is rewritten only if this installer wrote it,
+marked on its first line; otherwise `SKIPPED`): `squad-wake.py` scans the herdr panes every 2 minutes and wakes a
 session that stopped without delivering (see
 [Waking a stopped session](watcher.md#waking-a-stopped-session)). The service
 reads `~/.claude/squad/wake.env`, if present, for `SQUAD_WAKE=0` and the

@@ -522,7 +522,10 @@ def main(argv):
     dry_run = "--dry-run" in argv
     items = agents()
     if items is None:
-        log("-", "herdr did not answer: nothing done")
+        if dry_run:                       # --dry-run writes nothing, not even the log
+            print("herdr did not answer: nothing done")
+        else:
+            log("-", "herdr did not answer: nothing done")
         return 0
     now, woken = time.time(), 0
     for a in items:
@@ -568,7 +571,10 @@ if __name__ == "__main__":
         sys.exit(main(sys.argv[1:]))
     except Exception as exc:
         try:
-            log("-", f"error {type(exc).__name__}: scan aborted")
+            if "--dry-run" in sys.argv[1:]:
+                print(f"error {type(exc).__name__}: scan aborted")
+            else:
+                log("-", f"error {type(exc).__name__}: scan aborted")
         except Exception:
             pass
         sys.exit(0)

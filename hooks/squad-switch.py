@@ -147,14 +147,23 @@ def claim(session):
 
 def pending(session, copy):
     """Records the new session's pickup: if it never becomes a request in the
-    transcript (prompt lost, pane busy), squad-wake sends it again."""
+    transcript (prompt lost, pane busy), squad-wake sends it again.
+    The id comes from herdr: only a session id may become a file name, and the
+    write does not follow a symlink (exclusive tmp + os.replace, like the sealed copy)."""
+    if not re.fullmatch(r"[0-9a-f-]{8,64}", str(session or "")):
+        return False
     try:
         os.umask(0o077)
         os.makedirs(CLAIMS, exist_ok=True)
-        with open(os.path.join(CLAIMS, f"{session}.pickup"), "w", encoding="utf-8") as fh:
+        dest = os.path.join(CLAIMS, f"{session}.pickup")
+        tmp = f"{dest}.{os.getpid()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(copy)
+        os.replace(tmp, dest)
+        return True
     except OSError:
-        pass
+        return False
 
 
 def read_note(path):
@@ -280,7 +289,9 @@ def main():
     if read_checked(copy, copy_digest) is None:     # the copy is rechecked right before sending
         log(pane, f"{session[:8]} -> {new[:8]} CLEARED, but the handoff copy does not match: pickup NOT sent; original at {handoff}")
         return 1
-    pending(new, copy)                              # squad-wake sends it again if the pickup does not land
+    if not pending(new, copy):                      # squad-wake sends it again if the pickup does not land
+        log(pane, f"{session[:8]} -> {str(new)[:16]!r}: invalid new session id or write refused; "
+                  "pickup sent without a note (squad-wake will not resend it)")
     rc, _ = herdr("agent", "prompt", pane, f"{PICKUP} {copy}" if PICKUP.startswith("/") else PICKUP, timeout=20)
     log(pane, f"{session[:8]} -> {new[:8]} " + ("pickup sent" if rc == 0 else "CLEARED, but the pickup was not accepted: run /clear-pickup pickup")
         + (" (with a note on background tasks)" if note else ""))

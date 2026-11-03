@@ -339,13 +339,24 @@ It also keeps the switch from getting stuck:
   is idle and the pickup is not in its transcript, squad-wake sends
   `/clear-pickup pickup <copy>` again. Only a copy path under
   `~/.claude/squad/handoffs`, a regular file owned by the user, is ever sent.
+  The record is written only for a new session id herdr reports in the shape of
+  a session id (hex and dashes), never through a symlink; otherwise the pickup
+  still goes out, unrecorded, and `switches.log` says so.
 
 Each of the two tries twice, then notifies the owner once. State is kept in
 `~/.claude/squad/wake/<session>.json`; every decision goes to
-`~/.claude/squad/wakes.log`.
+`~/.claude/squad/wakes.log` (`--dry-run` writes neither).
+
+squad-wake finds a session's transcript under `SQUAD_WAKE_PROJECTS`
+(default `~/.claude/projects`, the folder where Claude Code keeps
+`<project>/<session>.jsonl`); set it in `wake.env` only if your Claude Code
+keeps the transcripts elsewhere (`CLAUDE_CONFIG_DIR`).
 
 The timer does not inherit the shell's environment: put `SQUAD_WAKE=0` or the
-thresholds in `~/.claude/squad/wake.env`. `systemctl --user disable --now
+thresholds in `~/.claude/squad/wake.env`, not in the units: the installer
+rewrites `squad-wake.service` and `.timer` only when they carry its marker on
+the first line, and leaves a unit of your own alone (`SKIPPED`, non-zero exit,
+timer not enabled). `systemctl --user disable --now
 squad-wake.timer` stops it. Without a systemd user manager for your `HOME`
 (macOS, a container) the installer prints the line to run every 2 minutes from
 cron or launchd. Windows is not covered yet.

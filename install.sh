@@ -78,11 +78,34 @@ if command -v systemctl >/dev/null 2>&1; then
   manager_home="$(printf '%s\n' "$manager_env" | sed -n 's/^HOME=//p')"
 fi
 wake_cmd="python3 $CLAUDE/hooks/squad-wake.py"
+unit="$HOME/.config/systemd/user"
+# a unit is (re)written only when it is missing or was written by this installer
+# (marker on its first line): a unit of your own is left alone, like any real file
+unit_mark="# Written by agenfk-squad install.sh; rewritten on every install. Settings go in wake.env."
+ours() {
+  if [ -L "$1" ]; then return 1; fi
+  if [ ! -e "$1" ]; then return 0; fi
+  [ -f "$1" ] && [ "$(head -n 1 "$1")" = "$unit_mark" ]
+}
+units_ok=1
 if [ -n "$manager_home" ] && [ "$manager_home" = "$HOME" ]; then
-  unit="$HOME/.config/systemd/user"
+  for u in squad-wake.service squad-wake.timer; do
+    if ! ours "$unit/$u"; then
+      echo "SKIPPED $unit/$u exists and was not written by this installer — resolve it by hand" >&2
+      units_ok=0
+    fi
+  done
+fi
+if [ -z "$manager_home" ] || [ "$manager_home" != "$HOME" ]; then
+  echo "SKIPPED squad-wake.timer: no systemd --user manager for this HOME. Run $wake_cmd every 2 min" >&2
+  echo "        yourself (cron: '*/2 * * * * $wake_cmd'; launchd on macOS). See docs/watcher.md." >&2
+elif [ "$units_ok" = 0 ]; then
+  rc=1                                   # the timer is left as it is: not reloaded, not enabled
+else
   mkdir -p "$unit"
   herdr_bin="$(command -v herdr || true)"
   cat > "$unit/squad-wake.service" <<UNIT
+$unit_mark
 [Unit]
 Description=squad-wake: calls back the Claude session that stopped without delivering
 
@@ -94,6 +117,7 @@ EnvironmentFile=-%h/.claude/squad/wake.env
 ExecStart="$(command -v python3)" "$CLAUDE/hooks/squad-wake.py"
 UNIT
   cat > "$unit/squad-wake.timer" <<UNIT
+$unit_mark
 [Unit]
 Description=squad-wake every 2 minutes
 
@@ -114,9 +138,6 @@ UNIT
   if [ -n "$herdr_bin" ] && ! env -i HOME="$HOME" PATH=/usr/bin:/bin "$herdr_bin" agent list >/dev/null 2>&1; then
     echo "WARNING herdr did not answer outside the pane: squad-wake will log 'herdr did not answer'" >&2
   fi
-else
-  echo "SKIPPED squad-wake.timer: no systemd --user manager for this HOME. Run $wake_cmd every 2 min" >&2
-  echo "        yourself (cron: '*/2 * * * * $wake_cmd'; launchd on macOS). See docs/watcher.md." >&2
 fi
 
 # oh-my-pi (omp) reads a different agent dialect at ~/.omp/agent/agents, and skips

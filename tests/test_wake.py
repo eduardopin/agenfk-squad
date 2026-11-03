@@ -71,6 +71,13 @@ elif a[:2] == ["agent", "get"]:
     print(json.dumps({{"result": {{"agent": ag(a[2], p[a[2]])}}}}))
 elif a[:2] == ["agent", "prompt"]:
     open({os.path.join(h, "prompts")!r}, "a").write(a[2] + " " + a[3] + "\\n")
+    try:                                   # on-clear: the /clear moves the pane to this session id
+        new = open({os.path.join(h, "on-clear")!r}).read().strip()
+        if a[3] == "/clear":
+            p[a[2]] = [new, "idle"]
+            json.dump(p, open({os.path.join(h, "panes.json")!r}, "w"))
+    except OSError:
+        pass
 elif a[:2] == ["notification", "show"]:
     open({os.path.join(h, "notices")!r}, "a").write(" ".join(a[2:]) + "\\n")
 else:
@@ -606,6 +613,66 @@ def test_session_resumed_with_an_old_claim_gets_no_clear():
     assert "reswitch" not in out, out
 
 
+def test_pickup_record_only_takes_a_session_id_and_does_not_follow_a_symlink():
+    h = home()
+    saved = dict(os.environ)
+    try:
+        os.environ["HOME"] = h
+        m = module(os.path.join(ROOT, "hooks", "squad-switch.py"), "switch_mod")
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+    switches = m.CLAIMS
+    assert switches.startswith(h), switches
+    for forged in ("../../escaped", "abc", "ffffffff-1111/../../x", "", None, "FFFFFFFF-1111"):
+        assert m.pending(forged, "/x.md") is False, forged
+    assert not os.path.exists(os.path.join(h, ".claude", "escaped.pickup"))
+    target = os.path.join(h, "target")
+    with open(target, "w") as fh:
+        fh.write("untouched")
+    os.makedirs(switches, exist_ok=True)
+    os.symlink(target, os.path.join(switches, f"{SID}.pickup"))
+    assert m.pending(SID, "/copy.md") is True       # replaces the link with the file, never writes the target
+    with open(target) as fh:
+        assert fh.read() == "untouched"
+    dest = os.path.join(switches, f"{SID}.pickup")
+    with open(dest) as fh:
+        assert not os.path.islink(dest) and fh.read() == "/copy.md"
+    assert (os.stat(dest).st_mode & 0o777) == 0o600
+
+
+def test_forged_new_session_id_goes_to_the_switch_log():
+    h = home()
+    fake_herdr(h, {"w1:p1": [SID, "idle"]})
+    with open(os.path.join(h, "on-clear"), "w") as fh:
+        fh.write("../../forged")
+    tr = conversation(h, SID, ago=2000, extra=[handoff_on_disk(h)])
+    age(tr, 2000)
+    watch_state(h, SID, ctx_level=2, switched=True, ordered=True, alert_ts=time.time() - 100,
+                switched_ts=time.time() - 1500)
+    scan(h, {"SQUAD_WAKE_SWITCH": "100"})
+    log = os.path.join(h, ".claude", "squad", "switches.log")
+    assert wait_for(h, "prompts", "clear-pickup"), lines(h, "prompts")     # the pickup still goes out
+    end = time.time() + 20
+    while time.time() < end and "invalid new session id" not in "\n".join(lines(h, log)):
+        time.sleep(0.5)
+    assert "invalid new session id" in "\n".join(lines(h, log)), lines(h, log)
+    assert not os.path.exists(os.path.join(h, ".claude", "forged.pickup"))
+
+
+def test_dry_run_with_herdr_silent_writes_no_log():
+    h = home()
+    path = os.path.join(h, "herdr")
+    with open(path, "w") as fh:
+        fh.write("#!/bin/sh\nexit 1\n")
+    os.chmod(path, 0o755)
+    out = scan(h, None, "--dry-run")
+    assert "herdr did not answer" in out.stdout + out.stderr, out
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "wakes.log"))
+    scan(h)                               # outside dry-run the failure is logged
+    assert "herdr did not answer" in wakes_log(h)
+
+
 def watch(h, event, sid, tr, extra=None):
     p = {"hook_event_name": event, "session_id": sid, "transcript_path": tr, "cwd": h}
     p.update(extra or {})
@@ -686,6 +753,38 @@ def test_install_skips_the_timer_when_the_user_manager_is_not_this_home():
         assert not any("enable" in c for c in lines(h, "systemctl.log")), lines(h, "systemctl.log")
         assert "SKIPPED squad-wake.timer" in r.stderr and "squad-wake.py" in r.stderr, r.stderr
         assert "FAILED" not in r.stderr, r.stderr
+
+
+def test_install_never_overwrites_a_unit_it_did_not_write():
+    h = home()
+    bin_dir = fake_systemctl(h, h)
+    r, _ = install(h, bin_dir)            # first install: the units are written with the marker
+    units = os.path.join(h, ".config", "systemd", "user")
+    service = os.path.join(units, "squad-wake.service")
+    with open(service) as fh:
+        first = fh.readline()
+    assert first.startswith("# Written by agenfk-squad install.sh"), first
+    r, _ = install(h, bin_dir)            # ours: rewritten without complaint
+    assert "SKIPPED" not in r.stderr.replace("SKIPPED squad-wake.timer", ""), r.stderr
+    assert "ok      squad-wake.timer" in r.stdout, r.stdout
+    with open(service, "w") as fh:        # the owner's own unit, with no marker
+        fh.write("[Service]\nExecStart=/bin/true\n")
+    os.remove(os.path.join(h, "systemctl.log"))
+    r, _ = install(h, bin_dir)
+    with open(service) as fh:
+        assert fh.read() == "[Service]\nExecStart=/bin/true\n"
+    assert f"SKIPPED {service} exists and was not written by this installer" in r.stderr, r.stderr
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert not any("enable" in c for c in lines(h, "systemctl.log")), lines(h, "systemctl.log")
+    os.remove(service)                    # a symlink is not ours either, and its target stays untouched
+    target = os.path.join(h, "mine.service")
+    with open(target, "w") as fh:
+        fh.write("mine")
+    os.symlink(target, service)
+    r, _ = install(h, bin_dir)
+    with open(target) as fh:
+        assert fh.read() == "mine"
+    assert os.path.islink(service) and "SKIPPED" in r.stderr, r.stderr
 
 
 if __name__ == "__main__":

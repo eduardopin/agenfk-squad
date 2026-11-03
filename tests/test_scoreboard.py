@@ -24,7 +24,15 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+if os.name == "nt":
+    # metric commands run through shell=True, which is cmd.exe there (`;` does not separate
+    # commands), and the 3.10 leg has no python3.NN on PATH to run the tomllib (3.11+) script
+    print("skipped: scoreboard metrics are POSIX shell commands and need tomllib (3.11+); "
+          "not yet verified on Windows")
+    sys.exit(0)
+
+ROOT =os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "skills", "project-rails")
 SCOREBOARD = os.path.join(SKILL, "scripts", "scoreboard.py")
 

@@ -83,6 +83,9 @@ python3 scripts/scoreboard.py measure --no-write  # CI: measures again, writes n
 - **Copy the script into the project** (`scripts/scoreboard.py`, standard
   library only, Python 3.11+; an older Python gets exit 2 and a one-line
   message): CI cannot see `~/.claude`. The source lives in this skill.
+- **Metric commands run in a POSIX shell** (`sh`, as a Makefile would): `;`,
+  `&&`, pipes and `exit` mean what they mean there. On Windows, where the
+  shell is `cmd.exe`, the script is not yet verified.
 - **`floor`** for what should grow (tests passing, routes covered by the sweep,
   `done` items); **`ceiling`** for what should shrink (lint errors,
   `# type: ignore`, open critical bugs, p95 in ms, bundle size).

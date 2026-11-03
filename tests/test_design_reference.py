@@ -593,6 +593,8 @@ def test_single_regex_attacks_finish_fast():
     timed({"t.css": ":focus-visible{outline: " + "var(--a " * 120000 + ";}"}, 2, "--json")
     timed({"theme.ts": "theme =" + " " * 150000}, 2, "--json")
     timed({"theme.ts": "createTheme(" + "\n" * 150000}, 2, "--json")
+    # RE_FUNCTION re-read a run of letters from each of them, and css_usage handed it the whole value.
+    timed({"t.css": "body{--x:1; background: rgb(" + "a" * 100000 + ")}"}, 2, "--json")
     # Same results as before on the ordinary shapes.
     _, dark = sw.spec_tokens("# Palette\n--bg: #fff;\n## Dark mode\n--bg: #000;\n# End\n--bg: #f00;\n")
     assert dark == {"--bg": "#000"}, dark
@@ -610,32 +612,55 @@ def test_single_regex_attacks_finish_fast():
     theme = sw.theme_tokens("const theme = createTheme( deepmerge ( {palette:{primary:'#0f766e'}}))\n"
                             "export const t2 = extendTheme({ colors: { bg: '#fff' } })")
     assert theme == {"--palette-primary": "#0f766e", "--colors-bg": "#fff"}, theme
+    for text, names in (("rgb(1 2 3)", ["rgb"]), ("color-mix(in oklab, var(--a) 20%, #000)", ["color-mix", "var"]),
+                        ("a((b(", ["a", "", "b"]), ("x -webkit-y(", ["-webkit-y"]), ("((", ["", ""])):
+        found = [m.group(1) for m in sw.RE_FUNCTION.finditer(text)]
+        assert found == names, (text, found)
+    for chunk in "a-":   # color_function on its own, past the cap css_usage now puts in front of it (old: 4 s)
+        t = time.monotonic()
+        sw.color_function("rgb(" + chunk * 30000 + ")")
+        assert time.monotonic() - t < 1, f"color_function on 30k {chunk!r}: {time.monotonic() - t:.1f}s"
+    # A colour longer than safe()'s cap is rejected, not truncated, and leaves the role to the next valid one.
+    usage = {}
+    sw.css_usage("body", "background: rgb(" + "1 " * 120 + ")", usage)
+    assert usage == {}, "a colour over MAX_VALUE does not enter the usage: %s" % usage
+    sw.css_usage("body", "background: rgb(1 2 3)", usage)
+    assert usage == {"bg": "rgb(1 2 3)"}, "the over-long colour does not take the role first: %s" % usage
+    usage = {}
+    sw.css_usage("body", "background: rgb(" + "1 " * 97 + ")", usage)
+    assert usage == {"bg": "rgb(" + "1 " * 97 + ")"}, "a colour at the cap still counts: %s" % usage
 
 
-# 5p. ~100 KB of hostile text in every kind of file the sweep reads: each file is swept in under 2 s.
+# 5p. ~200 KB of hostile text in every kind of file the sweep reads: each file is swept in under 5 s.
+# The size and the limit keep both sides apart: the slowest legitimate case is under 1 s idle, every
+# regression this table has caught took 10 s or more at this size.
 # The prefix puts each parser in the state where its regexes look for more; the run is what they look at.
 HOSTILE_FILES = {
     "DESIGN.md": ["", "# ", "- `bg`: ", "| bg | "],
     "docs/design-system.md": ["# "],
-    "t.css": [":root{--a: ", "body{background: ", "@import "],
+    # "--x:1; " because a CSS file with no "--" and no @import is not parsed: without it a run of letters
+    # never reaches css_usage and the case cannot fail.
+    "t.css": [":root{--a: ", "body{background: ", "@import ", "body{--x:1; background: rgb(",
+              "a{--x:1; color: color-mix(in srgb, "],
     "tailwind.config.js": ["colors:{", "module.exports={theme:{colors:{a:"],
     "theme.ts": ["theme =", "createTheme("],
     "app/layout.tsx": ["import x from 'next/font/google'\nInter({"],
     "tokens.json": ['{"color":{"bg":{"$value":"'],
     "theme.json": ['{"a":'],
 }
-HOSTILE_RUNS = [" ", "\t", "#", "var(--a", "{", "(", "'", '"', " \t#var(--a {('\"\n"]
+HOSTILE_RUNS = [" ", "\t", "#", "var(--a", "{", "(", "'", '"', "a", "-", " \t#var(--a {('\"\n"]
+HOSTILE_SIZE = 200_000
 
 
 def test_hostile_text_in_every_file_kind_is_swept_fast():
     for path, prefixes in sorted(HOSTILE_FILES.items()):
         for prefix in prefixes:
             for chunk in HOSTILE_RUNS:
-                text = prefix + (chunk * (100_000 // len(chunk) + 1))[:100_000]
+                text = prefix + (chunk * (HOSTILE_SIZE // len(chunk) + 1))[:HOSTILE_SIZE]
                 try:
-                    timed({path: text}, 2, "--json")
+                    timed({path: text}, 5, "--json")
                 except AssertionError as e:
-                    raise AssertionError(f"{path} {prefix!r} + {chunk!r} * 100 KB: {e}") from None
+                    raise AssertionError(f"{path} {prefix!r} + {chunk!r} * {HOSTILE_SIZE // 1000} KB: {e}") from None
 
 
 # 5g. Limits against a large repository: files and depth

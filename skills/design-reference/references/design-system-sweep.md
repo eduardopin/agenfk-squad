@@ -23,9 +23,10 @@ What the sweep reads stays inside the project:
   points inside it is.
 - A relative `@import` is followed only within the repository: the nearest
   ancestor of the swept root that holds a `.git`, looking at most three levels
-  up. If that ancestor is a filesystem root, `$HOME`, the system temporary
-  folder or an ancestor of one of them, or there is no `.git` within reach,
-  the boundary is the swept root itself. A token package outside that
+  up. If that ancestor is a filesystem root, `$HOME`, `/tmp`, `/var/tmp`, the
+  folder `$TMPDIR` points to, or an ancestor of one of them, or there is no
+  `.git` within reach, the boundary is the swept root itself. `/tmp` and
+  `/var/tmp` count even when `$TMPDIR` points somewhere else. A token package outside that
   boundary is not read: run the sweep on a root that contains it.
 
 ```bash

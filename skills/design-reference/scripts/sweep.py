@@ -32,6 +32,7 @@ MAX_CSS_NESTING = 32      # real @media/@layer/nesting never goes past a few lev
 MAX_RESOLVED = 1000       # a var() that expands past this is a bomb, not a colour
 MAX_KEYS = 10000          # keys read from one JS object literal
 MAX_SPEC_CHARS = 256_000  # text of a written spec that goes through the regexes
+MAX_VALUE = 200           # a value that goes into the <style>; longer than this is neither colour nor font
 
 ROLES = ["bg", "surface", "fg", "fg-2", "accent", "border",
          "font-display", "font-body", "font-mono"]
@@ -100,7 +101,10 @@ COLOR_FUNCTIONS = {"rgb", "rgba", "hsl", "hsla", "oklch", "oklab", "lab", "lch",
 # Inside a colour function only these may nest; image-set(), cross-fade(), url() and the like fetch.
 NESTED_FUNCTIONS = COLOR_FUNCTIONS | {"var", "calc", "min", "max", "clamp"}
 RE_COLOR_ARGS = re.compile(r"(?:[^\S\n]|[\w.,%/+*#()-])+")   # no quotes, backslash, newline, ; { } < >
-RE_FUNCTION = re.compile(r"([A-Za-z-]*)\(")
+# A function name (empty for a bare "(") is tried only where a run of letters and hyphens starts: without
+# the lookbehind every letter of a run with no "(" re-read the rest of it (quadratic; 100k took 50 s).
+# Same matches as ([A-Za-z-]*)\(, which already began at the start of the run.
+RE_FUNCTION = re.compile(r"(?<![A-Za-z-])([A-Za-z-]*)\(")
 RE_TRIPLE = re.compile(r"^-?[\d.]+(?:deg)?\s+[\d.]+%\s+[\d.]+%(\s*/\s*[\d.]+%?)?$")
 RE_FIGMA = re.compile(r"https://(?:www\.)?figma\.com/(?:file|design|proto|board)/[\w-]+[^\s)\"'>]*")
 # Starts only where a run of [\w-] starts and checks its ":" first: no retry from every "-" of a
@@ -133,7 +137,7 @@ def out_of_time():
 def safe(value):
     """A value from the repository ends up inside <style>: nothing that closes a block or a tag,
     and balanced parentheses and quotes (an unpaired "(" makes CSS swallow the rest of the block)."""
-    if not value or len(value) > 200 or RE_UNSAFE.search(value):
+    if not value or len(value) > MAX_VALUE or RE_UNSAFE.search(value):
         return False
     if value.count('"') % 2 or value.count("'") % 2:
         return False
@@ -447,7 +451,9 @@ def css_usage(selector, body, usage):
             # A closed var() can only end at the last ")": searching past it, every unclosed "var(--a"
             # re-read the rest of the value to its end (quadratic; 120k of them took 50 s). Same match.
             found = RE_USAGE_VAR.search(value, 0, value.rfind(")") + 1)
-            if role.startswith("font") or found or looks_like_color(value):
+            # A colour longer than safe()'s cap never reaches the <style>; it is rejected, not truncated
+            # (a prefix of a longer value could pass), and does not go through looks_like_color.
+            if role.startswith("font") or found or (len(value) <= MAX_VALUE and looks_like_color(value)):
                 usage.setdefault(role, value if role.startswith("font") or not found else found.group(0))
     if sel in ("body", "html"):
         for m in re.finditer(r"@apply\s+([^;]+)", body):

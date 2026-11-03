@@ -32,15 +32,22 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$SCEN" ] && [ -x "$SCEN/setup.sh" ] && [ -f "$SCEN/prompt.txt" ] && [ -x "$SCEN/check.sh" ] || {
   echo "a scenario needs setup.sh, prompt.txt and check.sh (executable)" >&2; exit 64; }
+# seq 1 0 and seq 1 abc run no trial, and the report would have nothing to fail on.
+[[ "$N" =~ ^[1-9][0-9]*$ ]] || { echo "--n needs a whole number of trials, 1 or more (got: $N)" >&2; exit 64; }
 OUT="${OUT:-${SKILL_TRIAL_OUT:-$HOME/.cache/skill-trial}/$(basename "$SCEN")-$(date +%Y%m%d-%H%M%S)}"
 # Resolved outside the jail and bound into it: a binary under /tmp would vanish
 # behind the jail's private /tmp. Tests point SKILL_TRIAL_CLAUDE at a fake.
-CLAUDE_BIN="$(readlink -f "${SKILL_TRIAL_CLAUDE:-$(command -v claude)}")"
-[ -x "$CLAUDE_BIN" ] || { echo "claude not found" >&2; exit 69; }
+# Checked before readlink: readlink -f "" prints the working directory, which is
+# executable. A --dry run starts no session and does not need claude.
+CLAUDE_BIN="${SKILL_TRIAL_CLAUDE:-$(command -v claude || true)}"
+[ -n "$CLAUDE_BIN" ] && CLAUDE_BIN="$(readlink -f "$CLAUDE_BIN")"
+if [ "$DRY" = 0 ] && ! { [ -n "$CLAUDE_BIN" ] && [ -f "$CLAUDE_BIN" ] && [ -x "$CLAUDE_BIN" ]; }; then
+  echo "claude not found (install Claude Code, or set SKILL_TRIAL_CLAUDE)" >&2; exit 69
+fi
 # A bind of HOME itself, or of a parent of it, would undo the read-only HOME.
 # Resolved without creating it: a refused --out must leave nothing behind.
 OUT="$(realpath -m "$OUT")"
-for p in "$OUT" "$(dirname "$CLAUDE_BIN")"; do
+for p in "$OUT" ${CLAUDE_BIN:+"$(dirname "$CLAUDE_BIN")"}; do
   case "$HOME/" in "$p"/*) echo "refusing: $p is HOME or contains it" >&2; exit 64 ;; esac
 done
 # OUT is bound writable inside the jail, so it must not be, hold or sit inside

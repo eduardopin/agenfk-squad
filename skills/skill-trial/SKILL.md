@@ -5,6 +5,10 @@ description: Test a skill or hook change with blind headless trials before shipp
 
 # skill-trial
 
+Needs Linux or WSL with bubblewrap (`bwrap`): every trial runs inside a
+bubblewrap jail, and `trial.sh` exits 69 without it. Not yet verified on
+Windows outside WSL.
+
 A behaviour test of a skill or hook runs here, in minutes, from the session that
 made the change. Never in a second interactive session someone has to open and
 type into, and never with another session "coordinating" it.
@@ -24,16 +28,25 @@ the path you read this `SKILL.md` at. The line below follows the symlink
 SKILL_DIR="${CLAUDE_SKILL_DIR:-$(cd "$(dirname "$(readlink -e ~/.claude/skills/skill-trial/SKILL.md || echo skills/skill-trial/SKILL.md)")" && pwd)}"
 T="$SKILL_DIR/scripts/trial.sh"
 $T --scenario "$SKILL_DIR/scenarios/smoke" --dry     # setup and check only, $0
-$T --scenario <dir> --n 3 --plugin-dir <path to the plugin or repo under test>
+$T --scenario <dir> --n N --plugin-dir <path to the plugin or repo under test>
 ```
+
+**Ask the owner before any run without `--dry`, and wait for the OK.** Each
+trial is a paid session: a run costs up to N times `--budget`, about US$ 9 with
+the defaults (3 trials, $3 cap each, Opus). `--dry` spends nothing.
 
 Run the smoke scenario first: it proves your harness, `bwrap` and login work
 before you spend money on a scenario of your own.
 
 `--plugin-dir` loads the plugin from the working tree, so the trial runs the
-change on the branch, not the installed copy. Defaults: 3 trials in parallel,
-`claude-opus-5-5`, $3 cap per trial, output under `$SKILL_TRIAL_OUT` (else
-`~/.cache/skill-trial/`). The report exits 1 when any trial FAILED and 3 when a setup failed.
+change on the branch, not the installed copy. `--n N` starts N sessions at the
+same time, in parallel, each killed after 900 seconds; N is a whole number, 1 or
+more (default 3). Other defaults: `claude-opus-5-5`, $3 cap per trial, output
+under `$SKILL_TRIAL_OUT` (else `~/.cache/skill-trial/`). `trial.sh` exits 69 when
+`bwrap` or `claude` is missing (a `--dry` run does not need `claude`). The report
+exits 1 when any trial FAILED or ERRORed, and 3 when a setup failed or no trial
+ran. A cost the stream does not state (a trial killed at 900 s) shows as `?`, and
+the total then says it is incomplete.
 
 A hook that `install.sh` puts into a Claude config directory is tried first the
 way CONTRIBUTING.md describes, with `CLAUDE_CONFIG_DIR` and `HOME` pointed at
@@ -89,8 +102,11 @@ works.
 - SETUP in the report means `setup.sh` failed for that trial (read `setup.log`).
   It is counted in the total and the report exits 3, which wins over the 1 of a
   FAIL or ERROR, because the run is incomplete.
-- ERROR in the report means the session never ran (API, auth, jail). Read
-  `stderr.txt` before anything else.
+- ERROR in the report means no verdict was given: the session never ran or
+  claude ended it with an error (API, auth such as "Not logged in", jail; the
+  result event's `is_error`), or `check.sh` exited outside 0 to 4 (127 for a
+  missing command, a signal). It wins over the check's PASS or N/A. Read
+  `stderr.txt` and `check.out` before anything else.
 - A trial starts from `env -i` plus HOME, PATH, the CA bundle and the stub's
   variables. The calling session's environment can carry the `env` block of
   `~/.claude/settings.json`, and a variable in it that switches the hook under

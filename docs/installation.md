@@ -371,7 +371,8 @@ directory if you want it gone.
   merge seal (`hooks/squad-seal.py`, `git config squad.seal`), and the
   scripts of the cloud-resource pricing guard, the design bridge, the
   pull-request skill and the writing skill, and the Chrome export of the
-  presentation skill (its deck checks do run there, under Git Bash). Their
+  presentation skill (its deck checks do run there, under Git Bash), and the
+  blind trials of `skills/skill-trial` (they need bubblewrap). Their
   tests say so and exit 0 on Windows. Leave the
   seal off there.
 - **Paths in a Bash command.** The merge turn follows `cd C:/work/repo` and

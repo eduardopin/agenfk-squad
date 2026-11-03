@@ -7,8 +7,14 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+
+if os.name == "nt":
+    # the tests run a stub with a shebang and the literal python3, and trial.sh needs bwrap
+    print("skipped: the skill-trial skill is not yet verified on Windows")
+    sys.exit(0)
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / 'skills' / 'skill-trial'
@@ -77,14 +83,16 @@ class StubTests(Tmp):
 
 
 class ReportTests(Tmp):
-    def trial(self, i, rc, result, why='reason', cost=0.5):
+    def trial(self, i, rc, result, why='reason', cost=0.5, **extra):
         t = self.tmp / f'trial-{i}'
         t.mkdir()
         (t / 'check.rc').write_text(f'{rc}\n')
         (t / 'check.out').write_text(why + '\n')
         (t / 'seconds').write_text('12\n')
-        (t / 'stream.jsonl').write_text(json.dumps({'type': 'result', 'total_cost_usd': cost,
-                                                    'num_turns': 4, 'result': result}) + '\n')
+        event = {'type': 'result', 'total_cost_usd': cost, 'num_turns': 4, 'result': result, **extra}
+        if cost is None:
+            del event['total_cost_usd']
+        (t / 'stream.jsonl').write_text(json.dumps(event) + '\n')
 
     def test_report_exits_1_when_a_trial_failed(self):
         self.trial(1, 0, 'Done.')
@@ -110,6 +118,41 @@ class ReportTests(Tmp):
         self.assertEqual(r.returncode, 1)
         self.assertIn('| trial-1 | ERROR |', r.stdout)
         self.assertIn('1 ERROR', r.stdout)
+
+    def test_report_marks_an_is_error_result_as_error_whatever_the_check_said(self):
+        # claude 2.1 answers a logged-out run with is_error and this text, not "API Error"
+        for i, rc in ((1, 0), (2, 2)):
+            self.trial(i, rc, 'Not logged in · Please run /login', 'n/a', cost=0, is_error=True)
+        r = run(['python3', REPORT, self.tmp], timeout=30)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('| trial-1 | ERROR | Not logged in', r.stdout)
+        self.assertIn('| trial-2 | ERROR | Not logged in', r.stdout)
+        self.assertIn('2 trials, 0 FAIL, 0 N/A, 2 ERROR', r.stdout)
+
+    def test_report_counts_a_check_exit_outside_0_to_4_as_error(self):
+        self.trial(1, 0, 'Done.')
+        self.trial(2, 127, 'Done.', 'check.sh: line 3: jq: command not found')
+        self.trial(3, 'garbage', 'Done.')
+        r = run(['python3', REPORT, self.tmp], timeout=30)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('| trial-2 | ERROR | check.sh exited 127: check.sh: line 3: jq: command not found |', r.stdout)
+        self.assertIn('| trial-3 | ERROR | check.sh exited garbage', r.stdout)
+        self.assertIn('3 trials, 0 FAIL, 0 N/A, 2 ERROR', r.stdout)
+
+    def test_report_shows_an_unknown_cost_as_unknown_and_the_total_as_incomplete(self):
+        self.trial(1, 0, 'Done.', cost=0.5)
+        self.trial(2, 0, 'Done.', cost=None)
+        r = run(['python3', REPORT, self.tmp], timeout=30)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn('| trial-2 | PASS | reason | ? |', r.stdout)
+        self.assertIn('$0.50 + ?. Folder:', r.stdout)
+        self.assertIn('Cost unknown for 1 trial(s)', r.stdout)
+        self.assertIn('the total is incomplete', r.stdout)
+
+    def test_report_with_no_trial_exits_nonzero_and_says_so(self):
+        r = run(['python3', REPORT, self.tmp], timeout=30)
+        self.assertEqual(r.returncode, 3, r.stdout)
+        self.assertIn('no trial ran', r.stdout)
 
     def test_report_counts_a_failed_setup_and_exits_3(self):
         self.trial(1, 0, 'Done.')
@@ -170,6 +213,36 @@ class SkillShapeTests(unittest.TestCase):
             if p.is_file() and PRIVATE.search(p.read_text(errors='replace')):
                 hits.append(str(p.relative_to(ROOT)))
         self.assertEqual(hits, [])
+
+    def test_windows_skips_this_file_and_the_install_guide_says_so(self):
+        # Imported (not run as __main__) with os.name forced to nt, after the modules that branch
+        # on os.name at import: the guard must print and exit 0.
+        code = ('import json, os, pathlib, re, runpy, shutil, subprocess, sys, tempfile, unittest; '
+                'os.name = "nt"; sys.argv = [sys.argv[1]]; '
+                'runpy.run_path(sys.argv[0], run_name="probe")')
+        r = run([sys.executable, '-B', '-c', code, Path(__file__).resolve()], timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), 'skipped: the skill-trial skill is not yet verified on Windows')
+        guide = (ROOT / 'docs' / 'installation.md').read_text()
+        bullet = guide.split('**Not yet verified on Windows:**')[1].split('\n- ')[0]
+        self.assertIn('skills/skill-trial', bullet)
+
+    def test_skill_md_states_platform_parallelism_timeout_and_owner_ok_from_the_script(self):
+        doc = (SKILL / 'SKILL.md').read_text()
+        body = doc.split('---', 2)[2]
+        first = body.split('\n## ')[0]  # the part read before the Run section
+        self.assertIn('bubblewrap', first)
+        self.assertIn('Linux or WSL', first)
+        sh = TRIAL.read_text()
+        n = int(re.search(r'^N=(\d+) ', sh, re.M).group(1))
+        budget = int(re.search(r' BUDGET=(\d+) ', sh).group(1))
+        timeout = re.search(r'timeout (\d+) bwrap', sh).group(1)
+        self.assertIn('--n N', doc)
+        self.assertNotIn('--n 3', doc)
+        self.assertIn(f'(default {n})', doc)
+        self.assertIn(f'{timeout} seconds', doc)
+        self.assertIn(f'US$ {n * budget}', doc)
+        self.assertIn('Ask the owner before any run without `--dry`', doc)
 
     def test_trial_help_exits_0(self):
         r = run(['bash', TRIAL, '--help'], timeout=30)
@@ -319,6 +392,28 @@ class TrialRunTests(Tmp):
         r = run(['bash', TRIAL, '--scenario', SCENARIO, '--n', '1', '--dry', '--out', home / '.cache' / 'st'],
                 env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_a_missing_claude_exits_69_but_a_dry_run_does_not_need_it(self):
+        # Every PATH entry that holds a claude dropped, and no SKILL_TRIAL_CLAUDE.
+        path = os.pathsep.join(d for d in os.environ.get('PATH', '').split(os.pathsep)
+                               if d and not os.access(os.path.join(d, 'claude'), os.X_OK))
+        env = {k: v for k, v in os.environ.items() if k != 'SKILL_TRIAL_CLAUDE'}
+        env['PATH'] = path
+        out = self.tmp / 'out'
+        r = run(['bash', TRIAL, '--scenario', SCENARIO, '--n', '1', '--out', out], env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 69, r.stdout + r.stderr)
+        self.assertIn('claude not found', r.stderr)
+        self.assertFalse(out.exists())
+        r = run(['bash', TRIAL, '--scenario', SCENARIO, '--n', '1', '--dry', '--out', out], env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_refuses_a_trial_count_that_runs_no_trial(self):
+        for n in ('0', 'abc', '-1', ''):
+            out = self.tmp / f'out-{n}'
+            r = run(['bash', TRIAL, '--scenario', SCENARIO, '--n', n, '--dry', '--out', out], timeout=60)
+            self.assertEqual(r.returncode, 64, n)
+            self.assertIn('--n needs a whole number', r.stderr)
+            self.assertFalse(out.exists(), n)
 
     def test_refuses_an_output_folder_that_contains_home(self):
         home = self.tmp / 'home'

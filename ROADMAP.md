@@ -61,8 +61,9 @@ have `Bash`, which can write.
 
 *Wanted:* per-agent permission rules that allow the read-only commands each
 one needs (`git log`, `git diff`, the suite, `agenfk`, `gh pr view`) and deny
-the rest. The verifier is the hard one: it mutates code to test the tests, so
-it needs a scratch worktree it can write to and nothing else.
+the rest. The verifier is the hard one: reproducing the suite and probing the branch
+write caches and scratch files, so it needs a scratch worktree it can write
+to and nothing else.
 
 ### Internationalisation
 Everything is in English. The two regexes that read the owner's prompt accept

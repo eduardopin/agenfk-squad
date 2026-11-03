@@ -119,6 +119,32 @@ class ContractTests(unittest.TestCase):
         self.assertIn('with a heavy session, ≥ %dk' % (default(watch, 'SQUAD_ORCH_HERE') // 1000), flat)
         self.assertIn('%dth reviewer on the same card' % (default(watch, 'SQUAD_MAX_REVIEWS') + 1), flat)
 
+    def test_no_mutation_rule_comes_back_through_skills_templates_or_roadmap(self):
+        # The delivery flow has no mutation step (owner's rule of 16/10/2026): the verifier judges
+        # test strength by reading the tests and reproducing the suite. These files once asked for
+        # mutation as a squad rule; none of them may again.
+        def read(rel):
+            return (ROOT / rel).read_text(encoding="utf-8")
+
+        mention = re.compile(r'mutat', re.I)
+        for rel in ('ROADMAP.md', 'templates/ci-light/README.md', 'skills/engineering-evidence/SKILL.md',
+                    'skills/pr-evidence/SKILL.md', 'skills/pull-request/references/review.md'):
+            self.assertIsNone(mention.search(read(rel)), rel)
+        # The PR evidence guide names mutation only in the infrastructure-PR ban, which
+        # skills/pull-request/scripts/pr_check.py enforces on the PR body.
+        evidence = read('skills/pull-request/references/evidence.md')
+        self.assertEqual([line for line in evidence.splitlines() if mention.search(line)],
+                         ['An infrastructure PR **carries no adversarial or mutation tests**: do not run'])
+        # ci-cost makes a project's own mutation job cheaper; it never requires one.
+        cost = ' '.join(read('skills/ci-cost/SKILL.md').split())
+        self.assertNotRegex(cost, r'(?i)mutation gate')
+        self.assertIn("The squad's delivery flow has no mutation step", cost)
+        self.assertIn('does not add one: it makes an existing job cheaper.', cost)
+        # No skill or template lists MUTATE as a flow step.
+        for path in [*(ROOT / 'skills').rglob('*.md'), *(ROOT / 'templates').rglob('*.md'),
+                     *(ROOT / 'templates').rglob('*.yml')]:
+            self.assertNotRegex(path.read_text(encoding="utf-8"), r'\bMUTATE\b', path)
+
     def test_no_private_context_or_bundled_history_in_new_skills(self):
         forbidden = re.compile(r'/home/[a-z]+/|(?<!\d)\d{12}(?!\d)|-----BEGIN .*PRIVATE KEY-----', re.I)
         for skill in SKILLS:

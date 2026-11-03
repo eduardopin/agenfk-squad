@@ -17,7 +17,7 @@ agenfk get <id> --json | jq '.comments[] | select(.content | startswith("VERIFIE
 | Fact | Source | Goes to |
 |---|---|---|
 | The problem and what stays out | card description | Opening paragraph |
-| Verdict, reproduced suite, mutation | `VERIFIER: SHIP ...` comment | Tests |
+| Verdict and reproduced suite | `VERIFIER: SHIP ...` comment | Tests |
 | Suites and counts | `agenfk log-test` recorded by the `tester` | Tests |
 | Monthly cost and assumptions | `finops` quote commented on the card | Cost |
 | `plan`, `validate`, IaC scans | `infra` report | Resources, Before and after, Scans |
@@ -116,5 +116,5 @@ them and do not list them. The evidence is `terraform validate`,
 `terraform test` (when the stack promises something: a cost ceiling,
 `prevent_destroy`, variable validation), the plan summary and the scans.
 
-An application PR may cite the mutation test the `verifier` ran: what was
-broken and what failed.
+An application PR cites the suite the `verifier` reproduced: command and
+counts, and what it probed adversarially when that found something.

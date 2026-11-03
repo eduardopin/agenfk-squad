@@ -15,6 +15,12 @@ import subprocess
 import sys
 import tempfile
 
+if os.name == "nt":
+    # its fakes of git, gh and agenfk are executable scripts on PATH, which Windows does not run by name;
+    # the merge seal is not yet verified on Windows (docs/installation.md, Windows limits)
+    print("skipped: the merge seal is not yet verified on Windows")
+    sys.exit(0)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEAL = os.path.join(ROOT, "hooks", "squad-seal.py")
 WATCH = os.path.join(ROOT, "hooks", "squad-watch.py")

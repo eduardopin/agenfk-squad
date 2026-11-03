@@ -22,6 +22,12 @@ import sys
 import tempfile
 import zlib
 
+
+if os.name == "nt":
+    # its scripts and fakes run through bash and POSIX tools; the design bridge is not yet verified on Windows
+    print("skipped: the design bridge is not yet verified on Windows")
+    sys.exit(0)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "skills", "design-bridge")
 AGENT = os.path.join(ROOT, "agents", "design-bridge.md")

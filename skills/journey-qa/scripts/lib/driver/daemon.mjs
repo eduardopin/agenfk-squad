@@ -3,7 +3,7 @@
 // action budgets, and writes every observation to the evidence ledger + trace.
 // Started by `jqa browser start`; talks HTTP on 127.0.0.1 with a bearer token.
 import { stageUploads } from "./upload.mjs";
-import { assertRole } from "./guard.mjs";
+import { addOrigins, assertRole } from "./guard.mjs";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -652,7 +652,7 @@ async function dispatch(body) {
     return { ok: true, text: "driver stopping" };
   }
   if (cmd === "allow") {
-    for (const o of args) state.allow.add(new URL(o).origin);
+    addOrigins(state.allow, args);
     trace({ as: "coordinator", cmd: "allow", args, ok: true });
     return { ok: true, text: `allowlist: ${[...state.allow].join(", ")}` };
   }

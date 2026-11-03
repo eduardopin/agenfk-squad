@@ -518,3 +518,18 @@ test("coordination commands are refused when sent as an actor, allowed for the c
   }
   assert.doesNotThrow(() => assertRole("click", "actor"), "interface commands are the actor's");
 });
+
+test("browser allow adds only explicit origins, with the same error as start", async () => {
+  const { addOrigins } = await import("../../skills/journey-qa/scripts/lib/driver/guard.mjs");
+  const allow = new Set();
+  addOrigins(allow, ["https://app.example.com/", "http://127.0.0.1:8080"]);
+  assert.deepEqual([...allow].sort(), ["http://127.0.0.1:8080", "https://app.example.com"]);
+  for (const bad of ["https://app.example.com/path?x=1", "example.com", "javascript:alert(1)", "https://a.example.com b"]) {
+    const next = new Set(["https://keep.example.com"]);
+    assert.throws(() => addOrigins(next, [bad]), (e) => e.code === "bad_args" && /--allow needs an explicit origin/.test(e.message), bad);
+    assert.deepEqual([...next], ["https://keep.example.com"], "a refused URL adds nothing");
+  }
+  const mixed = new Set();
+  assert.throws(() => addOrigins(mixed, ["https://ok.example.com", "nope"]));
+  assert.equal(mixed.size, 0, "one bad URL refuses the whole call");
+});

@@ -6,17 +6,19 @@ encrypted with the named key, durable data protected, no workspace and no
 remote_state; the skill ships an empty project map and no private paths. With
 terraform and network: fmt -check, init -backend=false, validate and test on
 the stack with the resource examples inside it, in a temporary directory.
-Without terraform or without network that part is skipped with a notice; the
-static part always runs.
+The default run is offline: fmt -check runs when terraform meets
+required_version; init/validate/test need SQUAD_TF_ONLINE=1 (local only, not
+CI). Whatever does not run prints NOTICE and SKIP, never ok; the static part
+always runs.
 
 Self-checking: the exit code is the verdict.
 
     python3 tests/test_cloud_resource.py
 """
+import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import tempfile
 
@@ -341,19 +343,77 @@ def test_durable_data_has_prevent_destroy():
 
 
 # --- real terraform, when available ---
+#
+# Offline by default: the default run opens no socket. `terraform fmt -check`
+# needs no provider and runs whenever a terraform that meets required_version
+# is on the PATH. init/validate/test download the AWS provider (~760 MB) from
+# the registry, so they run only with SQUAD_TF_ONLINE=1. That mode is for a
+# local check by hand; it is not part of CI. It pins the provider to
+# AWS_PROVIDER_TESTED (override with SQUAD_TF_AWS_VERSION) through an override
+# file, because the template leaves the minor open and ships no lock file.
 
-def _network(host="registry.terraform.io"):
-    try:
-        socket.create_connection((host, 443), timeout=5).close()
-        return True
-    except OSError:
-        return False
+AWS_PROVIDER_TESTED = "6.71.0"
+
+
+class Skip(Exception):
+    """The test did not run; the runner prints SKIP instead of ok."""
+
+
+def _skip(reason):
+    print("NOTICE:", reason)
+    raise Skip(reason)
+
+
+def _version(text):
+    return tuple(int(x) for x in re.findall(r"\d+", text)[:3])
+
+
+def _pessimistic(constraint):
+    """`~> X.Y` (or `~> X.Y.Z`) as (floor, ceiling); other forms fail the test."""
+    m = re.fullmatch(r"~>\s*(\d+(?:\.\d+){1,2})", constraint.strip())
+    assert m, f"unsupported version constraint in this test: {constraint!r}"
+    floor = _version(m[1])
+    ceiling = floor[:-2] + (floor[-2] + 1,)
+    return floor, ceiling
+
+
+def _declared(name):
+    """A constraint from the stack's versions.tf: required_version or a provider."""
+    code, _ = strip_comments(read(os.path.join(STACK, "versions.tf")))
+    if name == "terraform":
+        m = re.search(r'required_version\s*=\s*"([^"]+)"', code)
+    else:
+        m = re.search(name + r'\s*=\s*\{[^}]*?version\s*=\s*"([^"]+)"', code, re.S)
+    assert m, f"versions.tf: no constraint for {name}"
+    return m[1]
+
+
+def _within(version, constraint):
+    floor, ceiling = _pessimistic(constraint)
+    return floor <= version[:len(floor)] and version[:len(ceiling)] < ceiling
+
+
+def _tf_env():
+    # CHECKPOINT_DISABLE: terraform's update check is a network call of its own.
+    return dict(os.environ, TF_IN_AUTOMATION="1", CHECKPOINT_DISABLE="1")
 
 
 def _tf(args, cwd, env):
     p = subprocess.run(["terraform", *args, "-no-color"], cwd=cwd, env=env,
                        capture_output=True, text=True, timeout=600)
     return p.returncode, (p.stdout + p.stderr).strip()
+
+
+def _require_terraform():
+    """Skip with a notice when terraform is missing or older than required_version."""
+    if not shutil.which("terraform"):
+        _skip("terraform not found")
+    rc, out = _tf(["version", "-json"], ROOT, _tf_env())
+    assert rc == 0, f"terraform version failed:\n{out}"
+    found = _version(json.loads(out)["terraform_version"])
+    wanted = _declared("terraform")
+    if not _within(found, wanted):
+        _skip(f"terraform {'.'.join(map(str, found))} does not meet required_version {wanted}")
 
 
 def build_stack(target):
@@ -372,22 +432,40 @@ def build_stack(target):
                     fh.write(text)
 
 
-def test_terraform_fmt_validate_and_test():
-    if not shutil.which("terraform"):
-        print("NOTICE: terraform not found; fmt/validate/test skipped")
-        return
+def pin_provider(target, version):
+    """Pin the AWS provider with an override file, inside the declared constraint."""
+    wanted = _declared("aws")
+    assert _within(_version(version), wanted), \
+        f"pinned aws provider {version} is outside versions.tf ({wanted})"
+    with open(os.path.join(target, "pin_override.tf"), "w") as fh:
+        fh.write('terraform {\n  required_providers {\n    aws = {\n'
+                 '      source  = "hashicorp/aws"\n'
+                 f'      version = "= {version}"\n    }}\n  }}\n}}\n')
+
+
+def test_terraform_fmt():
+    _require_terraform()
     tmp = tempfile.mkdtemp(prefix="cloud-resource-")
     try:
         build_stack(tmp)
-        env = dict(os.environ, TF_IN_AUTOMATION="1", CHECKPOINT_DISABLE="1")
+        rc, out = _tf(["fmt", "-check", "-recursive", "-diff"], tmp, _tf_env())
+        assert rc == 0, f"terraform fmt -check failed:\n{out}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_terraform_init_validate_and_test_online():
+    if os.environ.get("SQUAD_TF_ONLINE") != "1":
+        _skip("init/validate/test download the AWS provider; set SQUAD_TF_ONLINE=1 to run them")
+    _require_terraform()
+    tmp = tempfile.mkdtemp(prefix="cloud-resource-")
+    try:
+        build_stack(tmp)
+        pin_provider(tmp, os.environ.get("SQUAD_TF_AWS_VERSION", AWS_PROVIDER_TESTED))
+        env = _tf_env()
         env.setdefault("TF_PLUGIN_CACHE_DIR",
                        os.path.join(tempfile.gettempdir(), "squad-terraform-plugin-cache"))
         os.makedirs(env["TF_PLUGIN_CACHE_DIR"], exist_ok=True)
-        rc, out = _tf(["fmt", "-check", "-recursive", "-diff"], tmp, env)
-        assert rc == 0, f"terraform fmt -check failed:\n{out}"
-        if not _network():
-            print("NOTICE: no network to the registry; init/validate/test skipped")
-            return
         rc, out = _tf(["init", "-backend=false", "-input=false"], tmp, env)
         assert rc == 0, f"terraform init failed:\n{out}"
         rc, out = _tf(["validate"], tmp, env)
@@ -401,5 +479,9 @@ def test_terraform_fmt_validate_and_test():
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok ", name)
+            try:
+                fn()
+            except Skip as e:
+                print("SKIP", name, "-", e)
+                continue
+            print("ok  ", name)

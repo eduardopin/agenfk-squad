@@ -864,6 +864,63 @@ def test_compaction_handoff_off_with_squad_watch_0():
     assert not os.path.exists(compact_handoff(h, sid))
 
 
+def test_stop_schedules_the_compaction_and_precompact_labels_the_one_it_ordered():
+    """Outside handoff, with a large context, the Stop schedules squad-compact for just
+    before the cache goes cold; the PreCompact handoff of that compaction says the
+    watcher ordered it, never that the session stopped without a handoff."""
+    h = home()
+    sid = "c0c0c0c0-0006"
+    tr = os.path.join(h, f"{sid}.jsonl")
+    with open(tr, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
+            "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
+                      "cache_creation": {"ephemeral_5m_input_tokens": 5000}}}}) + "\n")
+    env = {"HERDR_PANE_ID": "w1:p1"}
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": "deliver card ABC-2"}, env)
+    assert run(h, "Stop", sid, tr, env=env) == ""
+    jpath = os.path.join(h, ".claude", "squad", "compact", f"{sid}.json")
+    with open(jpath, encoding="utf-8") as fh:
+        job = json.load(fh)
+    assert job["ttl"] == 300 and 170 < job["due"] - time.time() <= 180 and job["req"] == "r-last", job
+    assert job["text"].startswith("/compact ") and "\n" not in job["text"], job["text"]
+    assert 'Owner\'s last request, recorded by the watcher: "deliver card ABC-2"' in job["text"], job["text"]
+    job["req"] = "rescheduled"                     # the squad-compact launched for it leaves on its own
+    with open(jpath, "w", encoding="utf-8") as fh:
+        json.dump(job, fh)
+    # the /compact line reaching the session is not the owner's request
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": job["text"] + " pause, call it a day"}, env)
+    st = state(h, sid)
+    assert st["last_prompt"] == "deliver card ABC-2" and not st["asked_stop"], st
+    # the record squad-compact leaves before sending: fresh labels the handoff, stale does not
+    sent = os.path.join(h, ".claude", "squad", "compact", f"{sid}.sent")
+    for age, trigger, ordered in ((5, "manual", True), (3600, "manual", False), (5, "auto", False)):
+        with open(sent, "w", encoding="utf-8") as fh:
+            json.dump({"req": "r-last", "ts": time.time() - age, "ctx": 300_000, "ttl": 300}, fh)
+        r = run_proc(h, "PreCompact", sid, tr, {"trigger": trigger, "custom_instructions": None}, env)
+        assert r.returncode == 0 and r.stdout.strip() == "", r
+        with open(compact_handoff(h, sid), encoding="utf-8") as fh:
+            body = fh.read()
+        label = f"The watcher ordered this compaction (squad-compact, {trigger})"
+        assert (label in body) is ordered, (age, trigger, body)
+        assert ordered or f"about to be compacted ({trigger})" in body, (age, trigger, body)
+        assert ("300k of context" in body) is ordered, body
+        assert "stopped without writing" not in body, body
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-watch.md"))
+    assert not state(h, sid).get("switched")
+    # that request was compacted: another Stop on it schedules nothing
+    os.remove(jpath)
+    run(h, "Stop", sid, tr, env=env)
+    assert not os.path.exists(jpath)
+    # a handoff out of turn sends the work back: that Stop is not an idle session, nothing is scheduled
+    sid = "c0c0c0c0-0007"
+    tr2 = os.path.join(h, f"{sid}.jsonl")
+    shutil.copy(tr, tr2)
+    run(h, "UserPromptSubmit", sid, tr2, {"prompt": "deliver card ABC-3"}, env)
+    write_handoff(h, tr2)
+    assert kind(said(run(h, "Stop", sid, tr2, env=env))) == "Handoff out of turn"
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "compact", f"{sid}.json"))
+
+
 def repo_with_gh(h):
     """A real git repository and a fake gh that answers the PR state."""
     repo = os.path.join(h, "repo")

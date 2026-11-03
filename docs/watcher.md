@@ -16,6 +16,7 @@ measured. `SQUAD_WATCH=0` turns it off.
 - [The soft stop](#the-soft-stop)
 - [The session switch](#the-session-switch)
 - [Waking a stopped session](#waking-a-stopped-session)
+- [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)
 - [The merge queue](#the-merge-queue)
 - [Metrics](#metrics)
 
@@ -28,8 +29,8 @@ measured. `SQUAD_WATCH=0` turns it off.
 | `PostToolUseFailure` | A tool call failed: if it was the merge that held the merge turn, gives the turn back at once instead of waiting for `SQUAD_TURN_HOLD` to expire. |
 | `SubagentStop` | Writes the sub-session's metrics to `metrics.jsonl` and leaves a note for the parent when the sub-session ended badly. |
 | `UserPromptSubmit` | Delivers pending notes to the main session. |
-| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). |
-| `PreCompact` | Main session, `/compact` or auto-compact: before the conversation is summarized, writes the same minimal handoff to `~/.claude/squad/handoffs/<session>-compact.md`. It prints nothing, so it never blocks the compaction, and it never switches the session. |
+| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). Main session outside handoff, with a large context: schedules a `/compact` just before the prompt cache goes cold (see [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)). |
+| `PreCompact` | Main session, `/compact` or auto-compact: before the conversation is summarized, writes the same minimal handoff to `~/.claude/squad/handoffs/<session>-compact.md`. It prints nothing, so it never blocks the compaction, and it never switches the session. A compaction the watcher ordered is labelled as such in that handoff. |
 
 Reading the transcript is incremental: the watcher keeps a byte offset per
 session and parses only whole lines added since the last look, so it costs the
@@ -361,6 +362,50 @@ timer not enabled). `systemctl --user disable --now
 squad-wake.timer` stops it. Without a systemd user manager for your `HOME`
 (macOS, a container) the installer prints the line to run every 2 minutes from
 cron or launchd. Windows is not covered yet.
+
+## Compacting before the cache goes cold
+
+A session that stopped with a large context still has its prompt cache warm
+for a while: 1 hour or 5 minutes after its last request, depending on the
+cache the session uses. Compacting while the cache is warm reads the context
+at 0.1 of the price. A minute after it goes cold, the next message writes the
+whole context again (1.25x on the 5-minute cache, 2x on the 1-hour one).
+
+So, on the `Stop` of a main session outside handoff, with context at or above
+`SQUAD_COMPACT_MIN` (150000), the watcher schedules `hooks/squad-compact.py`
+as a detached process, due `SQUAD_COMPACT_BEFORE` seconds (120) before the
+cache of the last request goes cold. The TTL is read from the transcript (the
+`cache_creation` split of the last responses); `SQUAD_CACHE_TTL` overrides it.
+With no TTL in the transcript nothing is scheduled: there is no telling when
+the cache goes cold. The job is
+`~/.claude/squad/compact/<session>.json`; every `Stop` reschedules it, and the
+old process leaves on its own.
+
+At the due time it sends one line to the pane, `/compact` followed by what the
+summary must keep, in order: the owner's request verbatim and what was
+decided, cards, repository, branch, worktree, PRs and merge-queue position,
+decisions and why, DONE with evidence and REMAINING with the next step,
+background tasks still open, traps already found. It adds the owner's last
+request as the watcher recorded it and, if there are any, the path of the
+denied briefs. It sends it only if all of this still holds:
+
+- the job is still the one it was launched for;
+- the transcript has no request after the scheduled one (the cache was renewed);
+- the pane hosts the same session, idle;
+- the session is not at handoff level or switching (no `switched`, no switch
+  claim, no scheduled switch wait) and the owner did not ask to stop or pause;
+- the job's text is one line starting with `/compact`.
+
+Any doubt means not compacting. Before sending, it records
+`~/.claude/squad/compact/<session>.sent` (request id and time): the
+`PreCompact` handoff that follows says the watcher ordered the compaction, not
+that the session stopped without a handoff, and the same request is never
+compacted twice. The watcher skips its own `/compact` line when it reads
+prompts: it is not the owner's request. Each decision goes to
+`~/.claude/squad/compactions.log`.
+
+It needs a herdr pane (`HERDR_PANE_ID`) and a Claude Code transcript.
+`SQUAD_COMPACT=0` turns it off.
 
 ## The merge queue
 

@@ -38,7 +38,8 @@ OUT="${OUT:-${SKILL_TRIAL_OUT:-$HOME/.cache/skill-trial}/$(basename "$SCEN")-$(d
 CLAUDE_BIN="$(readlink -f "${SKILL_TRIAL_CLAUDE:-$(command -v claude)}")"
 [ -x "$CLAUDE_BIN" ] || { echo "claude not found" >&2; exit 69; }
 # A bind of HOME itself, or of a parent of it, would undo the read-only HOME.
-mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd -P)"
+# Resolved without creating it: a refused --out must leave nothing behind.
+OUT="$(realpath -m "$OUT")"
 for p in "$OUT" "$(dirname "$CLAUDE_BIN")"; do
   case "$HOME/" in "$p"/*) echo "refusing: $p is HOME or contains it" >&2; exit 64 ;; esac
 done
@@ -49,7 +50,7 @@ for d in .claude .config .local .ssh .aws; do
   case "$OUT/" in "$q"/*) echo "refusing: --out $OUT is inside $q" >&2; exit 64 ;; esac
   case "$q/" in "$OUT"/*) echo "refusing: --out $OUT contains $q" >&2; exit 64 ;; esac
 done
-mkdir -p "$OUT/ghcfg"
+mkdir -p "$OUT/ghcfg"  # first creation of OUT, after every refusal above
 
 # The trial's Bash runs as the user. bwrap gives it its own PID namespace and a
 # fresh /proc (the host's /proc/<pid>/root would lead straight back to the real

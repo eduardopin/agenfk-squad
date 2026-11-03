@@ -300,6 +300,8 @@ class TrialRunTests(Tmp):
                     env=env, timeout=60)
             self.assertEqual(r.returncode, 64, out)
             self.assertIn('refusing', r.stderr)
+            if '/' in out:  # a folder under a steering path must not be created by the refusal
+                self.assertFalse((home / out).exists(), out)
         r = run(['bash', TRIAL, '--scenario', SCENARIO, '--n', '1', '--dry', '--out', home / '.cache' / 'st'],
                 env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)

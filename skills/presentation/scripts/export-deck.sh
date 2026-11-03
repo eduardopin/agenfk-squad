@@ -190,7 +190,7 @@ if [ -n "$PNG_DIR" ]; then
     printf '<style>.slide{display:none!important}#%s{display:flex!important}</style>\n' "$id" >> "$f"
     out="$PNG_DIR/$(printf '%02d' "$i")-$id.png"
     rm -f "$out"
-    chrome --hide-scrollbars --window-size=1280,720 --force-device-scale-factor=2 "${BG[@]}" \
+    chrome --hide-scrollbars --window-size=1280,720 --force-device-scale-factor=2 ${BG[@]+"${BG[@]}"} \
       --virtual-time-budget=12000 --screenshot="$out" "file://$f" || true
     [ -s "$out" ] || { echo "Chrome did not produce $out" >&2; exit 1; }
     echo "png: $out"

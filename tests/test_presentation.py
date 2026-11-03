@@ -90,6 +90,20 @@ def variant(tmp, name, change):
 
 # ---------- the template and the skill, no Chrome ----------
 
+
+def test_script_expands_arrays_safely_under_set_u_on_old_bash():
+    """macOS ships bash 3.2 (see get.sh): there, "${A[@]}" of an empty array under
+    set -u aborts with "unbound variable". Every array expansion must be guarded."""
+    src = open(os.path.join(SKILL, "scripts", "export-deck.sh"), encoding="utf-8").read()
+    bare = [m.group(0) for m in re.finditer(r'(?<![+])"\$\{(\w+)\[@\]\}"', src)
+            if "${%s[@]+" % m.group(1) not in src[max(0, m.start() - 20):m.start()]]
+    assert not bare, bare
+
+
+def test_skill_says_what_happens_without_the_sweep():
+    text = " ".join(open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8").read().split())
+    assert "sweep.py` is not installed" in text and "sweep was not run" in text
+
 def test_nothing_private_or_unported_in_the_skill():
     found = []
     for base, _, files in os.walk(SKILL):

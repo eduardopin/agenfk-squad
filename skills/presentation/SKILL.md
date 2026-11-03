@@ -28,7 +28,9 @@ python3 -I ~/.claude/skills/design-reference/scripts/sweep.py <project-root> --c
 ```
 
 Say in one line which system the deck wears and where the sweep found it (or
-"neutral palette: the project has no design system"). A customer's or a third
+"neutral palette: the project has no design system"). If
+`design-reference/scripts/sweep.py` is not installed, the built-in neutral
+palette stays and the line says the sweep was not run. A customer's or a third
 party's brand: ask before using it.
 
 Deck language: what the owner asked for > the language of the material the

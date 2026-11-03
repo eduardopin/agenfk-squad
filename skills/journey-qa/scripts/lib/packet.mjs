@@ -275,6 +275,11 @@ export function actorWorkdir(runDir, actorId) {
   return join(tmpdir(), "journey-qa-actors", key, actorId);
 }
 
+/** Remove the actor's scratch folder, which holds its driver token, once the actor has ended. Only the folder `actorWorkdir` names. */
+export function cleanupActorWorkdir(runDir, actorId) {
+  rmSync(actorWorkdir(runDir, actorId), { recursive: true, force: true });
+}
+
 // Environment the jailed agent keeps; everything else (cloud, forge and agent sockets included) is cleared. A provider
 // key passes only when the chosen model names its provider (pi otherwise reads its own ~/.pi/agent/auth.json).
 const JAIL_ENV = /^(LANG|LC_[A-Z]+|TERM|TZ|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE)$/;
@@ -384,7 +389,12 @@ writeFileSync(${JSON.stringify(join(src, "exit.json"))}, JSON.stringify({ exit_c
   writeFileSync(join(src, "stderr.log"), `${r.stderr ?? ""}${r.error ? `\n${r.error.message}` : ""}`);
   const done = { ...meta, ended_at: new Date().toISOString(), exit_code: r.status, signal: r.signal ?? null, error: r.error?.message ?? null };
   writeFileSync(join(src, "spawn.json"), JSON.stringify(done, null, 2));
-  const evidence = recordTranscript(runDir, actorId, done);
+  let evidence;
+  try {
+    evidence = recordTranscript(runDir, actorId, done);
+  } finally {
+    cleanupActorWorkdir(runDir, actorId);
+  }
   const cj = join(src, "commands.json");
   const session = existsSync(cj) ? JSON.parse(readFileSync(cj, "utf8")) : null;
   return { ...done, evidence, session: session && { total: session.total, outside_interface: session.outside_interface.length, denied: session.denied, cost_usd: session.cost_usd } };

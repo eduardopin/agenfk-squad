@@ -533,3 +533,27 @@ test("browser allow adds only explicit origins, with the same error as start", a
   assert.throws(() => addOrigins(mixed, ["https://ok.example.com", "nope"]));
   assert.equal(mixed.size, 0, "one bad URL refuses the whole call");
 });
+
+test("an ended actor leaves no workdir and no driver token behind", async () => {
+  const { actorWorkdir, cleanupActorWorkdir } = await import("../../skills/journey-qa/scripts/lib/packet.mjs");
+  const run = join(tmp(), "run");
+  const wd = actorWorkdir(run, "ana");
+  mkdirSync(wd, { recursive: true });
+  writeFileSync(join(wd, ".driver.json"), JSON.stringify({ port: 1, token: "secret" }));
+  writeFileSync(join(wd, "PACKET.md"), "x");
+  const other = actorWorkdir(run, "bruno");
+  mkdirSync(other, { recursive: true });
+  cleanupActorWorkdir(run, "ana");
+  assert.equal(existsSync(wd), false);
+  assert.equal(existsSync(other), true, "another actor's folder is untouched");
+  cleanupActorWorkdir(run, "ana"); // already gone: no error
+  cleanupActorWorkdir(run, "bruno");
+});
+
+test("actor spawn and actor wait call the cleanup after recording the transcript", () => {
+  // Spawning a host is out of scope here, so pin the wiring in the source: each path cleans up in a finally.
+  const packet = readFileSync(join(S, "lib", "packet.mjs"), "utf8");
+  const cli = readFileSync(JQA, "utf8");
+  assert.match(packet, /recordTranscript\(runDir, actorId, done\);\s*\} finally \{\s*cleanupActorWorkdir\(runDir, actorId\)/);
+  assert.match(cli, /recordTranscript\(runDir, id, done\); \} finally \{ cleanupActorWorkdir\(runDir, id\)/);
+});

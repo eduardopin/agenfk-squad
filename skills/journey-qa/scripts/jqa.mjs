@@ -10,7 +10,7 @@ import { RUN_DOCUMENTS, SKILL_ROOT, loadTemplate, validateDocument } from "./lib
 import { VALIDATION_LIMIT, checkCapabilities, syncReport, validateReport } from "./lib/report.mjs";
 import { appendEvidence, appendTrace, readLedger, verifyLedger } from "./lib/ledger.mjs";
 import { renderReport } from "./lib/render.mjs";
-import { assertActorId, buildPacket, loadObserverDocs, recordOutcome, recordTranscript, spawnActor } from "./lib/packet.mjs";
+import { assertActorId, buildPacket, cleanupActorWorkdir, loadObserverDocs, recordOutcome, recordTranscript, spawnActor } from "./lib/packet.mjs";
 
 export const VERSION = readFileSync(join(SKILL_ROOT, "VERSION"), "utf8").trim();
 const BOOL = new Set(["dry-run", "chromium", "unsandboxed", 
@@ -271,7 +271,8 @@ async function cmdActor({ pos, flags }) {
     const exit = existsSync(exitFile) ? readJson(exitFile) : { exit_code: null, error: "process ended without recording an exit" };
     const done = { ...meta, ...exit, ended_at: exit.ended_at ?? new Date().toISOString(), recorded: true };
     writeFileSync(spawnFile, JSON.stringify(done, null, 2));
-    const ev = recordTranscript(runDir, id, done);
+    let ev;
+    try { ev = recordTranscript(runDir, id, done); } finally { cleanupActorWorkdir(runDir, id); }
     out(flags, { finished: true, exit_code: done.exit_code, evidence: ev }, `actor ${id} finished (exit ${done.exit_code ?? "unknown"}) · transcript ${ev ?? "missing"}`);
     await revokeActorToken(runDir, id);
     return done.exit_code === 0 ? 0 : 1;

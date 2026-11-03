@@ -1,0 +1,378 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:journey-qa:product-profile:1",
+  "title": "Journey QA product-profile",
+  "type": "object",
+  "properties": {
+    "profile_version": {
+      "const": "1.0"
+    },
+    "product_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "promise": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_snapshot": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reference_kind": {
+            "type": "string",
+            "enum": [
+              "commit",
+              "file_hash",
+              "tree_hash",
+              "document",
+              "url",
+              "unknown"
+            ]
+          },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "locator",
+          "reference_kind",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tenant_scope": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "role_id",
+          "description",
+          "tenant_scope"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "surface_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "web",
+              "native_mobile",
+              "desktop",
+              "cli",
+              "api",
+              "notification",
+              "other"
+            ]
+          },
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "surface_id",
+          "type",
+          "base_url",
+          "environment",
+          "required_capabilities"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "capability_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "stub",
+              "implemented",
+              "ci_observed",
+              "runtime_verified",
+              "unknown"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "capability_id",
+          "state",
+          "evidence_refs"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "business_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "inferred",
+              "unknown",
+              "conflicting"
+            ]
+          },
+          "expected_effect": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "rule_id",
+          "description",
+          "source",
+          "scope",
+          "confidence",
+          "expected_effect"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "value_outcomes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "journey_intents": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "authorization": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowed_environments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "allowed_origins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "allowed_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "allowed_recipients": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "account_aliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "max_real_spend_minor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "external_effects": {
+          "type": "string",
+          "enum": [
+            "not_configured",
+            "scoped"
+          ]
+        }
+      },
+      "required": [
+        "reference",
+        "allowed_environments",
+        "allowed_origins",
+        "allowed_actions",
+        "allowed_recipients",
+        "account_aliases",
+        "max_real_spend_minor",
+        "currency",
+        "external_effects"
+      ],
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_actions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "max_actions",
+        "max_minutes",
+        "max_retries"
+      ],
+      "additionalProperties": false
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "profile_version",
+    "product_id",
+    "label",
+    "promise",
+    "source_snapshot",
+    "roles",
+    "surfaces",
+    "capabilities",
+    "business_rules",
+    "value_outcomes",
+    "journey_intents",
+    "authorization",
+    "budget",
+    "unknowns",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

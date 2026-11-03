@@ -203,6 +203,7 @@ Then open a project that has an AgenFK board and ask for something:
 | `pr-evidence` | Repository-template answers and current-head independent reviews/checks/threads; offline, no auto-post or merge |
 | `ci-plan-evidence` | Complete current CI JSON plans, expected environments/checks and exact loss approval; no Terraform/cloud execution |
 | `parallel-plan` | Iterative dependency waves with inherited parent constraints, blocked prerequisites and conservative file collisions; forecast only |
+| `architect` | Plans a new app, stack or multi-front feature before it is built: contracts, a resource-to-PR table and optimistic/likely/conservative duration ranges computed from a task DAG (`scripts/plan.py`, `delivery_map.py`, `handoff.py`). It does not order dispatch: `parallel-plan` does that from the cards, and a `delivery_map.py` schedule is not a dispatch order |
 | `engineering-evidence` | On-demand diagnosis, contract, source-to-sink security and bounded-cost telemetry checklists |
 | `session-context` | Context indicators for Claude Code, Codex, pi and oh-my-pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |
 | `clear-pickup` | Writes a handoff file from ground truth (git state plus session state) before a context clear, and reloads it afterwards |
@@ -214,8 +215,10 @@ Then open a project that has an AgenFK board and ask for something:
 
 Evidence-tool adoption decisions, exclusions and limits:
 [docs/bundle-adoption.md](docs/bundle-adoption.md). These are new generic
-implementations, not a copy of private tooling or its history. Scripts use only
-Python's standard library and write stdout; each supports `--help`. The existing
+implementations, not a copy of private tooling or its history, except
+`architect`, which is a port of the owner's own skill; its origin and what the
+port changed are in [skills/architect/PROVENANCE.md](skills/architect/PROVENANCE.md).
+Scripts use only Python's standard library and write stdout; each supports `--help`. The existing
 installer discovers the new skill directories without a settings change.
 
 ```sh

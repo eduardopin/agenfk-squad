@@ -208,10 +208,16 @@ class PlannerBehavior(unittest.TestCase):
 
 
     def test_unsafe_unicode_is_a_validation_error_not_a_crash(self):
-        for character in ["\ud800", "\u0085", "\u2028", "\u2029"]:
+        for character in ["\ud800", "\u0085", "\u2028", "\u2029", "\u202e", "\u200b", "\u2066", "\u2060"]:
             result = build_plan(plan(task("A"), project="Planner" + character))
             self.assertFalse(result["valid"], repr(character))
             self.assertTrue(result["errors"], repr(character))
+
+    def test_joiners_stay_valid_in_titles(self):
+        # ZWJ and ZWNJ are needed by real scripts and emoji; only bidi and invisible separators are refused.
+        for character in ["\u200d", "\u200c"]:
+            result = build_plan(plan(task("A", title="Family" + character + "plan")))
+            self.assertTrue(result["valid"], repr(character))
 
     def test_text_output_keeps_exact_minutes(self):
         self.assertIn("0-1234567 min", render_text(build_plan(plan(task("A", estimate_minutes=1234567)))))

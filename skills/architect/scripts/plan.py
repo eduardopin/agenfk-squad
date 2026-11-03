@@ -60,14 +60,26 @@ def empty_result():
 
 
 # Control (C0/C1), lone surrogates, and line/paragraph separators break printing and table rows.
+# Bidirectional overrides and invisible separators can reorder or hide text in reports.
+# ZWJ (U+200D) and ZWNJ (U+200C) stay allowed: real scripts and emoji need them.
 UNSAFE_CATEGORIES = {"Cc", "Cs", "Zl", "Zp"}
+UNSAFE_BIDI = {"LRE", "RLE", "PDF", "LRO", "RLO", "LRI", "RLI", "FSI", "PDI"}
+UNSAFE_CODEPOINTS = {0x061C, 0x200B, 0x200E, 0x200F, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064}
+
+
+def unsafe_char(char):
+    return (
+        unicodedata.category(char) in UNSAFE_CATEGORIES
+        or unicodedata.bidirectional(char) in UNSAFE_BIDI
+        or ord(char) in UNSAFE_CODEPOINTS
+    )
 
 
 def is_text(value):
     return (
         isinstance(value, str)
         and bool(value.strip())
-        and not any(unicodedata.category(char) in UNSAFE_CATEGORIES for char in value)
+        and not any(unsafe_char(char) for char in value)
     )
 
 

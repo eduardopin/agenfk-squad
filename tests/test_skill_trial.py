@@ -270,6 +270,20 @@ class TrialRunTests(Tmp):
         self.assertIn('RUN=0', probe)
         self.assertIn('MNT=0', probe)
 
+    def test_a_scenario_env_value_with_spaces_reaches_claude_intact(self):
+        fake = self.tmp / 'bin'
+        fake.mkdir()
+        (fake / 'claude').write_text('#!/usr/bin/env bash\nenv > env.txt\n')
+        (fake / 'claude').chmod(0o755)
+        scen = self.tmp / 'scen'
+        shutil.copytree(SCENARIO, scen)
+        (scen / 'env').write_text('GREETING=hello big  world\nnot a variable line\n')
+        out = self.tmp / 'out'
+        env = {**os.environ, 'SKILL_TRIAL_CLAUDE': str(fake / 'claude')}
+        run(['bash', TRIAL, '--scenario', scen, '--n', '1', '--out', out], env=env)
+        seen = (out / 'trial-1' / 'repo' / 'env.txt').read_text().splitlines()
+        self.assertIn('GREETING=hello big  world', seen)
+
     def test_oauth_file_is_masked_only_for_a_scenario_with_its_own_key(self):
         home = self.tmp / 'home'
         (home / '.claude').mkdir(parents=True)

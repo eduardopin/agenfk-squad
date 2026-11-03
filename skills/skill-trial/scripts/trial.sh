@@ -108,6 +108,7 @@ one() {
   "$SCEN/setup.sh" "$T" > "$T/setup.log" 2>&1 || { echo "setup failed" > "$T/check.out"; echo 3 > "$T/check.rc"; return; }
   : > "$T/gh.log"
   if [ "$DRY" = 0 ]; then
+    local EXTRA=(); [ -f "$SCEN/env" ] && mapfile -t EXTRA < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$SCEN/env")
     local cfg; cfg="$(mktemp)"; local JAIL=(); mapfile -d "" JAIL < <(jail "$T" "$cfg")
     # env -i: the calling session's environment can carry the settings.json "env"
     # block, and a variable there that switches the hook under test off turns
@@ -116,7 +117,7 @@ one() {
     ( cd "$T/repo" && env -i HOME="$HOME" USER="${USER:-}" LANG="${LANG:-C.UTF-8}" TERM=dumb \
         ${NODE_EXTRA_CA_CERTS:+NODE_EXTRA_CA_CERTS="$NODE_EXTRA_CA_CERTS"} \
         ${SSL_CERT_FILE:+SSL_CERT_FILE="$SSL_CERT_FILE"} \
-        $( [ -f "$SCEN/env" ] && grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$SCEN/env" ) \
+        ${EXTRA[@]+"${EXTRA[@]}"} \
         AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null GH_CONFIG_DIR="$OUT/ghcfg" \
         GIT_CONFIG_GLOBAL=/dev/null GIT_SSH_COMMAND=false GIT_TERMINAL_PROMPT=0 \
         GH_STUB_LOG="$T/gh.log" GH_STUB_RESPONSES="$SCEN/gh.json" \

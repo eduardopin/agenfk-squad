@@ -22,7 +22,7 @@ A scenario anyone can run to prove the harness works: `bwrap`, login, the stub
   still written to `gh.log`.
 - `check.sh <trial dir>` reads the evidence and exits with the verdict.
 - Optional `env` holds `NAME=value` lines the trial gets in its environment.
-  Values must contain no spaces: `trial.sh` expands them unquoted.
+  One variable per line; a value may contain spaces.
 
 ## How the verdict is decided
 

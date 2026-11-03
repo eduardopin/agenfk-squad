@@ -3,6 +3,7 @@
 // action budgets, and writes every observation to the evidence ledger + trace.
 // Started by `jqa browser start`; talks HTTP on 127.0.0.1 with a bearer token.
 import { stageUploads } from "./upload.mjs";
+import { assertRole } from "./guard.mjs";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -27,7 +28,6 @@ const INTERACTIONS = new Set([
   "back", "forward", "reload", "dialog", "keydown", "keyup", "hold", "tab", "close-tab", "drag",
 ]);
 const PRIVILEGED = new Set(["eval", "console", "network", "storage", "cookies"]);
-const COORDINATOR = new Set(["actor-add", "actor-save", "budget", "stop", "handshake", "allow"]);
 
 const state = {
   pw: null, browser: null, mode: cfg.cdp ? "driver_cdp" : "driver_launch", browserName: null, browserVersion: null,
@@ -645,6 +645,7 @@ async function dispatch(body) {
   if (PRIVILEGED.has(cmd) && !["observer", "coordinator"].includes(as)) {
     throw err("privileged", `\`${cmd}\` is an observer command. In a human_ui journey the actor uses only the interface. Use --as observer in the observer's context.`);
   }
+  assertRole(cmd, flags.as);
   if (cmd === "status") return status();
   if (cmd === "stop") {
     setTimeout(shutdown, 50);

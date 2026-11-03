@@ -507,3 +507,14 @@ test("upload staging: the browser receives a private copy with the same bytes", 
     assert.equal(statSync(join(copy, "..")).mode & 0o777, 0o700);
   }
 });
+
+test("coordination commands are refused when sent as an actor, allowed for the coordinator or the CLI", async () => {
+  const { assertRole, COORDINATOR } = await import("../../skills/journey-qa/scripts/lib/driver/guard.mjs");
+  for (const cmd of ["actor-add", "actor-save", "budget", "allow", "handshake"]) {
+    assert.ok(COORDINATOR.has(cmd), cmd);
+    assert.throws(() => assertRole(cmd, "actor"), (e) => e.code === "privileged", cmd);
+    assert.doesNotThrow(() => assertRole(cmd, "coordinator"), cmd);
+    assert.doesNotThrow(() => assertRole(cmd, undefined), `${cmd} from the CLI carries no --as`);
+  }
+  assert.doesNotThrow(() => assertRole("click", "actor"), "interface commands are the actor's");
+});

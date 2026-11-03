@@ -45,7 +45,7 @@ It links, into `${CLAUDE_CONFIG_DIR:-~/.claude}`:
 | `agents/<name>.md` | each file in `agents/` |
 | `skills/<name>` | each skill directory that has a `SKILL.md`, including those in `skills/vendor/` |
 | `CLAUDE.md` | `CLAUDE.md` |
-| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py` | the four files in `hooks/` |
+| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py` | the files in `hooks/` |
 
 and, so that the merge queue can be called by name:
 
@@ -54,6 +54,17 @@ and, so that the merge queue can be called by name:
 | `~/.local/bin/squad-turn` | `hooks/squad-turn.py` |
 
 Make sure `~/.local/bin` is on your `PATH`.
+
+On Linux, when the systemd user manager runs with your `HOME`, it also writes
+`~/.config/systemd/user/squad-wake.service` and `squad-wake.timer` and enables
+the timer (a unit already there is rewritten only if this installer wrote it,
+marked on its first line; otherwise `SKIPPED`): `squad-wake.py` scans the herdr panes every 2 minutes and wakes a
+session that stopped without delivering (see
+[Waking a stopped session](watcher.md#waking-a-stopped-session)). The service
+reads `~/.claude/squad/wake.env`, if present, for `SQUAD_WAKE=0` and the
+thresholds. Elsewhere (macOS, a container, no user manager) the installer
+prints `SKIPPED squad-wake.timer` with the command to run every 2 minutes from
+cron or launchd, and does not fail. Windows is not covered yet.
 
 ### What it will not do
 
@@ -154,7 +165,7 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 | `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `PreCompact` |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
-them when needed.
+them when needed. `squad-wake.py` is not a hook either: the timer runs it.
 
 `PreCompact` has no matcher, so it covers both a manual `/compact` and an
 auto-compact. Its timeout is longer because it runs three `git` commands
@@ -332,6 +343,10 @@ directory if you want it gone.
   switch does not run. The watcher still orders the handoff and writes it;
   you type `/clear` and then `/clear-pickup pickup`. Everything else in the
   watcher is the same.
+- **No squad-wake.** `hooks/squad-wake.py` calls back idle sessions through
+  herdr panes, so it does not run on Windows either: `install.ps1` does not
+  install it and no timer is set up. A session that stops without
+  delivering waits until you look at it.
 - **No chmod.** The squad's state under `%USERPROFILE%\.claude\squad` is
   protected by your profile's folder permissions (ACLs), not by mode bits:
   the `0600` and `0700` the Linux hooks set are not applied, and the
@@ -370,7 +385,9 @@ directory if you want it gone.
   (`skills/board-heartbeat`), the heavy review (`hooks/squad-review.py`), the
   merge seal (`hooks/squad-seal.py`, `git config squad.seal`), and the
   scripts of the cloud-resource pricing guard, the design bridge, the
-  pull-request skill and the writing skill. Their tests say so and exit 0 on Windows. Leave the
+  pull-request skill and the writing skill, and the Chrome export of the
+  presentation skill (its deck checks do run there, under Git Bash). Their
+  tests say so and exit 0 on Windows. Leave the
   seal off there.
 - **Paths in a Bash command.** The merge turn follows `cd C:/work/repo` and
   `cd /c/work/repo`, the forms Git Bash takes. A backslash path
@@ -392,6 +409,7 @@ in WSL, or the reverse, does not work: install it where Claude Code runs.
 ```bash
 export SQUAD_WATCH=0     # the whole watcher
 export SQUAD_SWITCH=0    # only the automatic session switch
+# squad-wake runs from the timer, outside your shell: put SQUAD_WAKE=0 in ~/.claude/squad/wake.env
 export SQUAD_TURN=0      # only the merge queue
 ```
 

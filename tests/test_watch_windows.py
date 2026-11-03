@@ -213,6 +213,24 @@ def test_a_reused_copy_is_handed_back_like_a_new_one():
         assert isinstance(first, tuple) and first == second, (first, second)
 
 
+def test_the_pickup_is_recorded_where_os_has_no_o_nofollow():
+    # Windows has no os.O_NOFOLLOW: a raw os.O_NOFOLLOW raises AttributeError (not OSError) and the
+    # switch dies before the pickup. Simulated on any system by taking the flag away.
+    with tempfile.TemporaryDirectory() as tmp:
+        sws = load_switch(os.path.join(tmp, "copies"))
+        sws.CLAIMS = os.path.join(tmp, "switches")
+        sws.NOFOLLOW = 0
+        saved = os.__dict__.pop("O_NOFOLLOW", None)
+        try:
+            ok = sws.pending("abcdef12-0003", os.path.join(tmp, "copies", "abcdef12-0003-0123456789ab.md"))
+        finally:
+            if saved is not None:
+                os.O_NOFOLLOW = saved
+        assert ok is True, ok
+        with open(os.path.join(tmp, "switches", "abcdef12-0003.pickup"), encoding="utf-8") as fh:
+            assert fh.read() == os.path.join(tmp, "copies", "abcdef12-0003-0123456789ab.md")
+
+
 def test_a_result_after_a_windows_handoff_write_is_news():
     # the transcript holds the path JSON-escaped; the raw path never matches it byte for byte
     with tempfile.TemporaryDirectory() as tmp:

@@ -273,12 +273,15 @@ const winQuote = (a) => (/^[A-Za-z0-9_./:=@-]+$/.test(a) ? a : `"${a.replace(/"/
 const POSIX = typeof process.getuid === "function";
 const WORKDIR_ROOT = "journey-qa-actors";
 
-/** A base for the actors' root: a directory (symlinks to it allowed) owned by this user that no one else can write. */
-function isPrivateBase(dir) {
-  if (!dir || !isAbsolute(dir)) return false;
-  let st;
-  try { st = statSync(realpathSync(dir)); } catch { return false; }
-  return st.isDirectory() && (!POSIX || (st.uid === process.getuid() && (st.mode & 0o022) === 0));
+/**
+ * A base for the actors' root: a directory owned by this user that no one else can write. Returns its real path, so
+ * a symlink on the way to it is resolved once, when checked, and cannot be pointed elsewhere afterwards; else null.
+ */
+function privateBase(dir) {
+  if (!dir || !isAbsolute(dir)) return null;
+  let real, st;
+  try { real = realpathSync(dir); st = statSync(real); } catch { return null; }
+  return st.isDirectory() && (!POSIX || (st.uid === process.getuid() && (st.mode & 0o022) === 0)) ? real : null;
 }
 
 /**
@@ -288,7 +291,10 @@ function isPrivateBase(dir) {
  * The path is derived, not random, because `actor wait` and the driver find the folder again from the run and actor.
  */
 export function actorRoot({ env = process.env } = {}) {
-  for (const base of [env.XDG_RUNTIME_DIR, tmpdir()]) if (isPrivateBase(base)) return join(base, WORKDIR_ROOT);
+  for (const base of [env.XDG_RUNTIME_DIR, tmpdir()]) {
+    const real = privateBase(base);
+    if (real) return join(real, WORKDIR_ROOT);
+  }
   const cache = env.XDG_CACHE_HOME && isAbsolute(env.XDG_CACHE_HOME) ? env.XDG_CACHE_HOME : join(homedir(), ".cache");
   return join(cache, WORKDIR_ROOT);
 }
@@ -322,7 +328,7 @@ export function prepareActorWorkdir(runDir, actorId, { env = process.env } = {})
   const root = actorRoot({ env });
   const base = dirname(root);
   mkdirSync(base, { recursive: true, mode: 0o700 });
-  if (!isPrivateBase(base)) throw unsafeWorkdir(base, "it is not a directory of this user that only this user can write");
+  if (!privateBase(base)) throw unsafeWorkdir(base, "it is not a directory of this user that only this user can write");
   let dir = base;
   for (const part of [WORKDIR_ROOT, runKey(runDir), actorId]) {
     dir = join(dir, part);

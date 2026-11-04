@@ -229,7 +229,7 @@ def check_hooks(config, manifest=ss.MANIFEST):
                 continue
             seen.add((script, event))
             mine = [g for g in groups if ss.runs(g, script, config)]
-            if any(g.get("matcher") == matcher for g in mine):
+            if any(ss.same_matcher(g.get("matcher"), matcher) for g in mine):
                 items.append(item(f"{script} on {event}", OK, "registered"))
             elif any(not isinstance(g.get("matcher"), (str, type(None))) for g in mine):
                 bad = ", ".join(json.dumps(g.get("matcher")) for g in mine

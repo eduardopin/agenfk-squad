@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "catalog_version": "1.0.0",
+  "maturity": "reference_profiles_only",
+  "notes": [
+    "Profiles for selection, with no executable infra included.",
+    "Choose by context, reuse existing modules/pipelines and validate the implemented version."
+  ],
+  "paths": [
+    {
+      "id": "GP-API",
+      "name": "Containerized API",
+      "fit": [
+        "custom runtime",
+        "long-running service",
+        "team that operates containers"
+      ],
+      "baseline": "modular monolith when suitable",
+      "optional_aws_mapping": [
+        "ECS Fargate",
+        "ALB as needed",
+        "RDS per requirements"
+      ],
+      "contracts": [
+        "HTTP",
+        "runtime",
+        "data",
+        "identity"
+      ],
+      "cautions": [
+        "fixed cost and network",
+        "database connections",
+        "observability",
+        "migration"
+      ]
+    },
+    {
+      "id": "GP-SERVERLESS",
+      "name": "Serverless API and events",
+      "fit": [
+        "variable load",
+        "execution compatible with the runtime limits"
+      ],
+      "optional_aws_mapping": [
+        "Lambda",
+        "API Gateway",
+        "SQS as the flow requires"
+      ],
+      "contracts": [
+        "HTTP/event",
+        "execution",
+        "data",
+        "identity"
+      ],
+      "cautions": [
+        "limits and cold start",
+        "concurrency",
+        "idempotency",
+        "cost per execution"
+      ]
+    },
+    {
+      "id": "GP-WORKER",
+      "name": "Asynchronous worker",
+      "fit": [
+        "long jobs",
+        "peaks smoothed by queues",
+        "controlled retries"
+      ],
+      "optional_aws_mapping": [
+        "ECS Fargate or a suitable runtime",
+        "SQS",
+        "S3 as the data requires"
+      ],
+      "contracts": [
+        "event",
+        "runtime",
+        "data",
+        "identity"
+      ],
+      "cautions": [
+        "backpressure",
+        "DLQ and replay",
+        "idempotency",
+        "cancellation"
+      ]
+    },
+    {
+      "id": "GP-AI",
+      "name": "Evaluated AI feature",
+      "fit": [
+        "AI value demonstrated in the user flow"
+      ],
+      "baseline": "simple workflow before autonomy",
+      "contracts": [
+        "model profile",
+        "tool permissions",
+        "evals",
+        "data and provenance",
+        "runtime"
+      ],
+      "cautions": [
+        "real quality",
+        "data isolation",
+        "cost and latency",
+        "tool limits",
+        "resume and fallback"
+      ]
+    }
+  ]
+}
+

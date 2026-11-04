@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:journey-qa:actor-card:1",
+  "title": "Journey QA actor-card",
+  "type": "object",
+  "properties": {
+    "actor_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1
+    },
+    "background": {
+      "type": "string"
+    },
+    "prior_knowledge": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "preferences": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "time_budget_minutes": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "stop_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "return_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "session_alias": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowed_origins": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "allowed_actions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "actor_id",
+    "name",
+    "role",
+    "goal",
+    "background",
+    "prior_knowledge",
+    "constraints",
+    "preferences",
+    "locale",
+    "time_budget_minutes",
+    "stop_conditions",
+    "return_conditions",
+    "session_alias",
+    "allowed_origins",
+    "allowed_actions"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "journey-qa-scripts",
+  "private": true,
+  "type": "module",
+  "description": "jqa CLI. No required dependencies; for the browser run `jqa setup` (playwright-core in the per-user runtime) or install playwright-core here."
+}

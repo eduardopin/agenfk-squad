@@ -191,7 +191,7 @@ It reads and never writes, not even a `__pycache__`. It checks, in this order:
 | `python` | this interpreter is older than 3.10 | |
 | `agenfk` | | `agenfk` is not on PATH, or `agenfk health` does not answer or prints a `FAILED` / "potential issue" line (server down: it still exits 0) |
 | `links` | an agent, skill, `CLAUDE.md` or manifest hook is missing from `${CLAUDE_CONFIG_DIR:-~/.claude}`, is a real file, or links somewhere other than this clone | a copy `install.ps1` marked as its own no longer matches the clone |
-| `hooks` | a hook from `hooks/manifest.json` is not registered in `settings.json` for one of its events, is registered with a matcher that is not a string, or `settings.json` cannot be read (not JSON, a dangling link, a symlink loop) | it is registered under another matcher than the manifest's |
+| `hooks` | a hook from `hooks/manifest.json` is not registered in `settings.json` for one of its events, is registered with a matcher that is not a string, or `settings.json` cannot be read (not JSON, a dangling link, a symlink loop) | it is registered under another matcher than the manifest's (no matcher, `""` and `"*"` count as the same one) |
 | `squad-turn` | the merge-queue command is not on PATH, or `~/.local/bin/squad-turn` is a dangling link | it runs a `squad-turn.py` from another clone |
 | `herdr` | | herdr is not on PATH (the owner switches the session after a handoff) |
 | `project` | | there is no `.agenfk/project.json` from here up (pass `--project DIR` to look elsewhere), or it has no `projectId` |
@@ -362,7 +362,10 @@ you installed by hand: `git pull`, then `install.ps1` again, as in the previous 
 ```
 
 `-Uninstall` removes the squad's entries from `settings.json` (and nobody
-else's), the links into the clone, the `squad-turn.cmd` shim, and the marked
+else's: the one exception is an empty list on an event the hook manifest
+names, which an older install could leave behind; it goes only when uninstall
+removed a squad entry from the file, and an empty list on any other event
+stays), the links into the clone, the `squad-turn.cmd` shim, and the marked
 copies that you did not edit (an edited copy is kept, with a warning); the
 clone stays. `-Purge` deletes the clone too, unless it has local changes: then
 it refuses and you delete it by hand. By hand:
@@ -419,7 +422,8 @@ directory if you want it gone.
   (`skills/board-heartbeat`), the heavy review (`hooks/squad-review.py`), the
   merge seal (`hooks/squad-seal.py`, `git config squad.seal`), and the
   scripts of the cloud-resource pricing guard, the design bridge, the
-  pull-request skill and the writing skill. Their
+  pull-request skill and the writing skill, and the blind trials of
+  `skills/skill-trial` (they need bubblewrap). Their
   tests say so and exit 0 on Windows. Leave the
   seal off there.
 - **Not yet verified on Windows, tests running:** the Chrome export of the

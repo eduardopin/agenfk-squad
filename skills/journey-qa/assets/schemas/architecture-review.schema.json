@@ -1,0 +1,646 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:journey-qa:architecture-review:1",
+  "title": "Journey QA architecture-review",
+  "type": "object",
+  "properties": {
+    "review_version": {
+      "const": "1.0"
+    },
+    "review_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "shared",
+        "in_discussion",
+        "closed"
+      ]
+    },
+    "reviewed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reviewer": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "architect": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "channel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "channel"
+      ],
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "adr",
+              "rfc",
+              "proposal",
+              "design_doc",
+              "diagram",
+              "iac",
+              "code",
+              "runbook",
+              "slo",
+              "other"
+            ]
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1
+          },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "accepted",
+              "deprecated",
+              "superseded",
+              "rejected",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "source_id",
+          "kind",
+          "locator",
+          "revision",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "problem": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "non_goals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "problem",
+        "scope",
+        "non_goals"
+      ],
+      "additionalProperties": false
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "source_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "alternatives_considered": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "reversibility": {
+            "type": "string",
+            "enum": [
+              "one_way",
+              "two_way",
+              "unknown"
+            ]
+          },
+          "consequences_stated": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "decision_id",
+          "source_id",
+          "statement",
+          "alternatives_considered",
+          "reversibility",
+          "consequences_stated"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "quality_attributes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "attribute": {
+            "type": "string",
+            "enum": [
+              "availability",
+              "latency",
+              "throughput",
+              "scalability",
+              "security",
+              "privacy",
+              "cost",
+              "operability",
+              "observability",
+              "recoverability",
+              "consistency",
+              "compliance",
+              "maintainability",
+              "testability",
+              "portability",
+              "usability",
+              "other"
+            ]
+          },
+          "scenario": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stated_by_source": {
+            "type": "boolean"
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "attribute",
+          "scenario",
+          "target",
+          "stated_by_source",
+          "source_ref"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "assumption_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validated": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no",
+              "unknown"
+            ]
+          },
+          "risk_if_false": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "assumption_id",
+          "statement",
+          "source_ref",
+          "validated",
+          "risk_if_false"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "risk",
+              "gap",
+              "contradiction",
+              "question",
+              "testability_requirement",
+              "recommendation"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "quality_attribute": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "availability",
+              "latency",
+              "throughput",
+              "scalability",
+              "security",
+              "privacy",
+              "cost",
+              "operability",
+              "observability",
+              "recoverability",
+              "consistency",
+              "compliance",
+              "maintainability",
+              "testability",
+              "portability",
+              "usability",
+              "other",
+              null
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "info"
+            ]
+          },
+          "likelihood": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              "unknown"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "answered",
+              "accepted",
+              "mitigated",
+              "rejected",
+              "wont_fix"
+            ]
+          },
+          "owner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "question_for_architect": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proposed_verification": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "verification_id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "fitness_function",
+                    "journey",
+                    "infra_check",
+                    "load_test",
+                    "chaos_experiment",
+                    "security_test",
+                    "contract_test",
+                    "monitoring_slo",
+                    "review"
+                  ]
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "automatable": {
+                  "type": "boolean"
+                },
+                "linked_rule_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "verification_id",
+                "kind",
+                "description",
+                "automatable",
+                "linked_rule_id"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "item_id",
+          "kind",
+          "title",
+          "description",
+          "refs",
+          "quality_attribute",
+          "severity",
+          "likelihood",
+          "status",
+          "owner",
+          "question_for_architect",
+          "answer",
+          "proposed_verification"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "traceability": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "rule_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "journey_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "verification_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "decision_id",
+          "rule_ids",
+          "journey_ids",
+          "verification_ids"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "conformance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "conforms",
+              "drift",
+              "not_verified",
+              "not_applicable"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "decision_id",
+          "status",
+          "evidence_refs",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "proceed",
+            "proceed_with_conditions",
+            "revise",
+            "block",
+            "not_assessed"
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "top_risks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "verdict",
+        "rationale",
+        "top_risks",
+        "conditions"
+      ],
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "review_version",
+    "review_id",
+    "title",
+    "status",
+    "reviewed_at",
+    "reviewer",
+    "architect",
+    "sources",
+    "context",
+    "decisions",
+    "quality_attributes",
+    "assumptions",
+    "items",
+    "traceability",
+    "conformance",
+    "summary",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

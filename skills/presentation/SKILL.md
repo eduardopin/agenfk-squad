@@ -237,6 +237,7 @@ Adapted from a private slide-deck skill: the protocol, the writing rules, the
 chips and the render-mode lessons came from there. Rewritten for the squad
 without that company's brand and assets, with neutral tokens aligned with
 `design-reference`, a Linux export and the measurement and page-count gates in
-the script. Outlines, layouts, copy formulas and the chart pattern came from
-the claudekit `slides` skill (MIT), which this one replaces. The sideways
+the script. The idea of outlines, layouts, copy formulas and a chart pattern
+came from the claudekit `slides` skill, which this one replaces; it is restated
+in own words, nothing is copied and no licence is claimed. The sideways
 navigation with two rails and the `--ds-*` sweep contract belong to the squad.

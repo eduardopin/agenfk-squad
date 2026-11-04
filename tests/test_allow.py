@@ -75,7 +75,7 @@ def rel(base, r):
 def test_a_new_inert_file_in_the_project_is_allowed():
     h = tmp()
     p = project(h)
-    for r in ("docs/notes.md", "notes.txt", "a/b/data.csv", "d.tsv", "x.log", "i.png", "i.jpg", "i.jpeg", "i.svg",
+    for r in ("docs/notes.md", "notes.txt", "a/b/data.csv", "d.tsv", "x.log", "i.png", "i.jpg", "i.jpeg",
               "r.pdf", "UPPER.MD"):
         assert allowed(ask(h, "Write", rel(p, r))), r
 
@@ -91,7 +91,7 @@ def test_a_relative_path_is_read_against_the_session_cwd():
 def test_only_inert_extensions_are_allowed_as_new_files():
     h = tmp()
     p = project(h)
-    for r in ("a.py", "a.js", "a.ts", "a.tf", "a.tfvars", "a.sh", "a.yml", "a.yaml", "a.json", "a.toml", "a.html",
+    for r in ("a.py", "a.js", "a.ts", "a.tf", "a.tfvars", "a.sh", "a.yml", "a.yaml", "a.json", "a.toml", "a.html", "a.svg",
               "a.ps1", "a.bat", "a.cmd", "a", "sitecustomize.py", "tests/__init__.py", "noxfile.py", "jest.config.js",
               "Rakefile", "Jenkinsfile", "build.ps1", "run.bat", "pom.xml", "docker-compose.yml", "override.tf",
               "x.auto.tfvars", "Makefile", "Dockerfile", "package.json", "conftest.py", "x.pth", "a.conf"):
@@ -104,7 +104,8 @@ def test_components_that_run_or_hide_things_are_not_allowed():
     for r in ("node_modules/a.md", "vendor/a.md", ".terraform/a.md", "bin/a.md", "sbin/a.md", "hooks/a.md",
               "githooks/a.md", ".githooks/a.md", ".github/a.md", ".vscode/a.md", "src/.hidden/a.md", ".a.md",
               ".claude/notes.md", "CLAUDE.md", "claude.local.md", "CLAUDE.override.md", "AGENTS.md",
-              "agents.local.md", "sub/Claude.md"):
+              "agents.local.md", "sub/Claude.md", "GEMINI.md", "gemini.local.md", "Copilot-instructions.md",
+              "skills/a/SKILL.md", "CONVENTIONS.md"):
         assert ask(h, "Write", rel(p, r)) == "", r
 
 
@@ -292,6 +293,31 @@ def test_the_squad_source_tree_is_never_allowed():
     for r in ("hooks/new.md", "agents/new.md", "skills/new/x.md", "scripts/new.md", "docs/architect/new.md", "notes.md"):
         assert ask(h, "Write", rel(ROOT, r), cwd=ROOT) == "", r
         assert ask(h, "Write", rel(ROOT, r)) == "", r
+
+
+def test_a_session_whose_root_is_or_sits_in_a_dot_folder_gets_nothing():
+    h = tmp()
+    p = project(h)
+    cfg = os.path.join(h, ".claude")
+    cases = [(cfg, "rules/x.md"), (cfg, "output-styles/x.md"), (os.path.join(cfg, "squad"), "x.log"),
+             (os.path.join(cfg, "squad"), "notes/x.md"), (os.path.join(p, ".claude"), "rules/x.md"),
+             (os.path.join(p, ".claude"), "x.md"), (os.path.join(h, ".config"), "app/x.md"),
+             (os.path.join(p, ".hidden"), "docs/architect/p.md")]
+    for cwd, r in cases:
+        os.makedirs(cwd, exist_ok=True)
+        assert ask(h, "Write", rel(cwd, r), cwd=cwd) == "", (cwd, r)
+    for r in ("rules/x.md", "projects/p/memory/x.md", "output-styles/x.md", "x.md"):
+        assert ask(h, "Write", rel(cfg, r)) == "", r
+        assert ask(h, "Write", rel(cfg, r), cwd=cfg) == "", r
+    cd = os.path.join(h, "cfgdir")
+    env = {"CLAUDE_CONFIG_DIR": cd}
+    for r in ("rules/x.md", "projects/p/memory/x.md", "x.md"):
+        assert ask(h, "Write", rel(cd, r), cwd=cd, env=env) == "", r
+        assert ask(h, "Write", rel(cd, r), env=env) == "", r
+    # the explicit handoff folders are their own rule and still answer
+    assert allowed(ask(h, "Write", rel(p, ".claude/handoffs/20261104-135716-x.md")))
+    assert allowed(ask(h, "Write", rel(cfg, "squad/handoffs/a.md")))
+    assert allowed(ask(h, "Write", rel(p, "docs/notes.md")))
 
 
 def test_other_tools_print_nothing():

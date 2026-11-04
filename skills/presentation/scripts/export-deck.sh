@@ -116,7 +116,8 @@ WINDIRS
 CHROME_BIN=$(resolve_chrome) || exit 2
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# Cleanup must never change the exit code: on Windows Chrome can still hold the profile.
+trap 'rm -rf "$WORK" 2>/dev/null || true' EXIT
 DECK_ABS="$(cd "$(dirname "$DECK")" && pwd)/$(basename "$DECK")"
 
 # Throwaway profile: never touches the user's Chrome profile.

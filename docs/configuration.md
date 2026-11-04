@@ -102,7 +102,7 @@ Read by `hooks/squad-decisions.py` (the SessionStart index and the
 |---|---|---|
 | `SQUAD_DECISIONS` | on | `0` turns the SessionStart index off; the `squad-decisions` command still works |
 | `SQUAD_DECISIONS_DIR` | `~/.claude/squad/decisions` | Root of the decision stores; each repository gets `<root>/<repo key>/`, the same key from every worktree |
-| `SQUAD_DECISIONS_BUDGET` | 4000 | Bytes the SessionStart index may print, newest first; when it cuts, a last line says how many were left out and to run `squad-decisions list`. `0` prints nothing (use `SQUAD_DECISIONS=0` to turn the index off); a value that is not a number falls back to 4000 |
+| `SQUAD_DECISIONS_BUDGET` | 4000 | Bytes the SessionStart index may print; newest first, the rest named as left out |
 
 ## The session switch
 

@@ -7,12 +7,14 @@ that answers it. It is default-deny: it prints allow in three cases only, and no
 for everything else.
 
 A. Write of a NEW file (lexists is false, so a dangling symlink is not new) with an
-   inert extension (.md .txt .csv .tsv .log .png .jpg .jpeg .svg .pdf), inside the
+   inert extension (.md .txt .csv .tsv .log .png .jpg .jpeg .pdf), inside the
    project root, which is realpath(payload cwd) and nothing wider (no git toplevel).
    Refused outright when the root is "/", $HOME or an ancestor of $HOME. No path
    component below the root may start with "." or be named node_modules, vendor,
    .terraform, bin, sbin, hooks, githooks or .githooks, and the name may not be
-   CLAUDE*.md or AGENTS*.md.
+   CLAUDE*.md, AGENTS*.md, GEMINI*.md, COPILOT*.md, SKILL.md or CONVENTIONS.md. No
+   component of the whole absolute path, root included, may start with ".", and the
+   path may not sit under a claude dir or ~/.config. B has the same full-path checks.
 B. Write (new) or Edit/MultiEdit of .md or .json under <root>/docs/architect/.
 C. Write of a NEW .md file under <root>/.claude/handoffs/ or under
    <claude dir>/squad/handoffs/ (claude dir: ~/.claude and CLAUDE_CONFIG_DIR). Never
@@ -54,7 +56,8 @@ NAMES = ("settings*.json", "claude.md", "agents.md", ".env*", "*.pem", "*.key", 
          "credentials*", ".mcp.json")
 DIRS = {"hooks", ".git", ".aws", ".ssh"}
 CLAUDE_DIRS = {"agents", "skills", "commands", "plugins"}
-INERT = {".md", ".txt", ".csv", ".tsv", ".log", ".png", ".jpg", ".jpeg", ".svg", ".pdf"}
+INERT = {".md", ".txt", ".csv", ".tsv", ".log", ".png", ".jpg", ".jpeg", ".pdf"}
+STEER = ("claude*.md", "agents*.md", "gemini*.md", "copilot*.md", "skill.md", "conventions.md")
 BAD = {"node_modules", "vendor", ".terraform", "bin", "sbin", "hooks", "githooks", ".githooks"}
 
 
@@ -119,8 +122,18 @@ def clean(path, base):
     return all(not c.startswith(".") and c.lower() not in BAD for c in parts(os.path.relpath(path, base)))
 
 
+def dotted(path):
+    return any(c.startswith(".") for c in parts(path))
+
+
+def in_config(path, homes):
+    """Under a claude dir (~/.claude, CLAUDE_CONFIG_DIR) or ~/.config, however it is spelled."""
+    p = low(path)
+    return any(under(p, low(c)) for h in homes for c in claude_dirs(h) | {os.path.join(h, ".config")})
+
+
 def steer(*names):
-    return any(fnmatch.fnmatchcase(n.lower(), pat) for n in names for pat in ("claude*.md", "agents*.md"))
+    return any(fnmatch.fnmatchcase(n.lower(), pat) for n in names for pat in STEER)
 
 
 def decide(tool, path, cwd, homes):
@@ -150,7 +163,8 @@ def decide(tool, path, cwd, homes):
             for c in claude_dirs(h):
                 if both(os.path.join(c, "squad", "handoffs"), os.path.join(os.path.realpath(c), "squad", "handoffs")):
                     return True
-    if not project:
+    # A and B: nothing in the whole path may be a dot folder, and no config folder of the user's
+    if not project or dotted(literal) or dotted(real) or in_config(literal, homes) or in_config(real, homes):
         return False
     if ext[0] == ext[1] and ext[0] in (".md", ".json") and both(os.path.join(lroot, "docs", "architect"),   # B
                                                                 os.path.join(rroot, "docs", "architect")):

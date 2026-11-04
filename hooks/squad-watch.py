@@ -1981,16 +1981,20 @@ QUOTE = re.compile(r"(?m)^\s*>.*$")
 
 
 AGENFK_ID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+# The squad names a card by its 8-character prefix too (`agenfk get` resolves it). Needs a digit and a
+# letter, so a date (20261104) or a word is not a card; a commit sha that gets through is looked up, found
+# unknown and counts as closed. External ids (INFRA-419) are not looked up: the goal carries the AgEnFK id.
+CARD_PREFIX = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{8}\b(?!-)")
 CLOSED_CARD = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
 CARRY_CARDS = 4        # goal cards looked up at DONE, in parallel, inside the hook's 10 s
 CARRY_EXITS = ("Before you call anything the owner's, do every part you can do yourself: push, open or reopen "
                "a session or pane, merge where the project's rules let the session merge (a green gate and "
                "SHIP, through the merge queue), start the next front. Stop only by ending a reply with one of "
-               "these lines: `[squad] DONE: <evidence: PRs merged, cards DONE>` when everything the delivery "
-               "defines is done, `[squad] BLOCKED: <what only the owner can do>` for a human gate (a merge "
+               "these lines: `[squad] DONE: PR #64 merged, cards DONE` when everything the delivery "
+               "defines is done, `[squad] BLOCKED: merge approval on PR #64 is the owner's` for a human gate (a merge "
                "approval the project reserves for the owner, approval on the board, a decision or an answer "
-               "only the owner has, a production apply), or `[squad] END: <why nothing is left that you can "
-               "do>`.")
+               "only the owner has, a production apply), or `[squad] END: no card is left that I can take`. "
+               "These are examples: write your own text after the colon, never a <placeholder>.")
 GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts", "fanned")
 
 
@@ -2052,9 +2056,17 @@ def goal_text(text):
     return "".join(c for c in str(text) if c.isprintable()).strip()[:400]
 
 
+def goal_cards(text):
+    """The AgEnFK cards a goal names: full ids and 8-character prefixes, a prefix of a full id listed once."""
+    full = list(dict.fromkeys(AGENFK_ID.findall(text)))
+    stems = [c for c in dict.fromkeys(CARD_PREFIX.findall(AGENFK_ID.sub(" ", text)))
+             if not any(f.startswith(c) for f in full)]
+    return (full + stems)[:10]
+
+
 def new_goal(text, source):
     now = time.time()
-    return {"text": goal_text(text), "source": source, "cards": AGENFK_ID.findall(text)[:10],
+    return {"text": goal_text(text), "source": source, "cards": goal_cards(text),
             "holds": 0, "idle": 0, "ts": now, "progress_ts": now}
 
 
@@ -2105,6 +2117,7 @@ def carry_prompt(st, text, session=""):
     because the owner's new request decides what comes next. An explicit goal with no
     progress for CARRY_AGE has expired: the owner moved on."""
     st.pop("closed_goal", None)           # the owner speaks: a closed goal may be opened again
+    st.pop("closed_implicit", None)
     m = GOAL.search(text)
     if m:
         st["goal"] = new_goal(m.group(1), "owner")
@@ -2253,7 +2266,7 @@ def carry_on(p, path, st):
                 print(json.dumps({"decision": "block", "reason": (
                     f"[squad-watch] DONE refused: card {card} is in {safe(status)} in AgEnFK, not DONE. "
                     "Finish it through its flow (`agenfk verify`), or, if a person has to act, end with "
-                    "`[squad] BLOCKED: <what only the owner can do>`.")}))
+                    "`[squad] BLOCKED: merge approval on PR #64 is the owner's` (your own text, not a <placeholder>).")}))
                 return True
         keep(None)
         return False
@@ -2275,7 +2288,7 @@ def carry_on(p, path, st):
 
     if goal is None or goal.get("source") == "implicit":
         # an implicit goal lives only while replies keep handing work back
-        if not hands_back(last, lambda: worked_since(scanned)):
+        if st.get("closed_implicit") or not hands_back(last, lambda: worked_since(scanned)):
             keep(None)
             return False
         goal = goal or new_goal("", "implicit")
@@ -2299,6 +2312,8 @@ def carry_on(p, path, st):
         goal["releases"] = goal.get("releases", 0) + 1
         if goal.get("holds", 0) >= CARRY_CAP:
             why += ", so the goal is closed"
+            if goal.get("source") == "implicit":      # it has no text to close by: close the kind until the owner speaks
+                st["closed_implicit"] = True
             st["closed_goal"], goal = goal.get("text"), None
         elif goal["releases"] >= 2 and goal.get("source") != "implicit":
             why += "; released twice in a row without progress, so the goal is closed"

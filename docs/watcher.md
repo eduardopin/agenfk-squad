@@ -317,9 +317,8 @@ session itself when it comes back.
 It never wakes a pane that is working or whose session changed between the
 decision and the send, a session whose owner asked to stop, a session at
 handoff level or switching, a session idle for more than `SQUAD_WAKE_AGE`
-(43200), or one whose last reply ends with a line `[squad] END: <why nothing
-is left>` (`[squad] DONE:` is accepted too) or `[squad] BLOCKED: <what only the
-owner can do>` (the owner gets a herdr notification once). Unreadable watcher
+(43200), or one whose last reply ends with a line `[squad] END: no card is left
+that I can take` (`[squad] DONE:` is accepted too) or `[squad] BLOCKED: merge approval on PR #64 is the owner's` (the owner gets a herdr notification once). Unreadable watcher
 state means no wake.
 
 Each wake without progress doubles the deadline, up to `SQUAD_WAKE_CEILING`
@@ -376,10 +375,12 @@ ON`.
 
 A delivery is open when either holds:
 
-- **an explicit goal**: a line `[squad] GOAL: <what is delivered>` in the
+- **an explicit goal**: a line such as `[squad] GOAL: docs/architect/plan.json - 51d1c739-d0d2-400a-8037-f46b00d1668b` (what is delivered, then the card ids) in the
   owner's message or in one of the session's replies. The `architect` skill
-  writes it when a plan goes to execution. AgEnFK card ids on that line are the
-  goal's cards. An explicit goal survives the owner's side questions: the
+  writes it when a plan goes to execution. AgEnFK card ids on that line, whole or the
+  8-character prefix (`card 51d1c739`), are the goal's cards; an external id
+  such as `INFRA-419` is not looked up, so name the AgEnFK id. A line whose text starts with `<` is read as a quoted template
+  and opens no goal, so write the real text. An explicit goal survives the owner's side questions: the
   session answers and goes back to work. Writing the same line again changes
   nothing, a session's line never replaces the owner's goal, and a new session
   goal keeps the guard's counters.
@@ -399,12 +400,17 @@ The session stops by ending a reply with one line:
 
 | Line | Effect |
 |---|---|
-| `[squad] DONE: <evidence>` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`, the first 4 cards, in parallel, within 7 s); a CLI or server that does not answer in time counts as done. |
-| `[squad] BLOCKED: <what only the owner can do>` | Lets go until the owner speaks again: merge approval, a production apply, an answer only the owner has. |
-| `[squad] END: <why nothing is left>` | Closes the goal. |
+| `[squad] DONE: PR #64 merged, cards DONE` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`, the first 4 cards, in parallel, within 7 s); a CLI or server that does not answer in time counts as done. After `SQUAD_CARRY_MAX` (3) refused DONEs the line is accepted while a card is still open, so a CLI or server that stays down, or a card that cannot reach DONE, cannot hold the session. |
+| `[squad] BLOCKED: merge approval on PR #64 is the owner's` | Lets go until the owner speaks again: merge approval, a production apply, an answer only the owner has. |
+| `[squad] END: no card is left that I can take` | Closes the goal. |
 
-These are the same lines `squad-wake.py` reads, so a session that stopped for a
-reason the hook cannot see (an API error, a reboot) is still woken by the timer.
+The text after the colon is the session's own: a line whose text starts with `<`
+is read as a quoted template, so a copied `<placeholder>` does not exit.
+These are the same lines `squad-wake.py` reads: the pattern in `squad-watch.py`
+is a copy of that file's `MARK`, kept so a Stop without a goal never loads
+`squad-wake.py`, and `tests/test_carry_on.py` fails when the two differ. So a session that stopped
+for a reason the hook cannot see (an API error, a reboot) is still woken by
+the timer.
 
 The order names what the session must do itself before it calls anything the
 owner's: push, open or reopen a session or pane, merge where the project's

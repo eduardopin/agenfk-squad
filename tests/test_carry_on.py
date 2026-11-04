@@ -435,6 +435,48 @@ def test_two_releases_in_a_row_close_an_explicit_goal():
     assert not s.state().get("goal"), s.state()
 
 
+def test_the_third_refused_done_is_accepted_while_the_card_is_open():
+    s = Session(statuses={CARD: "IN_PROGRESS"})
+    s.owner(f"[squad] GOAL: close card {CARD}")
+    for _ in range(3):
+        s.edit()
+        s.reply("[squad] DONE: all good")
+        assert "DONE refused" in s.stop()
+    s.edit()
+    s.reply("[squad] DONE: all good")
+    assert s.stop() == "nothing"
+
+
+def test_done_is_refused_for_a_card_named_by_its_eight_character_prefix():
+    s = Session(statuses={"51d1c739": "IN_PROGRESS"})
+    s.owner("[squad] GOAL: ship checkout, card 51d1c739")
+    s.edit()
+    s.reply("[squad] DONE: all done")
+    assert "DONE refused: card 51d1c739" in s.stop()
+
+
+def test_a_date_or_a_word_is_not_taken_for_a_card_prefix():
+    s = Session(statuses={"20261104": "IN_PROGRESS", "deadbeef": "IN_PROGRESS"})
+    s.owner("[squad] GOAL: ship checkout by 20261104, no deadbeef")
+    s.edit()
+    s.reply("[squad] DONE: all done")
+    assert s.stop() == "nothing"
+
+
+def test_a_prefix_and_its_full_id_are_one_card():
+    s = Session(statuses={CARD: "IN_PROGRESS"})
+    s.owner(f"[squad] GOAL: ship checkout, card {CARD[:8]} ({CARD})")
+    assert s.state()["goal"]["cards"] == [CARD]
+
+
+def test_an_external_id_is_not_looked_up_so_the_goal_carries_the_agenfk_id():
+    s = Session(statuses={"INFRA-419": "IN_PROGRESS"})
+    s.owner("[squad] GOAL: ship checkout, INFRA-419")
+    s.edit()
+    s.reply("[squad] DONE: all done")
+    assert s.stop() == "nothing"
+
+
 def test_done_check_stays_inside_the_hook_timeout():
     import time as _t
     cards = [f"{i:08x}-2222-3333-4444-555555555555" for i in range(8)]
@@ -517,6 +559,17 @@ def test_reaching_the_cap_closes_the_goal():
     assert not s.state().get("goal"), s.state()
 
 
+def test_the_cap_closes_an_implicit_goal_too():
+    s = Session(env={"SQUAD_CARRY_CAP": "1"})
+    s.owner("ship it")
+    verdicts = []
+    for _ in range(4):
+        s.edit()
+        s.reply("Next step: the next file.")
+        verdicts.append(carried(s.stop()))
+    assert verdicts == [True, False, False, False], verdicts
+
+
 def test_an_offer_about_an_issue_or_a_commit_is_not_a_delivery():
     for text in ("The failure comes from issue 12 upstream.\nShall I explain the issue in more detail?",
                  "That branch has 3 commits. Want me to look at the commit message?"):
@@ -539,6 +592,64 @@ def test_a_closed_goal_is_not_reopened_by_the_session_alone():
     s.edit()
     s.reply("[squad] GOAL: deliver the plan\n\nWave 3.")
     assert s.stop() == "nothing", "the same goal does not come back until the owner speaks"
+
+
+# --- review round 4: the lines the session is told to write must be lines the watcher reads -------
+
+def _load(name, file):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, os.path.join(ROOT, "hooks", file))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _shown_lines(text):
+    """The `[squad] KEY: text` lines an instruction shows in backticks, as a session would copy them."""
+    import re
+    return re.findall(r"`(\[squad\] (?:GOAL|DONE|BLOCKED|END): [^`]+)`", text)
+
+
+def _shown_everywhere(watch, wake):
+    sources = {"CARRY_EXITS": watch.CARRY_EXITS, "wake text": wake.text(5)}
+    for rel in ("CLAUDE.md", os.path.join("skills", "architect", "SKILL.md"), os.path.join("docs", "watcher.md")):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+            sources[rel] = fh.read()
+    s = Session(statuses={CARD: "IN_PROGRESS"})
+    s.owner(f"[squad] GOAL: close card {CARD}")
+    s.edit()
+    s.reply("[squad] DONE: card closed")
+    sources["DONE refusal"] = s.stop()
+    return [(name, line) for name, text in sources.items() for line in _shown_lines(text)]
+
+
+def test_every_goal_line_the_instructions_show_is_one_the_watcher_reads():
+    watch, wake = _load("sw_goal", "squad-watch.py"), _load("sq_goal", "squad-wake.py")
+    shown = [(n, l) for n, l in _shown_everywhere(watch, wake) if l.startswith("[squad] GOAL")]
+    assert len(shown) >= 2, shown
+    for name, line in shown:
+        assert watch.GOAL.search(line), f"{name} tells the session to write a goal the watcher does not read: {line}"
+
+
+def test_every_exit_line_the_instructions_show_is_one_the_watcher_reads():
+    watch, wake = _load("sw_lines", "squad-watch.py"), _load("sq_lines", "squad-wake.py")
+    shown = [(n, l) for n, l in _shown_everywhere(watch, wake) if not l.startswith("[squad] GOAL")]
+    assert len(shown) >= 8, shown
+    for name, line in shown:
+        assert watch.MARK.search(line), f"{name} tells the session to write a line the watcher does not read: {line}"
+        assert wake.MARK.search(line), f"{name}: squad-wake does not read {line}"
+
+
+def test_the_watcher_and_the_wake_read_end_lines_the_same_way():
+    watch, wake = _load("sw_parity", "squad-watch.py"), _load("sq_parity", "squad-wake.py")
+    lines = ["[squad] DONE: x", "[squad] END: x", "[squad] BLOCKED: x", "  > [squad] done: x",
+             "`[squad] DONE: <evidence>`", "[squad] DONE: <evidence: PRs merged, cards DONE>",
+             "[squad] END: <why nothing is left>", "[squad] DONE: PR #64 merged, cards DONE",
+             "see [squad] DONE: x", "[squad] DONE:", "[squad] MAYBE: x"]
+    verdicts = [(bool(watch.MARK.search(x)), bool(wake.MARK.search(x))) for x in lines]
+    assert all(a == b for a, b in verdicts), list(zip(lines, verdicts))
+    assert [a for a, _ in verdicts][:3] == [True, True, True]
+    assert watch.MARK.pattern == wake.MARK.pattern
 
 
 def test_a_blocked_goal_expires_after_a_week():

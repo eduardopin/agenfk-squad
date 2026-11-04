@@ -42,18 +42,30 @@ are taken as given: `SQUAD_MAX_REVIEWS=0` denies every reviewer.
 
 A session that writes its handoff stops on Claude Code's "Do you want to create
 <file>?" dialog, and the answer is always yes. `hooks/squad-allow.py` runs on the
-`PermissionRequest` event for Write, Edit, MultiEdit and NotebookEdit and answers
-yes in two cases: Write creating a file that does not exist yet, and any of the
-four tools inside the squad's own folders (`.claude/handoffs/`, `~/.claude/squad/`,
-`docs/architect/`).
+`PermissionRequest` event for Write, Edit, MultiEdit and NotebookEdit. It answers
+yes in exactly two cases:
+
+1. Any of the four tools on a file inside the squad's folders: `.claude/handoffs/`
+   of any repository, `~/.claude/squad/` (and `$CLAUDE_CONFIG_DIR/squad/`), and
+   `docs/architect/` inside the session's project.
+2. Write creating a plain new file inside the session's project. The project is
+   the session's working directory and its git toplevel. No path component under
+   that root may start with a dot (`.github/`, `.vscode/`, `.husky/`, `.claude/`
+   are out), and the name must not be one that gets run or read later:
+   `CLAUDE*.md`, `AGENTS*.md`, `Makefile`, `GNUmakefile`, `Justfile`, `Dockerfile*`,
+   `*.sh`, `package.json`, `pyproject.toml`, `setup.py`, `setup.cfg`, `conftest.py`,
+   `*.pth`, `.envrc`, `.*rc`, `.*profile`. A new file outside the project (a
+   `~/.bashrc` that does not exist yet) is not answered.
 
 It stays silent, so the dialog appears, for paths that steer the agent or hold
-secrets, new or not: `settings*.json`, anything under `hooks/`, `CLAUDE.md`,
-`AGENTS.md`, `.claude/agents|skills|commands|plugins`, `~/.claude/*.json`, `.git/`,
-`.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `credentials*`, `.aws/`,
-`.ssh/` and `.mcp.json`. Symlinks and `..` are resolved before the match. It never
-answers deny, and on any doubt or error it prints nothing. Each allow is one line
-(time, session, tool, path) in `~/.claude/squad/allow.log`.
+secrets, even inside the squad folders: `settings*.json`, anything under `hooks/`,
+`CLAUDE.md`, `AGENTS.md`, `.claude/agents|skills|commands|plugins`, `~/.claude/*.json`
+(and the same under `CLAUDE_CONFIG_DIR`), `.git/`, `.env*`, `*.pem`, `*.key`,
+`id_rsa*`, `id_ed25519*`, `credentials*`, `.aws/`, `.ssh/`, `.mcp.json`, and the
+squad's own clone. The list is checked on the path as written and on the path after
+symlinks and `..` are resolved, case-insensitively; a match on either refuses. It
+never answers deny, and on any doubt or error it prints nothing. Each allow is one
+line (time, session, tool, path) in `~/.claude/squad/allow.log`.
 
 ## Skill trials
 

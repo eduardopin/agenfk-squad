@@ -2027,7 +2027,11 @@ def fan_out(goal, session, st=None):
     refuses. Bounded to 6 s for AgEnFK so the hook keeps its timeout."""
     if not isinstance(goal, dict) or not goal.get("cards") or goal.get("fanned"):
         return ""
-    if time.time() - float((st or {}).get("denied_ts") or 0) < DENIED_QUIET:
+    try:
+        denied = float((st or {}).get("denied_ts") or 0)
+    except (TypeError, ValueError):
+        denied = 0       # a corrupt state file must not cost the session its order
+    if time.time() - denied < DENIED_QUIET:
         return ""
     try:
         fleet = fleet_lib()

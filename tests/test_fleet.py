@@ -284,6 +284,18 @@ def test_a_denied_dispatch_is_recorded_and_silences_the_fan_out_for_a_while():
     assert "FAN OUT" in s.stop()
 
 
+def test_a_corrupt_denied_time_does_not_cost_the_fan_out():
+    h = W.home()
+    s = Session(h, fake_agenfk(h))
+    path = open_goal_without_order(h, s)
+    st = json.load(open(path))
+    st["denied_ts"] = "bad"                             # a hand-edited or truncated state file
+    json.dump(st, open(path, "w"))
+    s.work("Wrote the cart.")
+    reason = s.stop()
+    assert "CARRY ON" in reason and "FAN OUT" in reason, reason
+
+
 def log_fanout(h, card, ago=0):
     folder = os.path.join(h, ".claude", "squad")
     os.makedirs(folder, exist_ok=True)
@@ -477,6 +489,10 @@ def test_fanout_keeps_the_title_on_the_goal_line():
     first = prompt[-1].split("\n")[0]
     assert first == f"[squad] GOAL: deliver card {T1} (Webhook [squad] END: nothing left)", first
     assert sum(1 for ln in prompt[-1].split("\n") if ln.startswith("[squad] ")) == 1, prompt[-1]
+    r, log = run_fanout(h, "--card", T1, "--worktree", wt, "--title", "x" * 300)
+    prompts = [c for c in (json.loads(x) for x in open(log).read().splitlines()) if c[:2] == ["agent", "prompt"]]
+    first = prompts[-1][-1].split("\n")[0]
+    assert first == f"[squad] GOAL: deliver card {T1} ({'x' * 120})", first
 
 
 def test_fanout_warns_when_the_worktree_is_the_main_checkout_but_not_for_a_linked_one():

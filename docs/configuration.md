@@ -21,8 +21,8 @@ are taken as given: `SQUAD_MAX_REVIEWS=0` denies every reviewer.
 
 **Start here if your setup differs from the defaults:**
 
-- Your model has a **200k window**, not 1M → set `SQUAD_WINDOW=200000` and
-  lower `SQUAD_CTX_CEILING` to match (for example `150000`).
+- Your model has a **200k window**, not 1M → set `SQUAD_WINDOW=200000`. The
+  dispatch ceiling follows the window (90% of it) unless `SQUAD_CTX_CEILING` is set.
 - You do **not use herdr** → nothing to set; the automatic switch simply does
   not run, and the session tells you the two commands to type.
 - You want the **measurements without the enforcement** → there is no
@@ -44,9 +44,9 @@ See [watcher.md](watcher.md#the-handoff-arithmetic) for the arithmetic.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SQUAD_WINDOW` | 1,000,000 | Context window of the main session, in tokens. When unset, the watcher uses 1M, or a larger value if a status line recorded one in `~/.claude/cache/session-tokens/<session>.json` |
-| `SQUAD_CTX_PCT` | 80 | Percent of the window at which the handoff is ordered regardless of anything else. Clamped to 10–100 |
+| `SQUAD_CTX_PCT` | 90 | Percent of the window at which the handoff is ordered. The informational notice starts at 75% (or at this value, if lower). Clamped to 10–100 |
 | `SQUAD_REREAD` | 60 | Reread share, in percent, at which the reread rule can fire. Clamped to 10–95 |
-| `SQUAD_REREAD_FLOOR` | 50 | Percent of the window that is the lowest the floor can go |
+| `SQUAD_REREAD_FLOOR` | 50 | Percent of the window that is the lowest the reread floor can go. The floor only shapes the figures and a sub-session's return; it never hands a main session off |
 | `SQUAD_BURN_FULL` | 50 | Percent of the session budget at which the floor reaches its lowest point |
 | `CLAUDE_SESSION_BUDGET` | 20,000,000 | Weighted tokens one session is expected to spend. `burn_pct` is measured against it |
 | `SQUAD_CTX_BASE` | 40,000 | Context of a fresh session that has just read a handoff. Used for the payback and for the minimum floor (2 × this) |
@@ -69,7 +69,7 @@ denial after 3 identical calls in a row.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SQUAD_CTX_CEILING` | 600,000 | Orchestrator context above which a new dispatch is denied and a handoff ordered |
+| `SQUAD_CTX_CEILING` | 0 | Orchestrator context, in tokens, above which a new dispatch is denied and a handoff ordered. 0 = the handoff line, `SQUAD_CTX_PCT`% of the window |
 | `SQUAD_MAX_SUBS` | 40 | Sub-sessions one main session may spawn |
 | `SQUAD_MAX_ORCH` | 3 | Sessions that may orchestrate sub-agents at the same time, across the machine |
 | `SQUAD_ORCH_HERE` | 120,000 | With no orchestrator slot: below this context the card is implemented in the session itself; at or above it, handoff with the plan |

@@ -42,19 +42,17 @@ Thresholds, by environment variable:
   SQUAD_WINDOW                  window of the main session (default: 1000000)
   SQUAD_CTX_BASE      (40000)   context of a fresh session, for the payback
   The main session's handoff (level 2) is arithmetic, with no judgement by the agent:
-      context >= SQUAD_CTX_PCT (80)% of the window, OR
-      reread >= SQUAD_REREAD (60)% AND context >= floor
-      (reread = 0.1*cache-read / weighted burn, the cockpit's REREAD %; minimum floor 2*CTX_BASE)
-  The floor weighs the burn: SQUAD_REREAD_FLOOR (50)% of the window once the burn
-  has reached SQUAD_BURN_FULL (50)% of the session budget (CLAUDE_SESSION_BUDGET,
-  20M, the cockpit's BURN %), rising in a straight line to 80% with zero burn.
-  Context at 50% with burn at 10% is NOT handoff time: the floor there is 74%. A
-  session that has just built its context and barely used it is not cut.
-  In other words: the cut falls between 50% and 80% of the window. Above 50%
-  without the math closing, only an informational notice goes out (level 1),
-  with no order to stop.
+      context >= SQUAD_CTX_PCT (90)% of the window
+  From 75% of the window only an informational notice goes out (level 1), with no
+  order to stop. Reread (0.1*cache-read / weighted burn, the cockpit's REREAD %)
+  never brings the main handoff forward: in one week of the author's sessions all
+  seven main handoffs fired at 60-65% of a 1M window, because reread passed its
+  floor in every long session and told none of them apart. It still shows in the
+  figures, and in a sub-session it orders the return once the context reaches
+  SQUAD_SUB_CTX_WARN.
   SQUAD_CTX_WARN (0) SQUAD_CTX_HANDOFF (0)  absolute thresholds in tokens, off by default
-  SQUAD_CTX_CEILING (600000)    above this, dispatch denied and handoff ordered
+  SQUAD_CTX_CEILING (0)         above this, dispatch denied and handoff ordered;
+                                0 = the handoff line, SQUAD_CTX_PCT% of the window
   SQUAD_MAX_SUBS      (40)      sub-sessions per main session
   SQUAD_MAX_ORCH      (3)       sessions orchestrating sub-agents at the same time
   SQUAD_ORCH_HERE     (120000)  no orchestrator slot: below this the card is done
@@ -141,8 +139,9 @@ CTX_CUT = env_int("SQUAD_SUB_CTX_CUT", 180_000)
 BURN_WARN = env_int("SQUAD_SUB_BURN", 2_000_000)
 MAIN_WARN = env_int("SQUAD_CTX_WARN", 0)         # 0 = no absolute threshold; only the % of the window applies
 MAIN_HANDOFF = env_int("SQUAD_CTX_HANDOFF", 0)
-MAIN_CEIL = env_int("SQUAD_CTX_CEILING", 600_000)
-MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 80), 10), 100)       # % of the window at which the handoff goes out regardless
+MAIN_CEIL = env_int("SQUAD_CTX_CEILING", 0)       # 0 = the handoff line of the session's window
+MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 90), 10), 100)       # % of the window at which the handoff goes out regardless
+NOTICE_PCT = min(75, MAIN_PCT)                     # % of the window from which the informational notice goes out
 MAX_SUBS = env_int("SQUAD_MAX_SUBS", 40)
 MAX_ORCH = env_int("SQUAD_MAX_ORCH", 3)
 MAX_REV = env_int("SQUAD_MAX_REVIEWS", 6)
@@ -512,6 +511,16 @@ def plan(resume_how, brief=""):
                 "the same pickup in a new session opened in the card's worktree."))
 
 
+def ceiling(session, st, client="claude"):
+    """Orchestrator context above which a dispatch is denied: SQUAD_CTX_CEILING when
+    set, else the handoff line of the window the last measurement saw. A flat 600k
+    stopped a 1M session at 60%, ahead of its own handoff."""
+    if MAIN_CEIL > 0:
+        return MAIN_CEIL
+    window = st.get("window") or main_window(session, client)
+    return int(window * MAIN_PCT / 100)
+
+
 def pre_dispatch(p):
     """The orchestrator's brake: when dispatching one more agent is the mistake.
     Every denial goes out with the path along which the work continues."""
@@ -519,9 +528,10 @@ def pre_dispatch(p):
     st = load(state_path(session, ""))
     ctx, why, handoff = st.get("ctx", 0), None, False
     brief = keep_brief(session, p)
-    if ctx >= MAIN_CEIL:
+    ceil = ceiling(session, st, harness(p))
+    if ctx >= ceil:
         handoff = True
-        why = (f"this session is orchestrating with {k(ctx)} of context (ceiling {k(MAIN_CEIL)}): every turn and "
+        why = (f"this session is orchestrating with {k(ctx)} of context (ceiling {k(ceil)}): every turn and "
                "every agent return rereads all of it. " + plan(
                    "The new session, with a clean context, dispatches that plan.", brief))
     elif st.get("subs", 0) >= MAX_SUBS:
@@ -579,10 +589,11 @@ def dispatch_notice(session, st, ctx):
             "A new implementation dispatch will be denied and turned into a handoff with the plan; the watcher "
             "switches the session and the work continues there.")
     out = []
-    if ctx >= 0.9 * MAIN_CEIL and not st.get("ceil_warned"):
+    ceil = ceiling(session, st)
+    if ctx >= 0.9 * ceil and not st.get("ceil_warned"):
         st["ceil_warned"] = True
         out.append(f"[squad-watch] DISPATCH NOTICE — context {k(ctx)}, orchestrator ceiling "
-                   f"{k(MAIN_CEIL)}. {tail}")
+                   f"{k(ceil)}. {tail}")
     full = ctx >= ORCH_HERE and other_orchestrators(session) >= MAX_ORCH
     if full and not st.get("orch_warned"):
         out.append(f"[squad-watch] DISPATCH NOTICE — all {MAX_ORCH} orchestrator slots are taken "
@@ -998,7 +1009,7 @@ def post_tool(p):
                     st["cut"] = True
                     out.append(f"[squad-watch] HANDOFF NOW: context {k(ctx)} >= ceiling {k(CTX_CUT)} "
                                f"({figures(c, ctx)}). The next tools will be denied. {RETURN_HANDOFF}")
-                elif c["due"] and not st.get("ratio_warned"):
+                elif c["due"] and ctx >= CTX_WARN and not st.get("ratio_warned"):
                     st["ratio_warned"] = True
                     out.append(f"[squad-watch] HANDOFF: {figures(c, ctx)}; context {k(ctx)}. This "
                                f"sub-session already spends more rereading than producing. Finish the "
@@ -1015,9 +1026,10 @@ def post_tool(p):
                                "what remains as scope.")
             else:
                 # The decision is this arithmetic and nothing else: level 2 = handoff, level 1 = notice with no action.
+                st["window"] = window
                 pct = 100.0 * ctx / window
-                level = (2 if (pct >= MAIN_PCT or c["due"] or (MAIN_HANDOFF and ctx >= MAIN_HANDOFF))
-                         else 1 if (ctx >= c["floor_min"] or (MAIN_WARN and ctx >= MAIN_WARN)) else 0)
+                level = (2 if (pct >= MAIN_PCT or (MAIN_HANDOFF and ctx >= MAIN_HANDOFF))
+                         else 1 if (pct >= NOTICE_PCT or (MAIN_WARN and ctx >= MAIN_WARN)) else 0)
                 # the level went up, or it keeps growing after the alert: reminds every 50k
                 again = level == 2 and ctx >= st.get("alert_ctx", 0) + 50_000
                 if level > st.get("ctx_level", 0) or again:
@@ -1041,15 +1053,14 @@ def post_tool(p):
                     else:
                         out.append(f"[squad-watch] {head}. Informational only: KEEP working normally "
                                    "and do NOT write a handoff on your own. The handoff is decided by the watcher, "
-                                   f"by arithmetic: context at {MAIN_PCT}% of the window, or reread >= {cx_share():.0%} with "
-                                   f"context >= {k(c['floor'])} (the floor for the current burn; it drops to "
-                                   f"{k(c['floor_min'])} as the burn rises). When it gets there, you receive "
+                                   f"by arithmetic: context at {MAIN_PCT}% of the window ({k(int(window * MAIN_PCT / 100))}). "
+                                   "Reread does not bring it forward. When it gets there, you receive "
                                    "PROACTIVE HANDOFF.")
                 if level < st.get("ctx_level", 0) and not st.get("ordered") and not st.get("switched"):
                     # alert raised by an old rule (or a context that shrank): undone in writing
                     out.append(f"[squad-watch] ALERT CANCELLED — context {k(ctx)}/{k(window)} ({pct:.0f}%), "
                                f"reread {c['share']:.0%}: below the current threshold (context >= {MAIN_PCT}% of the "
-                               f"window, or reread >= {cx_share():.0%} with context >= {k(c['floor'])}). The earlier notice or "
+                               "window; reread does not bring it forward). The earlier notice or "
                                "handoff order NO longer applies: keep working normally, you may open "
                                "a new front, and do not write a handoff without a new PROACTIVE HANDOFF.")
                     for key in ("alert_ts", "alert_ctx", "nudges"):
@@ -1107,7 +1118,7 @@ def subagent_stop(p):
         bad.append(f"loop ({row['denied']} call(s) denied)")
     if row["burn"] >= BURN_WARN:
         bad.append(f"burn {k(row['burn'])}")
-    if row["reread"] >= cx.REREAD_SHARE and row["ctx"] >= 2 * cx.CTX_BASE:
+    if row["reread"] >= cx.REREAD_SHARE and row["ctx"] >= CTX_WARN:     # the same gate as the HANDOFF order
         bad.append(f"reread {row['reread']:.0%}")
     if bad:
         mpath = state_path(session, "")

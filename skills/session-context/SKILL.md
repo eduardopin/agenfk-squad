@@ -6,9 +6,10 @@ description: Context management for AI sessions (Claude Code, Codex, pi) — mea
 # session-context — tokens are money and a full context is hallucination
 
 Three facts govern everything:
-1. **A full context degrades before it overflows.** Above ~60% the model
-   starts losing instructions from the beginning; above 80% it repeats,
-   invents and rereads.
+1. **A full context degrades before it overflows.** Past the 75% notice, close
+   the step in progress and open no new front; at 90% the watcher orders the
+   handoff. The lines were 50-80% until one week in which all seven main
+   handoffs fired at 60-65% of a 1M window.
 2. **Cache rereads are cheap per token but expensive in volume**: at 0.1 of
    the price, 688M reread tokens are still most of a day's bill.
 3. **The true state lives in git, in the files and on the board — never in
@@ -25,7 +26,7 @@ python3 .../session_context.py --session <id> --detail
 
 | Indicator | How it is measured | Threshold |
 |---|---|---|
-| **ctx** | tokens of the last turn (input + cache read + cache written) ÷ window | 50% = floor (handoff if reread ≥ 60%); 80% = HANDOFF |
+| **ctx** | tokens of the last turn (input + cache read + cache written) ÷ window | 75% = COMPACT (notice); 90% = HANDOFF |
 | **burn** | input + 1.25·cache-write + 0.1·cache-read + 5·output (cockpit weights) | relative: compare sessions |
 | **reread** | share of the burn that is cache reread | informational |
 | **r/new** | weighted reread ÷ new work (input + 1.25·write + 5·output) | decides nothing on its own; the rule is the one on the **reread** row |

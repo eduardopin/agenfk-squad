@@ -13,9 +13,10 @@ LOOP / IDLE.
     session_context.py --session <id|file> --detail   # one session, with its most reread files
     session_context.py --json                # machine-readable output
 
-Weights and thresholds come from the cockpit (~/.claude/cockpit/statusline.py):
-a cache read costs 0.1 of an input token, a cache write 1.25, output 5; HANDOFF
-shows at 50% of the window and is urgent at 80%.
+Weights come from the cockpit (~/.claude/cockpit/statusline.py): a cache read
+costs 0.1 of an input token, a cache write 1.25, output 5. The context lines follow
+squad-watch, which gives the orders: COMPACT at 75% of the window, HANDOFF at 90%.
+Reread is shown as a reason and never decides the verdict.
 """
 import argparse
 import glob
@@ -41,7 +42,8 @@ def env_num(name, default, lo, hi):
     return min(max(value, lo), hi)
 
 
-HANDOFF_SHOW, HANDOFF_NOW = 50, env_num("SQUAD_CTX_PCT", 80, 10, 100)
+HANDOFF_NOW = env_num("SQUAD_CTX_PCT", 90, 10, 100)
+HANDOFF_SHOW = min(75, HANDOFF_NOW)        # squad-watch's informational notice
 LOOP_REPEATS = 3          # same tool + same arguments, N times in the last 30 calls
 REREAD_FILE = 3           # same file read N+ times
 # The reread handoff rule is arithmetic, not a judgement call: the reread share
@@ -52,10 +54,12 @@ REREAD_SHARE = env_num("SQUAD_REREAD", 60, 10, 95) / 100.0          # reread / (
 REREAD_FLOOR_PCT = env_num("SQUAD_REREAD_FLOOR", 50, 0, 100)        # % of the window below which reread does not trigger
 # The floor is not fixed: it weighs the burn. A session with a large context
 # and low burn has just built its context and has not used it yet; cutting it
-# throws away what it paid to load. The floor starts at HANDOFF_NOW (80%) with
+# throws away what it paid to load. The floor starts at HANDOFF_NOW (90%) with
 # zero burn and falls in a straight line to REREAD_FLOOR_PCT (50%) when the
 # burn reaches BURN_FULL_PCT of the session budget (the cockpit's BURN %).
-# Burn 10% -> floor at 74% of the window.
+# Burn 10% -> floor at 82% of the window. `due` orders a sub-session's return
+# (past SQUAD_SUB_CTX_WARN) and explains a main session's figures; it no longer
+# hands a main session off.
 BUDGET = env_num("CLAUDE_SESSION_BUDGET", 20_000_000, 1_000_000, 10**10)
 BURN_FULL_PCT = env_num("SQUAD_BURN_FULL", 50, 1, 100)
 CTX_BASE = env_num("SQUAD_CTX_BASE", 40_000, 1_000, 500_000)  # context of a new session with the handoff already read
@@ -468,8 +472,7 @@ def analyse(client, sid, path, cwd_hint, now):
     elif ctx_pct >= HANDOFF_SHOW and verdict == "CONTINUE":
         verdict = "COMPACT"; why.append(f"context {ctx_pct:.0f}% >= {HANDOFF_SHOW}%")
     if c["due"]:
-        if verdict in ("CONTINUE", "COMPACT"):
-            verdict = "HANDOFF"
+        # reread explains the figure; like squad-watch, it no longer decides the verdict
         why.append(f"reread {c['share']:.0%} (>= {REREAD_SHARE:.0%}) with context above the floor of "
                    f"{human(c['floor'])}; every turn rereads "
                    f"{human(c['toll'])}; a new session pays for itself in {c['payback']:g} turn(s)")

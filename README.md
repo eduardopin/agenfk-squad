@@ -142,9 +142,9 @@ session in messages that start with `[squad-watch]`.
 
 | It sees | It does |
 |---|---|
-| Main session at 80% of its window, or rereading itself for 60% of its spend above a floor that weighs how much it has already burned | `PROACTIVE HANDOFF`: the session writes a handoff and stops; the watcher clears the pane and a fresh session picks the work up |
+| Main session at 90% of its window (an informational notice from 75%; rereading itself never brings it forward) | `PROACTIVE HANDOFF`: the session writes a handoff and stops; the watcher clears the pane and a fresh session picks the work up |
 | A sub-session repeating the same call, or past 180k of context | Denies the call; the sub-session returns a short handoff to its parent |
-| An orchestrator at 600k of context, or with 40 sub-sessions, or a fourth session orchestrating at once, or a seventh reviewer on one card | `DISPATCH DENIED`, with the way forward spelled out |
+| An orchestrator at 90% of its window, or with 40 sub-sessions, or a fourth session orchestrating at once, or a seventh reviewer on one card | `DISPATCH DENIED`, with the way forward spelled out |
 | A merge to main while another session holds the turn | Denies it, queues the session, and wakes it with `MERGE TURN` |
 
 Every threshold is an environment variable. The arithmetic, with worked

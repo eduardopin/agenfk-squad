@@ -57,76 +57,46 @@ From a session's running totals it computes (`handoff_math` in
 | `toll` | 0.1 × context | What every further turn costs before it does anything |
 | `restart` | 1.25 × `SQUAD_CTX_BASE` + 5 × 2,000 | Writing the handoff and rebuilding the cache in a fresh session |
 | `payback` | restart / (0.1 × (context − `SQUAD_CTX_BASE`)) | Turns until a fresh session has paid for itself |
-| `floor` | see below | The context below which a high reread share is not acted on |
-| `due` | share ≥ `SQUAD_REREAD` and context ≥ floor | The reread rule fired |
+| `floor` | see below | The context below which a high reread share is not reported as due |
+| `due` | share ≥ `SQUAD_REREAD` and context ≥ floor | Reread is past its floor. Orders a sub-session past 120k home; never hands a main session off |
 
 ### The rule
 
-A main session is ordered to hand off (`PROACTIVE HANDOFF`) when either holds:
+A main session is ordered to hand off (`PROACTIVE HANDOFF`) when its
+**context reaches `SQUAD_CTX_PCT`% of the window** (default 90%). From 75% it
+receives an informational notice, which is not an order to stop.
 
-1. **context ≥ `SQUAD_CTX_PCT`% of the window** (default 80%), or
-2. **reread share ≥ `SQUAD_REREAD`%** (default 60%) **and context ≥ floor**.
+Reread does not bring the main handoff forward. It did until v0.1.0, through
+a floor between 50% and 80% of the window that weighed the burn. In one week
+of the author's sessions all seven main handoffs fired at 60-65% of a 1M
+window: reread ran past the floor in every long session, so it told none of
+them apart, and each session was cut with a third of its window unused.
 
-Rule 1 is the wall. Rule 2 is the interesting one.
-
-### Why there is a floor, and why it moves
-
-A high reread share with a small context is the cache doing its job, not
-waste. So rule 2 only applies above a floor.
-
-A fixed floor is still wrong. Picture a session that has just loaded 500k
-tokens of context and done almost nothing with it. Its reread share is high
-(it has produced little, so most of its spend is re-reading), and its context
-is at 50% of the window. Cutting it now throws away what it just paid to load.
-
-So the floor **weighs the burn**. With `window` the session's context window:
+The reread figures stay in every message, because they say what a turn costs:
 
 ```
-floor_pct = 80 − (80 − 50) × min(1, burn_pct / 50)
+floor_pct = 90 − (90 − 50) × min(1, burn_pct / 50)
 floor     = max(2 × SQUAD_CTX_BASE, window × floor_pct / 100)
+due       = share ≥ SQUAD_REREAD and context ≥ floor
 ```
 
-where 80 is `SQUAD_CTX_PCT`, the lower 50 is `SQUAD_REREAD_FLOOR` and the
-divisor 50 is `SQUAD_BURN_FULL`. In words: the floor starts at 80% of the
-window for a session that has burned nothing, and falls in a straight line to
-50% once the session has burned half its budget.
-
-For a 1M window and a 20M budget:
-
-| Burn so far | `burn_pct` | Floor |
-|---|---|---|
-| 0 | 0% | 800k (80%) |
-| 2M | 10% | 740k (74%) |
-| 5M | 25% | 650k (65%) |
-| 8M | 40% | 560k (56%) |
-| 10M or more | ≥ 50% | 500k (50%) |
+where 90 is `SQUAD_CTX_PCT`, the lower 50 is `SQUAD_REREAD_FLOOR` and the
+divisor 50 is `SQUAD_BURN_FULL`. `due` decides one thing: a sub-session past
+`SQUAD_SUB_CTX_WARN` (120k) with `due` set is ordered to return its handoff.
+Sub-sessions have no known window (`window = 0`), so their floor is
+2 × `SQUAD_CTX_BASE`; below 120k their reread is the cache working.
 
 ### Worked examples
 
-**A. Just loaded, barely used.** Context 500k, burn 2M (10%), reread share 70%.
-Floor is 740k. Context is below the floor, so rule 2 does not fire. Rule 1
-does not fire either (500k < 800k). The session keeps working. It gets at most
-an informational notice, which is not an order to stop.
+**A. Long session, high reread.** Context 620k, burn 12M (60%), reread share
+80%. Under 75%: nothing. The session keeps working.
 
-**B. Same context, long session.** Context 500k, burn 11M (55%), reread share 68%.
-Floor is 500k. Context ≥ floor and share ≥ 60%: `PROACTIVE HANDOFF`. Each
-further turn costs a toll of 50k weighted tokens. A restart costs
-1.25 × 40k + 10k = 60k, and saves 0.1 × (500k − 40k) = 46k per turn, so the
-fresh session pays for itself in 60 / 46 ≈ 1.3 turns.
+**B. Past the notice.** Context 800k, any burn, any share. Informational
+notice; the session keeps working and does not write a handoff on its own.
 
-**C. Productive session, low reread.** Context 620k, burn 12M, reread share 41%.
-Share is under 60%, so rule 2 does not fire. Context is under 800k, so rule 1
-does not fire. The session continues, even though it is large: it is still
-producing more than it re-reads.
-
-**D. The wall.** Context 810k, any burn, any share. Rule 1: `PROACTIVE HANDOFF`.
-
-The cut therefore always falls between 50% and 80% of the window. Above 50%
-without the arithmetic closing, the session receives only an informational
-notice.
-
-Sub-sessions have no known window (`window = 0`), so their floor is
-2 × `SQUAD_CTX_BASE` and they are governed by the absolute thresholds below.
+**C. The wall.** Context 900k, any burn, any share. `PROACTIVE HANDOFF`. Each
+further turn costs a toll of 90k weighted tokens; a restart costs
+1.25 × 40k + 10k = 60k and saves 0.1 × (900k − 40k) = 86k per turn.
 
 ### What the session must do
 
@@ -172,7 +142,7 @@ ceilings:
 
 | Ceiling | Variable | Default |
 |---|---|---|
-| Context of the orchestrator | `SQUAD_CTX_CEILING` | 600,000 |
+| Context of the orchestrator | `SQUAD_CTX_CEILING` | the handoff line, 90% of the window |
 | Sub-sessions spawned by this session | `SQUAD_MAX_SUBS` | 40 |
 | Sessions orchestrating at the same time | `SQUAD_MAX_ORCH` | 3 |
 | Reviewer dispatches for the same card | `SQUAD_MAX_REVIEWS` | 6 (the 7th is denied) |

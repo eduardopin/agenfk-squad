@@ -46,10 +46,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 7. **Context is a budget, and the main session is the orchestrator that
    guards it.** The `squad-watch` hook measures every session and sub-session every minute and
    talks to you through `[squad-watch]` messages. They are orders, not suggestions:
-   - **PROACTIVE HANDOFF** (the watcher's math, 1M window: context ≥ 80% of the
-     window, or reread ≥ 60% with context above a floor that weighs the burn:
-     50% of the window with burn ≥ 50% of the session budget, rising to 80% with
-     zero burn; context at 50% with burn at 10% is not the time): close the step
+   - **PROACTIVE HANDOFF** (the watcher's math: context ≥ 90% of the window; an
+     informational notice from 75%; reread never brings it forward): close the step
      in progress, comment on the card, write the
      handoff through MODE A of `clear-pickup` **without asking for permission**, with what
      is left of the request under "Next step", and stop. When you stop, the watcher clears the
@@ -64,7 +62,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
    - **Sub-session ended badly** (cut, loop, burn): do not redispatch the same
      brief. Read the return handoff, check in git what actually got done and
      dispatch only what is MISSING, with a short brief, in a new sub-session. 1 redispatch.
-   - **DISPATCH DENIED** (orchestrator context ≥ 600k, 40 sub-sessions in the
+   - **DISPATCH DENIED** (orchestrator context ≥ 90% of the window, 40 sub-sessions in the
      session, 3 sessions orchestrating at the same time, 7th reviewer on the same card):
      do not work around it with another tool or another agent type, and do not
      repeat the dispatch. The denial says where the work continues; do what

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The watcher cuts the main session between 50% and 80% of the window, and only by arithmetic.
+"""The watcher hands the main session off at 90% of the window, and only by arithmetic.
 
 Self-checking: the exit code is the verdict. Runs in a throwaway HOME, with a
 fake herdr, and never touches ~/.claude.
@@ -98,29 +98,30 @@ def test_the_math_is_fixed():
     def due(share, ctx, window, burn=60):
         reread = share * burn / 100 * cx.BUDGET
         return cx.handoff_math(int(reread * (1 - share) / share), 0, int(reread / 0.1), 0, ctx, window)["due"]
-    assert cx.REREAD_SHARE == 0.60 and cx.REREAD_FLOOR_PCT == 50 and cx.HANDOFF_NOW == 80
+    assert cx.REREAD_SHARE == 0.60 and cx.REREAD_FLOOR_PCT == 50 and cx.HANDOFF_NOW == 90
     assert not due(0.95, 150_000, M)        # the case that used to cut sessions at 15%
     assert not due(0.95, 499_000, M)
     assert due(0.60, 500_000, M)
     assert not due(0.59, 790_000, M)
     assert due(0.61, 90_000, 0)             # sub-session: floor 2*CTX_BASE
     assert due(0.61, 90_000, 0, burn=1)     # ...and with no window the burn does not move the floor
-    # the floor weighs the burn: 80% of the window with zero burn, 50% with burn at 50% of the budget
+    # the floor weighs the burn: 90% of the window with zero burn, 50% with burn at 50% of the budget
     assert cx.BUDGET == 20_000_000 and cx.BURN_FULL_PCT == 50
     assert not due(0.90, 500_000, M, burn=10)   # context 50%, burn 10%: not the time
-    assert not due(0.90, 730_000, M, burn=10) and due(0.90, 740_000, M, burn=10)
-    assert not due(0.90, 640_000, M, burn=25) and due(0.90, 650_000, M, burn=25)
+    assert not due(0.90, 810_000, M, burn=10) and due(0.90, 820_000, M, burn=10)
+    assert not due(0.90, 690_000, M, burn=25) and due(0.90, 700_000, M, burn=25)
     assert due(0.90, 500_000, M, burn=80)
 
 
-def test_cut_between_50_and_80_percent():
+def test_handoff_at_90_percent_and_reread_never_brings_it_forward():
+    """Seven of seven main handoffs in one week fired at 60-65% of a 1M window:
+    reread ran past the floor in every long session, so it told none apart."""
     cases = [  # context, reread, what the watcher says
-        (100_000, 0.90, "nothing"), (150_000, 0.90, "nothing"), (300_000, 0.90, "nothing"),
-        (490_000, 0.90, "nothing"),
-        (500_000, 0.60, "PROACTIVE HANDOFF"), (520_000, 0.90, "PROACTIVE HANDOFF"),
-        (520_000, 0.00, "Informational only"), (700_000, 0.50, "Informational only"),
-        (790_000, 0.00, "Informational only"),
-        (800_000, 0.00, "PROACTIVE HANDOFF"), (900_000, 0.30, "PROACTIVE HANDOFF"),
+        (100_000, 0.90, "nothing"), (500_000, 0.90, "nothing"), (610_000, 0.95, "nothing"),
+        (740_000, 0.90, "nothing"),
+        (750_000, 0.00, "Informational only"), (800_000, 0.90, "Informational only"),
+        (890_000, 0.95, "Informational only"),
+        (900_000, 0.00, "PROACTIVE HANDOFF"), (950_000, 0.30, "PROACTIVE HANDOFF"),
     ]
     h = home()
     for i, (ctx, share, expected) in enumerate(cases):
@@ -131,11 +132,11 @@ def test_cut_between_50_and_80_percent():
                                               "PROACTIVE HANDOFF": 2}[expected]
 
 
-def test_context_at_50_with_low_burn_is_not_handoff_time():
+def test_no_burn_brings_the_handoff_forward():
     h = home()
-    cases = [(500_000, 10, "Informational only"), (700_000, 10, "Informational only"),
-             (760_000, 10, "PROACTIVE HANDOFF"), (600_000, 25, "Informational only"),
-             (660_000, 25, "PROACTIVE HANDOFF"), (500_000, 60, "PROACTIVE HANDOFF")]
+    cases = [(760_000, 10, "Informational only"), (850_000, 10, "Informational only"),
+             (800_000, 25, "Informational only"), (890_000, 60, "Informational only"),
+             (900_000, 60, "PROACTIVE HANDOFF")]
     for i, (ctx, burn, expected) in enumerate(cases):
         sid = f"aaaabbbb-{i:04d}"
         text = said(run(h, "PostToolUse", sid, session(h, sid, ctx, 0.9, burn)))
@@ -192,7 +193,7 @@ def test_mistyped_threshold_does_not_turn_the_watcher_off():
                 {"SQUAD_CTX_BASE": "40k"}):
         h = home()
         sid = "99999999-0001"
-        got = kind(said(run(h, "PostToolUse", sid, session(h, sid, 850_000, 0.9), env=bad)))
+        got = kind(said(run(h, "PostToolUse", sid, session(h, sid, 950_000, 0.9), env=bad)))
         assert got == "PROACTIVE HANDOFF", (bad, got)
         sid = "99999999-0002"                     # and no value makes the cut early
         assert said(run(h, "PostToolUse", sid, session(h, sid, 60_000, 0.9), env=bad)) == "nothing", bad
@@ -202,7 +203,7 @@ def test_mistyped_threshold_does_not_turn_the_watcher_off():
 def test_handoff_level_with_no_handoff_written_repeats_the_order():
     h = home()
     sid = "eeeeeeee-0001"
-    tr = session(h, sid, 550_000, 0.9)
+    tr = session(h, sid, 950_000, 0.9)
     assert kind(said(run(h, "PostToolUse", sid, tr))) == "PROACTIVE HANDOFF"
     assert kind(said(run(h, "Stop", sid, tr))) == "stopped without writing the handoff"
 
@@ -234,7 +235,7 @@ def test_ordered_handoff_switches_session_and_calls_the_pickup():
     sid = "abcdef12-0001"
     herdr, sent = fake_herdr(h, sid)
     env = {"HERDR_PANE_ID": "w1:p1", "HERDR_BIN_PATH": herdr}
-    tr = session(h, sid, 550_000, 0.9)
+    tr = session(h, sid, 950_000, 0.9)
     text = said(run(h, "PostToolUse", sid, tr, env=env))
     assert "PROACTIVE HANDOFF" in text and "calls the pickup on its own" in text, text
     handoff = write_handoff(h, tr)
@@ -258,10 +259,11 @@ def test_ordered_handoff_switches_session_and_calls_the_pickup():
 def test_dispatch_denied_at_the_ceiling_arms_the_switch():
     h = home()
     sid = "12345678-0001"
-    tr = session(h, sid, 620_000, 0.0)                   # 62%, low reread: only a notice...
-    assert kind(said(run(h, "PostToolUse", sid, tr))) == "Informational only"
+    tr = session(h, sid, 800_000, 0.0)                   # 80%, low reread: only a notice...
+    ceil = {"SQUAD_CTX_CEILING": "750000"}               # ...below a ceiling set lower than the handoff line
+    assert kind(said(run(h, "PostToolUse", sid, tr, env=ceil))) == "Informational only"
     out = run(h, "PreToolUse", sid, tr, {"tool_name": "Agent",
-                                         "tool_input": {"subagent_type": "developer", "prompt": "x"}})
+                                         "tool_input": {"subagent_type": "developer", "prompt": "x"}}, ceil)
     assert "DISPATCH DENIED" in out, out                 # ...but dispatching from here means handoff
     st = state(h, sid)
     assert st["ctx_level"] == 2 and st["ordered"] is True
@@ -269,7 +271,7 @@ def test_dispatch_denied_at_the_ceiling_arms_the_switch():
     st["checked"] = 0                                    # forces a new measurement of the transcript
     with open(path, "w") as fh:
         json.dump(st, fh)
-    run(h, "PostToolUse", sid, tr)
+    run(h, "PostToolUse", sid, tr, env=ceil)
     assert state(h, sid)["ctx_level"] == 2               # the next measurement does not disarm
     # below the ceiling the dispatch passes
     sid2 = "12345678-0002"
@@ -277,6 +279,58 @@ def test_dispatch_denied_at_the_ceiling_arms_the_switch():
     run(h, "PostToolUse", sid2, tr2)
     assert "DISPATCH DENIED" not in run(h, "PreToolUse", sid2, tr2, {
         "tool_name": "Agent", "tool_input": {"subagent_type": "developer", "prompt": "x"}})
+
+
+def test_default_dispatch_ceiling_is_the_handoff_line_of_the_window():
+    """A flat 600k denied dispatch, and ordered a handoff, at 60% of a 1M window."""
+    h = home()
+    for i, (ctx, denied) in enumerate(((610_000, False), (890_000, False), (900_000, True))):
+        sid = f"12345678-01{i:02d}"
+        tr = session(h, sid, ctx, 0.0)
+        run(h, "PostToolUse", sid, tr)
+        out = run(h, "PreToolUse", sid, tr, {"tool_name": "Agent",
+                                             "tool_input": {"subagent_type": "developer", "prompt": "x"}})
+        assert ("DISPATCH DENIED" in out) is denied, (ctx, out)
+
+
+def sub_session(h, sid, agent, ctx, share):
+    """Main transcript plus the sub-session's own, where sub_transcript() looks."""
+    main = session(h, sid, 10_000, 0.0)
+    sub = session(h, f"{sid}-{agent}", ctx, share)
+    folder = os.path.join(main[:-6], "subagents")
+    os.makedirs(folder, exist_ok=True)
+    os.replace(sub, os.path.join(folder, f"agent-{agent}.jsonl"))
+    return main
+
+
+def test_sub_session_reread_is_a_handoff_only_past_the_warning():
+    """One in four sub-sessions was ordered home between 80k and 120k for reread alone."""
+    h = home()
+    tr = sub_session(h, "5ab00000-0001", "a1", 100_000, 0.9)
+    assert "HANDOFF" not in said(run(h, "PostToolUse", "5ab00000-0001", tr, {"agent_id": "a1"}))
+    tr = sub_session(h, "5ab00000-0002", "a2", 120_000, 0.9)
+    assert "HANDOFF:" in said(run(h, "PostToolUse", "5ab00000-0002", tr, {"agent_id": "a2"}))
+
+
+def test_sub_session_with_reread_below_the_warning_did_not_end_badly():
+    h = home()
+    sid = "5ab00000-0003"
+    tr = sub_session(h, sid, "a3", 100_000, 0.9)
+    run(h, "SubagentStop", sid, tr, {"agent_id": "a3", "agent_type": "verifier"})
+    assert "reread" not in run(h, "UserPromptSubmit", sid, tr, {"prompt": "next"})
+    sid = "5ab00000-0004"
+    tr = sub_session(h, sid, "a4", 130_000, 0.9)
+    run(h, "SubagentStop", sid, tr, {"agent_id": "a4", "agent_type": "verifier"})
+    assert "reread" in run(h, "UserPromptSubmit", sid, tr, {"prompt": "next"})
+
+
+def test_report_hands_off_at_90_and_reread_only_explains():
+    def verdict(ctx, share):
+        h = home()
+        return cx.analyse("claude", "rrrrrrrr-0001", session(h, "r", ctx, share), h, time.time())["verdict"]
+    assert verdict(600_000, 0.95) == "CONTINUE"
+    assert verdict(740_000, 0.0) == "CONTINUE" and verdict(760_000, 0.0) == "COMPACT"
+    assert verdict(900_000, 0.0) == "HANDOFF"
 
 
 def orchestrators(h, n):

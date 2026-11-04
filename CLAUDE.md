@@ -124,3 +124,23 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
     "accept with the failures explained". With the gate
     green and SHIP from the `verifier`, the main session merges by itself,
     through the merge queue, without asking for an OK.
+12. **The owner's standing rules become decisions.** When the owner states a
+    rule ("always…", "never…", "from now on…"; the router flags it with a
+    `[squad decision]` line), the main session records it with
+    `squad-decisions add --title T --source owner` (What / Why on stdin),
+    acknowledges it in one line and, if it changes how the repository behaves,
+    opens a card for the change: a decision records context, it is not the
+    implementation. When it advances a card, it also records each decision the
+    agents returned under `Decisions`, with `--source "card <id>"`. Briefs point
+    agents to `squad-decisions index`. See `docs/decisions.md`.
+
+## Response modes
+
+Pick the lightest mode that does the job.
+
+| Mode | When | Who works |
+|---|---|---|
+| **Direct** | A question answered from the context or the repository; nothing changes | The main session, no agent |
+| **Light** | 1–2 files with an obvious implementation (rule 9) | The main session, on the card |
+| **Standard** | One card | One agent in the card's worktree; then the `verifier` (rule 4) |
+| **Full** | Several cards | `github` lays out the fronts first (rule 3); one agent per card |

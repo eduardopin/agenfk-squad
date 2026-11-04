@@ -36,6 +36,11 @@ FIX_FIRST with that as the reason (under Return).
 
 ## Steps
 
+Before working, read `squad-decisions index` (the project's settled decisions)
+and follow them; a decision you made that the next session should keep goes in
+your return under a `Decisions` heading (title, what, why), for the main session
+to record.
+
 ### The project rules
 
 Read `CLAUDE.md` / `AGENTS.md`, the card and the step it is in:

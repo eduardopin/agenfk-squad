@@ -156,6 +156,28 @@ session behaviour that motivated it, and ships with a test.
 *Enforced by:* the AgenFK flow; rule 5 of `CLAUDE.md`; the review checklist in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+## Standing rules are written down once
+
+An owner who says "never deploy on Fridays" in one session should not have to
+say it again in the next one, or in the worktree next door. A rule that lives
+only in a conversation is gone at the next `/clear`.
+
+So a standing rule becomes a decision: one file in the project's decision
+store, outside the checkout, that every session of the repository reads at
+start. The router notices when the owner states one ("always", "never", "from
+now on", "sempre", "nunca", "daqui em diante") and asks the main session to
+record it. Agents return the decisions they made under a `Decisions` heading,
+and the main session records them with the card as the source. A question, or
+an ordinary request that merely contains the word, does not count: a hint that
+fires on every prompt gets ignored.
+
+A decision records context; it is not the implementation. A rule that changes
+how the repository behaves still gets a card.
+
+*Enforced by:* `hooks/squad-router.py` on `UserPromptSubmit` (the
+`[squad decision]` line), `hooks/squad-decisions.py` on `SessionStart` (the
+index) and rule 12 of `CLAUDE.md`. Details in [decisions.md](decisions.md).
+
 ## What the squad is not
 
 - **Not a replacement for AgenFK.** It has no board, no flow engine and no

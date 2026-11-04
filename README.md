@@ -87,7 +87,7 @@ flowchart LR
 
     subgraph hooks["Hooks"]
         direction TB
-        router["squad-router<br/>routes the request"]
+        router["squad-router<br/>routes the request,<br/>flags owner rules"]
         watch["squad-watch<br/>measures, warns, denies"]
         switch["squad-switch<br/>fresh session + pickup"]
         turn["squad-turn<br/>merge queue"]

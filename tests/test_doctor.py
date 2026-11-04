@@ -458,6 +458,85 @@ def test_no_settings_json_fails_every_hook_and_creates_nothing():
     assert not os.path.lexists(path) and data["exit"] == 1
 
 
+
+# ---------------------------------------------------------------- review round 2
+
+def test_agenfk_health_that_prints_failed_but_exits_0_warns():
+    # The real `agenfk health` prints FAILED per check and exits 0 with the server down.
+    bin_dir = os.path.join(tempfile.mkdtemp(dir=TMP), "bin")
+    exe = stub(bin_dir, "agenfk", 'printf "Checking API Server... "; echo FAILED; '
+                                  'echo "   - Error: Could not connect to http://127.0.0.1:9"; '
+                                  'echo "Checking Database... FAILED"; '
+                                  'echo "Found 2 potential issue(s). Run ./agenfk up to fix."; exit 0')
+    check = doc.check_agenfk(which=lambda _: exe)
+    assert check["status"] == doc.WARN and check["summary"].endswith(": Checking API Server... FAILED"), check
+    assert "agenfk up" in check["fix"], check
+    exe = stub(bin_dir, "agenfk", 'echo "Checking for duplicate project roots... OK"; '
+                                  'echo "Found 1 potential issue(s)." >&2; exit 0')
+    check = doc.check_agenfk(which=lambda _: exe)
+    assert check["status"] == doc.WARN and check["summary"].endswith(": Found 1 potential issue(s)."), check
+    exe = stub(bin_dir, "agenfk", 'echo "Checking API Server... OK"; echo "All systems healthy!"; exit 0')
+    assert doc.check_agenfk(which=lambda _: exe)["status"] == doc.OK
+
+
+def test_a_kill_switch_is_only_exactly_zero_as_the_watcher_compares_it():
+    for raw in (" 0", "0 ", "\t0\n"):
+        by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_WATCH": raw, "SQUAD_TURN": raw})}
+        assert by["SQUAD_WATCH"]["status"] == doc.OK and "disabled" not in by["SQUAD_WATCH"]["detail"], (raw, by)
+        assert by["SQUAD_TURN"]["status"] == doc.OK and "disabled" not in by["SQUAD_TURN"]["detail"], (raw, by)
+
+
+def test_paths_in_prose_fix_lines_are_quoted_too():
+    spaced = os.path.join(tempfile.mkdtemp(dir=TMP), "a dir")
+    install = ["python3", os.path.join(doc.ROOT, "scripts", "squad_settings.py"), "install", "--config"]
+    # not JSON: Refused -> "fix <path> by hand, then: ..."
+    config = os.path.join(spaced, "not json")
+    os.makedirs(config)
+    path = os.path.join(config, "settings.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("{ not json")
+    hooks = doc.check_hooks(config)
+    head, tail = hooks["fix"].split(", then: ")
+    assert shlex.split(head) == ["fix", path, "by", "hand"] and shlex.split(tail) == install + [config], hooks
+    # a directory where the file belongs: OSError -> "fix <path>, then: ..."
+    config = os.path.join(spaced, "a dir there")
+    path = os.path.join(config, "settings.json")
+    os.makedirs(path)
+    head, tail = doc.check_hooks(config)["fix"].split(", then: ")
+    assert shlex.split(head) == ["fix", path] and shlex.split(tail) == install + [config], head
+    # a symlink loop: the early OSError branch
+    config = os.path.join(spaced, "a loop")
+    os.makedirs(config)
+    path = os.path.join(config, "settings.json")
+    os.symlink("settings.json", path)
+    head, _ = doc.check_hooks(config)["fix"].split(", then: ")
+    assert shlex.split(head) == ["fix", path], head
+    # squad-turn exists but its directory is not on PATH -> "add <dir> to PATH"
+    home = os.path.join(spaced, "ho me")
+    local_bin = os.path.join(home, ".local", "bin")
+    stub(local_bin, "squad-turn", "exit 0")
+    saved = os.environ.get("PATH")
+    os.environ["PATH"] = "/usr/bin:/bin"
+    try:
+        turn = doc.check_squad_turn(which=lambda _: None, root=spaced, home=home)
+    finally:
+        os.environ["PATH"] = saved
+    assert turn["status"] == doc.FAIL and shlex.split(turn["fix"]) == ["add", local_bin, "to", "PATH"], turn
+
+
+def test_a_squad_turn_on_path_that_is_not_executable_says_so():
+    base, home, config = wired()
+    local = os.path.join(home, ".local", "bin", "squad-turn")
+    os.unlink(local)
+    with open(local, "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\nexit 0\n")
+    os.chmod(local, 0o644)
+    _, checks = as_json(doctor(base, home, config, "--json"))      # ~/.local/bin is the whole PATH
+    turn = checks["squad-turn"]
+    assert turn["status"] == doc.FAIL and "not an executable file" in turn["summary"], turn
+    assert "not on PATH" not in turn["summary"] and shlex.split(turn["fix"])[0] == "run", turn
+    assert turn["fix"].endswith("install.sh"), turn
+
 if __name__ == "__main__":
     try:
         for name, fn in sorted(globals().items()):

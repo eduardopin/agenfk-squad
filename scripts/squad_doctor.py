@@ -9,7 +9,8 @@ where the search for .agenfk/project.json starts.
 
 Checks, in this order:
   python      this interpreter is Python 3.10 or newer
-  agenfk      `agenfk` is on PATH and `agenfk health` answers (WARN otherwise:
+  agenfk      `agenfk` is on PATH and `agenfk health` answers with no FAILED or
+              "potential issue" line, whatever its exit code (WARN otherwise:
               the links and hooks still work, the cards do not)
   links       every agents/*.md, skills/*/ and skills/vendor/*/ with a SKILL.md,
               CLAUDE.md and each hook of hooks/manifest.json sits in the config
@@ -111,11 +112,14 @@ def check_agenfk(which=shutil.which, run=subprocess.run, timeout=30):
     except (OSError, subprocess.TimeoutExpired) as e:
         return result("agenfk", WARN, f"`agenfk health` did not answer ({e.__class__.__name__})",
                       "start the server with `agenfk up`, then run `agenfk health`")
-    if r.returncode != 0:
-        lines = [line.strip() for line in ((r.stdout or "") + "\n" + (r.stderr or "")).splitlines() if line.strip()]
-        failed = [line for line in lines if "FAILED" in line] or lines
-        why = f": {failed[0]}" if failed else ""
-        return result("agenfk", WARN, f"`agenfk health` exited {r.returncode}{why}",
+    # `agenfk health` exits 0 even with the server down: it prints "FAILED" per check and
+    # "Found N potential issue(s)" at the end, so the output decides, whatever the exit code.
+    lines = [line.strip() for line in ((r.stdout or "") + "\n" + (r.stderr or "")).splitlines() if line.strip()]
+    failed = [line for line in lines if "FAILED" in line] or [line for line in lines if "potential issue" in line]
+    if r.returncode != 0 or failed:
+        why = f": {(failed or lines)[0]}" if failed or lines else ""
+        said = f"exited {r.returncode}" if r.returncode != 0 else "reports a problem"
+        return result("agenfk", WARN, f"`agenfk health` {said}{why}",
                       "start the server with `agenfk up`, then run `agenfk health`")
     return result("agenfk", OK, f"`agenfk health` answered ({exe})")
 
@@ -208,13 +212,13 @@ def check_hooks(config, manifest=ss.MANIFEST):
         try:
             open(path, encoding="utf-8").close()
         except OSError as e:
-            return result("hooks", FAIL, f"cannot read {path}: {e}", f"fix {path}, then: {fix}")
+            return result("hooks", FAIL, f"cannot read {path}: {e}", f"fix {q(path)}, then: {fix}")
     try:
         settings = ss.load_settings(path)
     except ss.Refused as e:
-        return result("hooks", FAIL, str(e), f"fix {path} by hand, then: {fix}")
+        return result("hooks", FAIL, str(e), f"fix {q(path)} by hand, then: {fix}")
     except OSError as e:
-        return result("hooks", FAIL, f"cannot read {path}: {e}", f"fix {path}, then: {fix}")
+        return result("hooks", FAIL, f"cannot read {path}: {e}", f"fix {q(path)}, then: {fix}")
     items, seen = [], set()
     for event, wanted in plan.items():
         groups = settings.get("hooks", {}).get(event, [])
@@ -264,7 +268,7 @@ def check_squad_turn(which=shutil.which, root=ROOT, home=None):
             return result("squad-turn", FAIL, f"{local} is in a directory on PATH but is not an executable file",
                           f"run {q(installer)}")
         return result("squad-turn", FAIL, f"{local} exists but its directory is not on PATH",
-                      f"add {os.path.dirname(local)} to PATH")
+                      f"add {q(os.path.dirname(local))} to PATH")
     return result("squad-turn", FAIL, "not on PATH: the merge queue (`squad-turn request`) is called by name",
                   f"run {q(installer)}")
 
@@ -408,7 +412,7 @@ def watcher_env(path=WATCH, environ=None):
                                 high if high is not None else effective)
                 status, detail = WARN, (f"{raw} (set; out of range {'' if low is None else low}.."
                                         f"{'' if high is None else high}: the watcher uses {label(name, effective)})")
-        if raw.strip() == "0" and name in KILL_SWITCHES:
+        if raw == "0" and name in KILL_SWITCHES:      # exactly "0", as the watcher compares it
             status, detail = WARN, f"0 (set): {KILL_SWITCHES[name]}"
         items.append(item(name, status, detail, value=raw, default=default, is_default=False, effective=effective))
     return items

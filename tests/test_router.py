@@ -121,6 +121,132 @@ NEGATIVE = [
 ]
 
 
+# Reports of what the code does, written with a marker in front: the verb after it is
+# in the third person or in the past, so it describes, it does not instruct.
+REPORTS = [
+    "Nunca abre o modal no mobile, corrija.",
+    "Sempre inicia com a tela branca, investigue.",
+    "Nunca usei esse comando, me mostra como funciona.",
+    "Sempre trava no segundo login, veja os logs.",
+    "We don't validate the input; add validation.",
+    "We never log errors; add logging.",
+    "We always return 500 on a bad token, fix it.",
+    "A gente nunca valida o token, adicione a checagem.",
+    "Nós sempre retornamos 500 nesse caso, corrija.",
+]
+
+# A marker glued to another word is part of a name, not a rule.
+GLUED = [
+    "Never-ending spinner on the login page, fix it.",
+    "Always-on VPN breaks the tests, investigate.",
+    "Sempre-viva is the name of the theme, rename it.",
+    "Never-merge label is missing on the PR, add it.",
+    "Always-run jobs time out on CI, fix them.",
+]
+
+# Text the owner pasted or another program wrote: it must never turn into a
+# "record this decision" instruction, whatever it says.
+PASTED = [
+    "The README says: always run make before the tests",
+    "Check this log line\nERROR: never retry on 4xx",
+    "Look at this:\n2026-11-04 10:00:01 WARN always use the fallback store",
+    "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n"
+    "RuntimeError: never call init twice",
+    "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\nnever call init twice",
+    "Review this change.\n\ndiff --git a/app.py b/app.py\n@@ -1,2 +1,3 @@\n-x = 1\n+x = 2\n"
+    "Never commit secrets to the repository.",
+    "Review this change for security vulnerabilities.\n\n=== DIFF: app.ts ===\n@@ -78,6 +78,8 @@\n"
+    "   if (a) return;\n+  // Always use parameterised queries.\n Always validate input at the boundary.\n",
+    "```diff\n- old\n+ new\n```\nNever merge without the verifier.",
+    "Fix this:\n+always run the seed\n+never call the api\nthen ship it",
+    "What changed in the config\n-x = 1\n+x = 2\nNever commit secrets to the repository.",
+    "This block is in the old config:\n    never retry on 4xx\nRemove it.",
+    "Another Claude session sent a message: Never merge without the verifier.",
+    "You previously flagged these candidate vulnerabilities:\nAlways run the suite before merging.",
+    "You are a senior security engineer. Always report every finding with a file and line.",
+    "⌁[squad-watch] WAKE: never stop until it is delivered",
+]
+
+# Idioms and loose markers: "going forward with" is "proceeding with", and a
+# "from now on" with no instruction after it is an expectation, not a rule.
+LOOSE = [
+    "Moving forward with the migration, run it on staging.",
+    "Going forward with the refactor, split the module.",
+    "From now on the test should pass.",
+    "A partir de agora o teste deve passar.",
+    "Add a check so the build stays green from now on.",
+    "Stop logging the token in the auth handler.",
+    "Stop ignoring the lint errors and fix them.",
+    "Pare de logar o token no handler.",
+    # limited to this spot or this moment: an instruction for now
+    "Never touch that file now, I am editing it.",
+    "Nunca mexa nesse arquivo agora.",
+    "Never merge this one, it is a draft.",
+    "Never use the staging database here, point it at the local one.",
+    "Nunca use o mock aqui, o teste precisa do banco real.",
+]
+
+# Rules written the way people write rules in a chat: as a list, or through "I'd like you to".
+RECALL = [
+    "- always run the suite before pushing",
+    "* Nunca faça push direto na main",
+    "1. never merge with a red gate",
+    "Rules for this repo:\n- never commit to main\n- always pass the card id",
+    "I'd like you to always comment on the card.",
+    "I’d like you to never force-push a shared branch.",
+    "I need you to always run the linter first.",
+    "Quero que vocês sempre rodem a suíte.",
+    "Preciso que você nunca use --no-verify.",
+    "From now on, use pnpm.",
+    "Daqui em diante, rode a suíte antes do push.",
+    "We must always run the suite before a PR.",
+    "Run the full suite before pushing from now on.",
+]
+
+
+def test_reports_in_the_third_person_or_the_past_do_not_fire():
+    fired = [p for p in REPORTS if is_directive(p)]
+    assert not fired, fired
+
+
+def test_markers_count_only_as_whole_words():
+    fired = [p for p in GLUED if is_directive(p)]
+    assert not fired, fired
+
+
+def test_pasted_text_diffs_and_programmatic_prompts_do_not_fire():
+    fired = [p for p in PASTED if is_directive(p)]
+    assert not fired, fired
+
+
+def test_idioms_expectations_and_one_off_limits_do_not_fire():
+    fired = [p for p in LOOSE if is_directive(p)]
+    assert not fired, fired
+
+
+def test_rules_in_bullet_lists_and_requests_to_always_fire():
+    missed = [p for p in RECALL if not is_directive(p)]
+    assert not missed, missed
+
+
+def test_a_diff_prompt_reaches_the_hook_and_prints_no_decision_line():
+    review = next(p for p in PASTED if p.startswith("Review this change for security"))
+    rc, out, err = prompt(review)
+    assert rc == 0 and not err, (rc, err)
+    assert not any(l.startswith("[squad decision]") for l in out.splitlines()), out
+
+
+def test_the_decision_line_is_a_question_to_the_session_and_names_the_flags_that_exist():
+    line = router.DECISION
+    assert "may be a standing rule" in line and "If it is" in line, line
+    assert "--supersedes <file>" in line and "squad-decisions list" in line, line
+    decisions = os.path.join(ROOT, "hooks", "squad-decisions.py")
+    for argv, flag in ((["add", "--help"], "--supersedes"), (["list", "--help"], "--all")):
+        done = subprocess.run([sys.executable, decisions, *argv], capture_output=True, timeout=20,
+                              env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+        assert done.returncode == 0 and flag in done.stdout.decode(), (argv, done.stdout, done.stderr)
+
+
 def test_positive_directives_in_english_fire():
     missed = [p for p in POSITIVE_EN if not is_directive(p)]
     assert len(POSITIVE_EN) >= 5 and not missed, missed

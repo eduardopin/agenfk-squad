@@ -1,6 +1,7 @@
 # Concepts
 
-Five principles hold the squad together. Each one answers a failure that was
+Five principles hold the squad together, and one practice rests on them
+(standing rules are written down once). Each one answers a failure that was
 observed, not imagined, and each one is enforced somewhere you can point to: a
 tool list, an AgenFK gate, or a line in a hook. A principle that lives only in
 a prompt is a wish.
@@ -167,9 +168,10 @@ store, outside the checkout, that every session of the repository reads at
 start. The router notices when the owner states one ("always", "never", "from
 now on", "sempre", "nunca", "daqui em diante") and asks the main session to
 record it. Agents return the decisions they made under a `Decisions` heading,
-and the main session records them with the card as the source. A question, or
-an ordinary request that merely contains the word, does not count: a hint that
-fires on every prompt gets ignored.
+and the main session records them with the card as the source. A question, an
+ordinary request that merely contains the word ("it never opens, fix it"), or
+text the owner pasted or a program wrote does not count: the marker must be
+followed by an instruction, and a hint that fires on every prompt gets ignored.
 
 A decision records context; it is not the implementation. A rule that changes
 how the repository behaves still gets a card.

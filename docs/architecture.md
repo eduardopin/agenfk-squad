@@ -13,7 +13,7 @@ agenfk-squad/
 │   ├── design-reference/     the design method and quality floor used by `frontend`
 │   └── vendor/               third-party skills, Apache-2.0, unmodified
 ├── hooks/
-│   ├── squad-router.py       UserPromptSubmit: suggests the agent for the request
+│   ├── squad-router.py       UserPromptSubmit: suggests the agent, flags the owner's standing rules
 │   ├── squad-watch.py        the watcher: seven hook events
 │   ├── squad-switch.py       detached: clears the pane and calls the pickup
 │   └── squad-turn.py         the merge queue CLI (`squad-turn`)
@@ -84,7 +84,7 @@ stdin. The watcher is one script that looks at `hook_event_name` and branches.
 
 | Event | Fires | Script | Can it block? |
 |---|---|---|---|
-| `UserPromptSubmit` | The owner sends a prompt | `squad-router.py` | No. Prints a routing hint as context |
+| `UserPromptSubmit` | The owner sends a prompt | `squad-router.py` | No. Prints at most two route hints, and one `[squad decision]` line when the owner states a standing rule |
 | `UserPromptSubmit` | The owner sends a prompt | `squad-watch.py` | No. Delivers pending notes (a sub-session ended badly, `SLOT FREE`, `MERGE TURN`) |
 | `PreToolUse` | Before any tool call | `squad-watch.py` | Yes. Returns `permissionDecision: deny` with the reason |
 | `PostToolUse` | After any tool call | `squad-watch.py` | No. Adds context: warnings, `PROACTIVE HANDOFF` |
@@ -93,8 +93,12 @@ stdin. The watcher is one script that looks at `hook_event_name` and branches.
 | `Stop` | The main session ends its turn | `squad-watch.py` | Yes. Returns `decision: block` when a handoff is owed |
 | `PreCompact` | Before `/compact` or an auto-compact | `squad-watch.py` | No. Writes `<session>-compact.md` in the main session; prints nothing |
 
-The router is separate on purpose: it is seventy lines of regular expressions
-with no state, and it should keep working if the watcher is switched off.
+The router is separate on purpose: it is about two hundred and fifty lines of
+regular expressions with no state, and it should keep working if the watcher is
+switched off. Its decision detector is an allowlist: a marker ("always",
+"nunca", "from now on") counts only when an instruction from a curated list of
+verbs follows it, and pasted text, diffs and prompts written by programs are
+never read, so untrusted text cannot become a "record this decision" line.
 
 ### What "deny" looks like to the model
 

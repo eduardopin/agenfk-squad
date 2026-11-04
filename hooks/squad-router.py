@@ -2,16 +2,17 @@
 """UserPromptSubmit: points to the squad agent when the request matches a role.
 
 Meant to sit next to a design skill router, if you run one. Prints at most 2
-route hints and stays silent when nothing matches. When the owner states a
-standing rule ("always...", "from now on...", "nunca..."), it adds one
-`[squad decision]` line asking to record it with `squad-decisions add`; it
-never blocks the prompt and exits 0 on any input. `developer` has no trigger on
+route hints and stays silent when nothing matches. When the owner seems to
+state a standing rule ("always run...", "from now on, use...", "nunca faca..."),
+it adds one `[squad decision]` line asking the session to judge it and record it
+with `squad-decisions add`; it never blocks the prompt and exits 0 on any input. `developer` has no trigger on
 purpose: it would match almost every request; the table in the global
 CLAUDE.md covers that case.
 
 The patterns are bilingual on purpose (Portuguese and English): owners type in
 any language. The prompt is lowercased and stripped of accents before matching.
 """
+import itertools
 import json
 import re
 import sys
@@ -65,17 +66,21 @@ RULES = [
 
 MAX_HINTS = 2
 
-# Owner directives: a standing rule ("always...", "from now on...") becomes a
-# recorded decision, so the next session does not ask again. Precision over
-# recall: a missed rule costs one line the owner can still ask for, a false one
-# nags on every ordinary request. So the marker has to open a sentence that is
-# not a question; only the unmistakable phrases count in mid-sentence; and a
-# marker followed by a report of what happened ("never worked", "sempre que
-# rodo") is a symptom, not a rule. Runs on the normalised prompt.
-DECISION = ("[squad decision] The owner stated a standing rule: record it with "
-            "`squad-decisions add --title \"<the rule>\" --source owner` (What / Why on stdin), "
-            "acknowledge it in one line, and if it changes how the repository behaves open a card "
-            "for the change (a decision records context; it is not the implementation).")
+# Owner directives: a standing rule ("always run...", "from now on, use...")
+# becomes a recorded decision, so the next session does not ask again. Precision
+# over recall: a missed rule costs one line the owner can still ask for, a false
+# one nags on every ordinary request. So the design is an allowlist: a marker
+# counts only when it opens a sentence that is not a question and the word after
+# it is an instruction from a curated list of verbs (imperative or infinitive).
+# "Nunca abre", "we always return", "never-ending" describe; they do not
+# instruct. Pasted text, diffs and prompts written by programs are never read:
+# untrusted text must not become a "record this decision" line. Runs on the
+# normalised prompt.
+DECISION = ("[squad decision] This may be a standing rule from the owner. If it is, record it: "
+            "`squad-decisions add --title \"<the rule>\" --source owner` (What / Why on stdin; use "
+            "`--supersedes <file>` if it replaces one; `squad-decisions list` shows them), acknowledge it "
+            "in one line, and if it changes how the repository behaves open a card for the change "
+            "(a decision records context; it is not the implementation).")
 
 FILLER = (r"^(?:(?:please|pls|also|and|so|ok|okay|now|note|rule|reminder|important|remember to"
           r"|por favor|pf|tambem|e|entao|ok|agora|nota|regra|importante|lembre(?:-se)? de|lembrando)[\s,:-]+)*")
@@ -86,57 +91,139 @@ QUESTION = re.compile(
     r"|por que|porque|pq|como(?! regra)|o que|qual|quais|quando|onde|quem|sera que|e se|devemos|deveriamos"
     r"|podemos|da pra|e possivel)\b")
 
-# A marker that needs the word after it checked: "never <verb>" is a rule,
-# "never worked" is a report.
-OPENERS = re.compile(
-    r"(?:always|never(?: ever)?|we (?:always|never|don't|do not|no longer)|(?:we|you) (?:must|should) (?:always|never)"
-    r"|i want (?:you|us|everyone) to (?:always|never)"
-    r"|sempre|nunca(?: mais)?|jamais|(?:a gente|nos) (?:sempre|nunca|nao|jamais)"
-    r"|quero que (?:voce|voces|vc|vcs|a gente|todos) (?:sempre|nunca|jamais))\b ?")
-REPORT = re.compile(
-    r"(?:mind|seen|been|had|got|gotten|did|was|were|have|has|know|knew|understand|see|saw|get|seem"
-    r"|(?!(?:need|embed|feed|proceed|seed|succeed|exceed)\b)\w+ed|\w*[^s\W]s"
-    r"|que (?:eu )?\w+o|\w+(?:ou|eu|iu)|vi|vimos|tive|tivemos|fiz|fizemos|consegui|conseguimos|foi|era|tem(?! que)|temos"
-    r"|sabe|sabemos|da|funciona|falha|quebra|trava|passa|roda|retorna|aparece|acontece|termina|carrega|responde"
-    r"|sobe|cai|mostra"
-    r"|the|a|an|this|that|it|my|our|o|os|as|um|uma|esse|essa|este|esta|isso|isto|ele|ela|meu|minha|nosso|nossa)\b")
+# The instruction after a marker: English base form; Portuguese imperative
+# (singular and plural) or infinitive. Third person ("abre", "returns") and past
+# ("usei", "worked") are left out on purpose: after a marker they report.
+VERB = (r"(?:use|run|write|add|commit|push|merge|keep|call|return|open|close|check|test|name|put|prefer"
+        r"|avoid|pass|deploy|ship|squash|rebase|force-push|force|create|delete|remove|skip|mock|comment|ask"
+        r"|read|update|document|log|review|touch|edit|change|leave|start|include|follow|wait|send|tag|sign"
+        r"|link|pin|bump|release|rely|target|go|tell|reply|answer|cite|store|hard-?code|expose|print"
+        r"|import|install|upgrade|break|reformat|rename|split|amend|reuse|trust|assume|block|bypass|disable"
+        r"|enable|ignore|retry|wrap|publish|post|make|try|mention|respond"
+        r"|rodem?|rodar|usem?|usar|escrevam?|escrever|criem?|criar|abram?|abrir|commitem?|commitar"
+        r"|facam?|fazer|mantenham?|manter|chamem?|chamar|testem?|testar|passem?|passar|comentem?|comentar"
+        r"|mandem?|mandar|coloquem?|colocar|prefiram?|preferir|evitem?|evitar|deixem?|deixar|confiram?"
+        r"|conferir|verifiquem?|verificar|pecam?|pedir|subam?|subir|mergeiem?|mergear|fechem?|fechar"
+        r"|adicionem?|adicionar|apaguem?|apagar|removam?|remover|pulem?|pular|documentem?|documentar"
+        r"|atualizem?|atualizar|revisem?|revisar|leiam?|ler|esperem?|esperar|enviem?|enviar|publiquem?"
+        r"|publicar|forcem?|forcar|ignorem?|ignorar|confiem?|confiar|mexam?|mexer|empurrem?|empurrar"
+        r"|mencionem?|mencionar|respondam?|responder)(?![\w-])")
 
-# A limit to one run makes it an instruction for now, not a standing rule.
-ONE_OFF = re.compile(
-    r"\b(?:this time|for now|for this (?:run|test|one|card|pr)|just this once"
-    r"|desta vez|dessa vez|so desta vez|por enquanto|por ora|nesse teste|neste teste|nessa rodada|nesta rodada)\b")
+# "We <verb>" is how a team states its practice, and also how anyone describes
+# what the code does ("we always return 500"). Only process verbs count there;
+# Portuguese "a gente" takes the third person, "nos" the first plural.
+WE_VERB = (r"(?:use|ship|deploy|merge|commit|push|squash|rebase|force-push|release|mock|vendor|pin|skip"
+           r"|bypass|hard-?code|rely"
+           r"|usa|usamos|commita|commitamos|mergeia|mergeamos|sobe|subimos|deploya|deployamos|publica"
+           r"|publicamos|mocka|mockamos|pula|pulamos"
+           r"|(?:faz|fazemos|da|damos) (?:merge|deploy|push|commit|rebase|squash|release|force-push))(?![\w-])")
+
+ASK = (r"(?:(?:i want|i'd like|i would like|i need) (?:you|you all|us|everyone|all of you) to "
+       r"|(?:we|you) (?:must|should|need to|have to) "
+       r"|(?:quero|preciso) que (?:voce|voces|vc|vcs|todos|a gente) )")
+
+# Bare marker + instruction: "never commit to main", "quero que voce sempre comente".
+OPENER = re.compile(ASK + r"?(?:always|never(?: ever)?|sempre|nunca(?: mais)?|jamais)\s+" + VERB)
+# Team marker + practice: "we don't use ORMs", "a gente nao usa ORM".
+WE = re.compile(r"(?:we (?:always|never|don't|do not|no longer)|(?:a gente|nos) (?:sempre|nunca|nao|jamais))"
+                r"\s+" + WE_VERB)
+# A condition, then the instruction: "sempre que abrir um PR, rode a suite".
+WHENEVER = re.compile(r"(?:sempre que|whenever) [^,]{1,80},\s*(?:(?:always|sempre) )?" + VERB)
 
 # A marker that is a rule by itself, when it opens the sentence.
 STANDALONE = re.compile(
-    r"(?:don't ever|dont ever|do not ever|stop (?!(?:every|some|no|any)thing\b)\w+ing\b"
-    r"|prefer \S.{0,60}? (?:over|to|instead of|rather than) \S|moving forward\b"
-    r"|nao (?:use|usem)\b|parem? de\b|prefiram?\b|de hoje em diante|a partir de hoje)")
+    r"(?:don't ever|dont ever|do not ever|stop using \S"
+    r"|prefer \S.{0,60}? (?:over|to|instead of|rather than) \S"
+    r"|nao (?:use|usem)\b|parem? de usar\b|prefiram?\b)")
 
-# Unmistakable anywhere in a sentence: "PRs target beta from now on".
-ANYWHERE = re.compile(
+# Unmistakable time markers, anywhere in a sentence; they count when the clause
+# they govern is an instruction: "from now on, use pnpm", "PRs target beta from
+# now on". "From now on the test should pass" is an expectation, and "going
+# forward with the refactor" is "proceeding with": no instruction follows.
+MARKER = re.compile(
     r"\b(?:from now on|going forward|from here on(?: out)?|henceforth|as a (?:standing )?rule"
-    r"|daqui (?:em|pra|para) (?:diante|frente)|a partir de agora|de agora em diante|como regra)\b")
+    r"|daqui (?:em|pra|para) (?:diante|frente)|a partir de (?:agora|hoje)|de (?:agora|hoje) em diante"
+    r"|como regra)\b")
+SUBJECT = (r"(?:we|you|you all|everyone|all agents|every agent|a gente|nos|voce|voces|vc|vcs|todos|todo mundo"
+           r"|os agentes)")
+ARTEFACT = (r"(?:(?:all|new|our|todos os|todas as|os|as|novos|novas|nossos|nossas) )*"
+            r"(?:prs|pull requests|commits|branches|merges|releases|deploys|deployments|agents|agentes|cards"
+            r"|migrations|migracoes)\b")
+CLAUSE = re.compile(
+    r"(?:please |por favor )?(?:" + ASK + r")?(?:(?:always|never|sempre|nunca|jamais|don't|do not|nao) )?" + VERB
+    + r"|" + SUBJECT + r" (?:(?:must|should|need to|have to|will|always|never|don't|do not|devem|deve|vamos"
+    r"|sempre|nunca|nao) )*(?:" + VERB + r"|" + WE_VERB + r")"
+    + r"|" + ARTEFACT)
+# Before a trailing marker, a subordinate clause makes it part of a task:
+# "add a check so the build stays green from now on".
+SUBORDINATE = re.compile(r"\b(?:so|that|until|which|where|when|para que|pra que|ate que|quando|onde)\b"
+                         r"|(?<!quero )(?<!preciso )\bque\b")
 
-SENTENCE = re.compile(r"(?<=[.!?;:])\s+|\n+")
+# A limit to one run, one moment or one spot makes it an instruction for now.
+ONE_OFF = re.compile(
+    r"\b(?:this time|for now|for this (?:run|test|one|card|pr|branch|task)|just this once|this one|right now"
+    r"|(?<!from )now\b(?! on\b)"
+    r"|desta vez|dessa vez|so desta vez|por enquanto|por ora|nesse teste|neste teste|nessa rodada|nesta rodada"
+    r"|(?<!de )agora\b(?! em diante))")
+# "Here" limits an instruction to one spot; "a gente nao usa ORM aqui" is the
+# team's practice in this place, so it does not limit a WE sentence.
+HERE = re.compile(r"\b(?:here|aqui)\b")
+
+SENTENCE = re.compile(r"(?<=[.!?;])\s+|\n+")
 FENCE = re.compile(r"```.*?(?:```|\Z)", re.S)
+BULLET = re.compile(r"^(?:[-*\u2022]|\d{1,2}[.)])\s+")
+
+# Prompts written by a program or another session, not typed by the owner.
+PROGRAMMATIC = re.compile(
+    r"\W{0,3}\[squad|<|review this change|you previously flagged|another claude session sent a message"
+    r"|base directory for this skill|this session is being continued from a previous conversation"
+    r"|you are (?:a|an|the)\b|caveat:")
+# A diff anywhere in the prompt: everything around it is material, not a rule.
+DIFF = re.compile(r"^(?:diff --git |@@ |--- a/|\+\+\+ b/|index [0-9a-f]{7,}\.\.|=== diff)|```diff", re.M)
+DIFF_LINE = re.compile(r"^(?:\+|-(?!\s\S)(?!-+\s*$))", re.M)
+# A pasted line: diff, traceback, log, shell, code.
+PASTED = re.compile(
+    r"(?:[+@]|-(?!\s\S)|\s{4}|\t|traceback|file \"|\$ |>>> |\[?\d{4}-\d\d-\d\d|\[?\d\d:\d\d"
+    r"|\[?(?:info|warn|warning|error|err|debug|trace|fatal|critical)(?:\]|:|\s+\d))")
+
+
+def standing(s: str, team: bool) -> bool:
+    """True when the sentence s, already stripped of filler, states a rule."""
+    if ONE_OFF.search(s) or (not team and HERE.search(s)):
+        return False
+    if team:
+        return bool(WE.match(s))
+    if STANDALONE.match(s) or OPENER.match(s) or WHENEVER.match(s):
+        return True
+    for m in itertools.islice(MARKER.finditer(s), 3):  # a rule names its marker once; bounds a pasted wall
+        after = s[m.end():].strip(" ,;:-.!")
+        if after:
+            if CLAUSE.match(after):
+                return True
+            continue
+        before = s[:m.start()].strip(" ,;:-")
+        if before and CLAUSE.match(before) and not SUBORDINATE.search(before):
+            return True
+    return False
 
 
 def directive(prompt: str) -> bool:
-    """True when the (normalised) prompt states a standing rule, not a question or a task."""
-    if prompt.lstrip().startswith(("[squad", "<")):     # the squad's own injected prompts, tool notifications
+    """True when the (normalised) prompt states a standing rule, not a question, a task or pasted text."""
+    head = prompt.lstrip()
+    if PROGRAMMATIC.match(head) or DIFF.search(prompt) or len(DIFF_LINE.findall(prompt)) >= 2:
         return False
     text = FENCE.sub("\n", prompt.replace("\u2019", "'"))
+    trace = False
     for line in text.split("\n"):
-        if line.lstrip().startswith(">"):               # quoted text is someone else's
-            continue
+        trace = trace and bool(line.strip()) or line.startswith("traceback")
+        if trace or not line.strip() or line.lstrip().startswith(">") or PASTED.match(line):
+            continue                                    # quoted is someone else's; pasted is material
+        line = BULLET.sub("", line.strip())
         for raw in SENTENCE.split(line):
             s = re.sub(FILLER, "", raw.strip())
-            if not s or s.endswith("?") or QUESTION.match(s) or ONE_OFF.search(s):
+            if not s or s.endswith("?") or QUESTION.match(s):
                 continue
-            if ANYWHERE.search(s) or STANDALONE.match(s):
-                return True
-            m = OPENERS.match(s)
-            if m and not REPORT.match(s[m.end():]):
+            if standing(s, team=False) or standing(s, team=True):
                 return True
     return False
 

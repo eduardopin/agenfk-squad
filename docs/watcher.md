@@ -25,7 +25,7 @@ measured. `SQUAD_WATCH=0` turns it off.
 | Hook event | What the watcher does |
 |---|---|
 | `PostToolUse` | Records the call and warns on repetition. Every 60 seconds it reads what was appended to the transcript and redoes the arithmetic: context, burn, reread share, payback. A sub-session at its threshold is told to return its handoff; a main session is told to write one. |
-| `PreToolUse` | In a sub-session: denies an identical repeated call (loop) and, above the context cut, denies everything except `git` and `agenfk`. In a main session: applies the dispatch brake to `Agent`/`Task` calls and the merge queue to merge and sync commands. |
+| `PreToolUse` | In a sub-session: denies an identical repeated call (loop) and, above the context cut, denies everything except `git` and `agenfk`. In a main session: applies the dispatch brake to `Agent`/`Task` calls and the merge queue to merge and sync commands, and the review gate to `agenfk verify` (see [The review gate](#the-review-gate-no-self-approval)). |
 | `PostToolUseFailure` | A tool call failed: if it was the merge that held the merge turn, gives the turn back at once instead of waiting for `SQUAD_TURN_HOLD` to expire. |
 | `SubagentStop` | Writes the sub-session's metrics to `metrics.jsonl` and leaves a note for the parent when the sub-session ended badly. |
 | `UserPromptSubmit` | Delivers pending notes to the main session. |
@@ -225,7 +225,7 @@ is checked:
    letters, digits, `_` and `-`) is handed to `agenfk`. Anything else, such as
    `$ID` or `--`, passes and is logged.
 2. If the step is one of `SQUAD_REVIEW_STEPS` (default
-   `REVIEW,ADVERSARIAL,HEAVY_REVIEW`) and no reviewer dispatch for that card
+   `REVIEW,ADVERSARIAL`) and no reviewer dispatch for that card
    has been recorded **since the card entered that step** (and within the
    last `SQUAD_REVIEW_MEMORY_DAYS`, 14), the call is denied with
    `REVIEW REQUIRED`. One dispatch unlocks one review step: the next review
@@ -347,6 +347,13 @@ session that edits its own environment or settings on purpose; see what it
 guards against, above.
 
 An empty `SQUAD_REVIEW_STEPS` turns the gate off.
+
+`HEAVY_REVIEW` is not in the default. The flow gives that step to the main
+session, whose review is `squad-review`: a different model, run through Bash,
+not an `Agent`/`Task` dispatch. The gate only counts dispatches, so gating the
+step would deny every `agenfk verify` on it with nothing the session could do
+to unlock it. A project whose flow does dispatch a reviewer on `HEAVY_REVIEW`
+can name it: `SQUAD_REVIEW_STEPS=REVIEW,ADVERSARIAL,HEAVY_REVIEW`.
 
 ## The soft stop
 

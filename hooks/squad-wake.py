@@ -90,6 +90,7 @@ MAX = env_int("SQUAD_WAKE_MAX", 6)
 BATCH = env_int("SQUAD_WAKE_BATCH", 3)
 BLOCKED = env_int("SQUAD_WAKE_BLOCKED", 900)
 AGE = env_int("SQUAD_WAKE_AGE", 43_200)
+CARRY_AGE = env_int("SQUAD_CARRY_AGE", 12 * 3600)       # the watcher's own limit for an explicit goal
 SWITCH_AFTER = env_int("SQUAD_WAKE_SWITCH", 900)
 SWITCH_AGE = env_int("SQUAD_WAKE_SWITCH_AGE", 21_600)   # a switch older than this is not redone
 PICKUP_AFTER = env_int("SQUAD_WAKE_PICKUP", 120)
@@ -124,9 +125,16 @@ def changes_state(cmd):
 
 
 def open_goal(watch):
-    """The watcher's open goal for the session (`[squad] GOAL:`): not blocked, not let go."""
+    """The watcher's open goal for the session (`[squad] GOAL:`): not blocked, not let go, and not
+    expired (an explicit goal with no progress for SQUAD_CARRY_AGE, as squad-watch's stale())."""
     g = (watch or {}).get("goal")
-    return g if isinstance(g, dict) and not g.get("blocked") and not g.get("released") else None
+    if not isinstance(g, dict) or g.get("blocked") or g.get("released"):
+        return None
+    try:
+        age = time.time() - float(g.get("progress_ts", g.get("ts", 0)))
+    except (TypeError, ValueError):
+        return None
+    return None if g.get("source") != "implicit" and age > CARRY_AGE else g
 
 
 def goal_line(goal):
@@ -139,8 +147,8 @@ def goal_line(goal):
             "squad_fleet", os.path.join(os.path.dirname(here), "skills", "architect", "scripts", "fleet.py"))
         fleet = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fleet)
-        leaves = fleet.open_leaves(goal.get("cards") or [], os.environ.get("SQUAD_AGENFK") or "agenfk", 6)
-        if fleet.verdict(goal, leaves, 0) == "FAN OUT":
+        leaves = fleet.unfanned(fleet.open_leaves(goal.get("cards") or [], os.environ.get("SQUAD_AGENFK") or "agenfk", 6))
+        if not goal.get("fanned") and fleet.verdict(goal, leaves, 0) == "FAN OUT":
             line += " " + fleet.fan_out_order(goal, leaves)
     except Exception:
         pass
@@ -445,8 +453,7 @@ def decide(a, now, dry_run=False):
     if watch.get("ctx_level", 0) >= 2:
         return "none", "handoff with the watcher", ctx
     goal = open_goal(watch)
-    if goal:
-        ctx["goal_line"] = goal_line(goal)
+    ctx["goal"] = goal                    # the line is built in wake(): it asks AgEnFK, up to 6 s
     if quiet > AGE and not goal:
         return "none", f"idle for {int(quiet // 3600)} h: old conversation", ctx
     asked, reply = last_reply(tr)
@@ -488,7 +495,8 @@ def wake(ctx):
     before = dict(st)
     st.update(n=int(st.get("n") or 0) + 1, ts=time.time(), size=os.path.getsize(ctx["tr"]))
     save(ctx["path"], st)                 # counted before sending: a full disk does not become a wake loop
-    rc, _ = herdr("agent", "prompt", pane, text(int(ctx["quiet"] // 60), ctx.get("goal_line", "")))
+    extra = goal_line(ctx["goal"]) if ctx.get("goal") else ""
+    rc, _ = herdr("agent", "prompt", pane, text(int(ctx["quiet"] // 60), extra))
     if rc != 0:
         save(ctx["path"], before)
         log(pane, f"{sid[:8]} gave up: the prompt failed")

@@ -35,6 +35,8 @@ CLOSED = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
 LIVE = 600             # seconds: a sub-session touched within this is running
 FAN_MIN = 2            # open cards that make a goal worth fanning out
 MAX_CARDS = 4          # goal cards read per session
+FANNED = 6 * 3600      # seconds: a card whose fanout.py session started within this is taken as running
+TITLE_MAX = 80         # characters of a card title in the order: it is one line
 
 
 def run_json(args, timeout):
@@ -107,6 +109,34 @@ def live_subs(session, state=None, now=None):
     return n
 
 
+def fanned_cards(state=None, now=None):
+    """Cards fanout.py opened a session for in the last FANNED seconds (~/.claude/squad/fanout.log).
+    Those sessions are not `<parent>.<agent>` sub-sessions, so live_subs never sees them."""
+    state, now, out = state or STATE, now or time.time(), set()
+    try:
+        with open(os.path.join(os.path.dirname(state), "fanout.log"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()[-500:]
+    except OSError:
+        return out
+    for ln in lines:
+        parts = ln.split(" ", 3)
+        if len(parts) < 4 or ": session card-" not in parts[3]:
+            continue                                  # a failed launch is not a running session
+        try:
+            when = time.mktime(time.strptime(parts[0] + " " + parts[1], "%Y-%m-%d %H:%M:%S"))
+        except (ValueError, OverflowError):
+            continue
+        if 0 <= now - when < FANNED:
+            out.add(parts[2])
+    return out
+
+
+def unfanned(leaves, state=None, now=None):
+    """The leaves that do not already have a session of their own."""
+    done = fanned_cards(state, now)
+    return [c for c in leaves if c.get("id") not in done] if done else list(leaves)
+
+
 def verdict(goal, leaves, subs):
     if not isinstance(goal, dict):
         return "-"
@@ -121,7 +151,10 @@ def verdict(goal, leaves, subs):
 
 def fan_out_order(goal, leaves):
     """The order squad-watch gives when the verdict is FAN OUT."""
-    ids = ", ".join(f"{c['id']} ({c.get('title') or c.get('type') or ''})".strip() for c in leaves[:8])
+    def label(c):
+        t = " ".join(str(c.get("title") or c.get("type") or "").split())     # one line, whatever the title holds
+        return f"{c['id']} ({t[:TITLE_MAX].rstrip()})"
+    ids = ", ".join(label(c) for c in leaves[:8])
     return (f"[squad-watch] FAN OUT: the goal has {len(leaves)} open cards and nothing runs in parallel: {ids}. "
             "Parallel is the default: run parallel-plan's waves on these cards (skills/parallel-plan) and "
             "dispatch wave 1 in one message, one front per card in its own worktree (`github` draws the map), "
@@ -149,7 +182,7 @@ def rows(state=None, now=None):
             continue
         session = name[: -len(".main.json")]
         goal = st.get("goal") if isinstance(st.get("goal"), dict) else None
-        leaves = open_leaves(goal.get("cards") or []) if goal and not goal.get("blocked") else []
+        leaves = unfanned(open_leaves(goal.get("cards") or [])) if goal and not goal.get("blocked") else []
         subs = live_subs(session, state, now)
         out.append({
             "session": session,

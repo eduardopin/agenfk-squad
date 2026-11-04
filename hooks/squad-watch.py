@@ -724,6 +724,7 @@ def pre_dispatch(p):
                    "take the choice to the owner: fix it another way, split the card or accept the risk")
     if why:
         st["blocked"] = st.get("blocked", 0) + 1
+        st["denied_ts"] = time.time()     # fan_out() keeps quiet for DENIED_QUIET: the brake just said no
         again = ""
         if handoff:                       # the watcher ordered a handoff: the switch on Stop is armed
             if st.get("ordered"):
@@ -1990,7 +1991,7 @@ CARRY_EXITS = ("Before you call anything the owner's, do every part you can do y
                "approval the project reserves for the owner, approval on the board, a decision or an answer "
                "only the owner has, a production apply), or `[squad] END: <why nothing is left that you can "
                "do>`.")
-GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts")
+GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts", "fanned")
 
 
 def wake_lib():
@@ -2016,20 +2017,29 @@ def fleet_lib():
         return None
 
 
-def fan_out(goal, session):
-    """The FAN OUT order for a goal with AgEnFK cards, or "": two or more open cards and
-    nothing running in parallel. Bounded to 6 s for AgEnFK so the hook keeps its timeout."""
-    if not isinstance(goal, dict) or not goal.get("cards"):
+DENIED_QUIET = 300     # seconds after a denied dispatch in which no FAN OUT is ordered
+
+
+def fan_out(goal, session, st=None):
+    """The FAN OUT order for a goal with AgEnFK cards, or "": two or more open cards without a
+    session of their own and nothing running in parallel. At most once per goal (goal["fanned"]),
+    and not within DENIED_QUIET of a denied dispatch: the order would only ask for what the brake
+    refuses. Bounded to 6 s for AgEnFK so the hook keeps its timeout."""
+    if not isinstance(goal, dict) or not goal.get("cards") or goal.get("fanned"):
+        return ""
+    if time.time() - float((st or {}).get("denied_ts") or 0) < DENIED_QUIET:
         return ""
     try:
         fleet = fleet_lib()
         if fleet is None:
             return ""
-        leaves = fleet.open_leaves(goal["cards"], AGENFK, deadline=6)
+        leaves = fleet.unfanned(fleet.open_leaves(goal["cards"], AGENFK, deadline=6))
         subs = fleet.live_subs(session, STATE)
         if fleet.verdict(goal, leaves, subs) != "FAN OUT":
             return ""
-        return fleet.fan_out_order(goal, leaves)
+        order = fleet.fan_out_order(goal, leaves)
+        goal["fanned"] = True
+        return order
     except Exception:
         return ""
 
@@ -2094,7 +2104,7 @@ def carry_prompt(st, text, session=""):
     m = GOAL.search(text)
     if m:
         st["goal"] = new_goal(m.group(1), "owner")
-        order = fan_out(st["goal"], session)
+        order = fan_out(st["goal"], session, st)
         if order:
             st.setdefault("pending", []).append(order)
         return
@@ -2298,7 +2308,9 @@ def carry_on(p, path, st):
     what = (f"The goal: \"{goal['text']}\". " if goal.get("text") else
             "Your last reply hands the delivery back (a next step, an offer, or waiting for the owner): "
             "that work is yours. ")
-    order = fan_out(goal, session)
+    order = fan_out(goal, session, st)
+    if order:
+        save(path, st)                    # goal["fanned"]: keep() above saved the goal before the order
     print(json.dumps({"decision": "block", "reason": (
         "[squad-watch] CARRY ON" + (" + FAN OUT" if order else "") + ": the delivery is not finished. " +
         (order + " " if order else "") + what +

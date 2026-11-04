@@ -15,6 +15,7 @@ exit 2. It refuses a folder that is not a git checkout (exit 1). Every launch go
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -25,7 +26,11 @@ BASE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".
 HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
 
 
+AGENFK_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
 def brief(card, title):
+    title = " ".join(str(title or "").split())[:120]      # the goal is one line: a newline would end it
     what = f" ({title})" if title else ""
     return (f"[squad] GOAL: deliver card {card}{what}\n"
             f"Work AgEnFK card {card} in this worktree through its flow, to the end: read it with "
@@ -62,16 +67,32 @@ def is_checkout(path):
         return False
 
 
+def is_main_checkout(path):
+    """True when `path` is the repository's own checkout, not a linked worktree of it."""
+    try:
+        out = [subprocess.run(["git", "-C", path, "rev-parse", flag], capture_output=True, text=True, timeout=5,
+                              stdin=subprocess.DEVNULL).stdout.strip() for flag in ("--git-dir", "--git-common-dir")]
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return bool(out[0]) and os.path.realpath(os.path.join(path, out[0])) == os.path.realpath(os.path.join(path, out[1]))
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description="Open one AgEnFK card in its own Claude session in herdr.")
     ap.add_argument("--card", required=True)
     ap.add_argument("--worktree", required=True)
     ap.add_argument("--title", default="")
     a = ap.parse_args(argv)
+    if not AGENFK_ID.match(a.card):
+        print(f"{a.card!r} is not an AgEnFK card id (a uuid): `agenfk list --json` has it.")
+        return 1
     wt = os.path.abspath(a.worktree)
     if not is_checkout(wt):
         print(f"{wt} is not the top of a git checkout: create the card's worktree first (github agent).")
         return 1
+    if is_main_checkout(wt):
+        print(f"warning: {wt} is the repository's main checkout, not a worktree of the card: the new session "
+              "would edit it next to your own. Create the card's worktree first (github agent).")
     text = brief(a.card, a.title)
     if not os.environ.get("HERDR_PANE_ID"):
         print("Not inside herdr: open the session by hand, in a new terminal:\n"

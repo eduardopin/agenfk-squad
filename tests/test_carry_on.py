@@ -517,6 +517,43 @@ def test_reaching_the_cap_closes_the_goal():
     assert not s.state().get("goal"), s.state()
 
 
+def test_an_offer_about_an_issue_or_a_commit_is_not_a_delivery():
+    for text in ("The failure comes from issue 12 upstream.\nShall I explain the issue in more detail?",
+                 "That branch has 3 commits. Want me to look at the commit message?"):
+        s = Session()
+        s.owner("why is this branch red?")
+        s.reply(text)
+        assert s.stop() == "nothing", text
+
+
+def test_a_closed_goal_is_not_reopened_by_the_session_alone():
+    s = Session(env={"SQUAD_CARRY_CAP": "1"})
+    s.owner("go")
+    s.reply("[squad] GOAL: deliver the plan\n\nStarting.")
+    s.edit()
+    s.reply("Wave 1.")
+    assert carried(s.stop())
+    s.edit()
+    s.reply("[squad] GOAL: deliver the plan\n\nWave 2.")
+    assert s.stop() == "nothing"                  # the cap closed it
+    s.edit()
+    s.reply("[squad] GOAL: deliver the plan\n\nWave 3.")
+    assert s.stop() == "nothing", "the same goal does not come back until the owner speaks"
+
+
+def test_a_blocked_goal_expires_after_a_week():
+    s = Session()
+    s.owner("[squad] GOAL: ship the checkout feature")
+    s.edit()
+    s.reply("[squad] BLOCKED: approval on the board")
+    s.stop()
+    st = s.state()
+    st["goal"]["progress_ts"] -= 8 * 86400
+    s.set_state(goal=st["goal"])
+    s.owner("unrelated: hi")
+    assert not s.state().get("goal"), s.state()
+
+
 def test_squad_carry_zero_turns_it_off():
     s = Session(env={"SQUAD_CARRY": "0"})
     s.owner("[squad] GOAL: ship the checkout feature")

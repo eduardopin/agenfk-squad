@@ -362,7 +362,10 @@ you installed by hand: `git pull`, then `install.ps1` again, as in the previous 
 ```
 
 `-Uninstall` removes the squad's entries from `settings.json` (and nobody
-else's), the links into the clone, the `squad-turn.cmd` shim, and the marked
+else's: the one exception is an empty list on an event the hook manifest
+names, which an older install could leave behind; it goes only when uninstall
+removed a squad entry from the file, and an empty list on any other event
+stays), the links into the clone, the `squad-turn.cmd` shim, and the marked
 copies that you did not edit (an edited copy is kept, with a warning); the
 clone stays. `-Purge` deletes the clone too, unless it has local changes: then
 it refuses and you delete it by hand. By hand:

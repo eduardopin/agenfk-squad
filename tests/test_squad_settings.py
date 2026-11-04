@@ -256,6 +256,60 @@ def test_a_moved_hook_keeps_the_timeout_the_user_gave_it():
         {"type": "command", "command": ss.command_for(config, "squad-graph.py"), "timeout": 45}]}], settings
 
 
+def test_collapsing_copies_keeps_the_timeout_the_user_gave_any_of_them():
+    config = config_with("squad-watch.py")
+    cmd = ss.command_for(config, "squad-watch.py")
+    m = manifest([WATCH])                                   # the manifest says 10
+    for first, second in (({"timeout": 10}, {"timeout": 99}), ({}, {"timeout": 99}), ({"timeout": 99}, {})):
+        settings = {"hooks": {"PreToolUse": [
+            {"matcher": "*", "hooks": [dict(first, type="command", command=cmd)]},
+            {"matcher": "", "hooks": [dict(second, type="command", command=cmd)]},
+        ]}}
+        changed, report = run("install", settings, config, m)
+        assert changed, report
+        assert settings["hooks"]["PreToolUse"] == [{"matcher": "*", "hooks": [
+            {"type": "command", "command": cmd, "timeout": 99}]}], (first, second, settings)
+        changed, report = run("install", settings, config, m)
+        assert not changed, report
+
+
+def test_a_moved_hook_with_a_null_or_zero_timeout_gets_the_manifests():
+    config = config_with("squad-graph.py")
+    cmd = ss.command_for(config, "squad-graph.py")
+    for given in (None, 0):
+        settings = {"hooks": {"PreToolUse": [
+            {"matcher": "*", "hooks": [{"type": "command", "command": cmd, "timeout": given}]}]}}
+        changed, report = run("install", settings, config, manifest([GRAPH]))      # the manifest says 10
+        assert changed, report
+        assert settings["hooks"]["PreToolUse"] == [{"matcher": "Bash|Grep|Read|Glob", "hooks": [
+            {"type": "command", "command": cmd, "timeout": 10}]}], (given, settings)
+
+
+def test_a_hook_without_a_list_of_event_names_is_a_bad_manifest():
+    config = config_with("squad-watch.py")
+    missing = {k: v for k, v in WATCH.items() if k != "events"}
+    for hook in (missing, dict(WATCH, events="Stop"), dict(WATCH, events=None), dict(WATCH, events=["Stop", 5])):
+        m = manifest([hook])
+        try:
+            ss.load_manifest(m)
+        except ss.BadManifest as e:
+            assert "squad-watch.py" in str(e) and "events" in str(e), e
+        else:
+            raise AssertionError(f"{hook!r} was accepted")
+        with contextlib.redirect_stderr(io.StringIO()):
+            assert ss.main(["install", "--config", config, "--manifest", m]) == 2, hook
+        assert not os.path.exists(os.path.join(config, "settings.json"))
+
+
+def test_the_guarantees_name_the_empty_list_uninstall_removes():
+    guarantees = ss.__doc__.split("Guarantees:")[1].split("\n\n")[0]
+    with open(os.path.join(ROOT, "docs", "installation.md"), encoding="utf-8") as fh:
+        windows_uninstall = fh.read().split("### Uninstall on Windows")[1].split("\n### ")[0]
+    for text in (guarantees, windows_uninstall):
+        flat = " ".join(text.split())
+        assert "empty list" in flat and "manifest" in flat, text
+
+
 def test_an_empty_or_missing_matcher_is_the_same_as_star():
     config = config_with("squad-watch.py")
     cmd = ss.command_for(config, "squad-watch.py")
@@ -357,6 +411,7 @@ def test_uninstall_needs_only_the_script_names_from_the_manifest():
         manifest([WATCH, GRAPH], matchers="*"),                                     # top-level matchers
         manifest([WATCH, GRAPH, dict(GRAPH, matchers={"PreToolUse": "Edit"})]),     # a script twice
         manifest([WATCH, dict(GRAPH, matchers="Bash")]),                            # a hook's matchers
+        manifest([dict(WATCH, events="Stop"), GRAPH]),                              # a hook's events
     ]
     for m in broken:
         config = config_with("squad-watch.py", "squad-graph.py")

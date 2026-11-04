@@ -640,6 +640,18 @@ def test_every_exit_line_the_instructions_show_is_one_the_watcher_reads():
         assert wake.MARK.search(line), f"{name}: squad-wake does not read {line}"
 
 
+def test_the_watcher_and_the_wake_read_end_lines_the_same_way():
+    watch, wake = _load("sw_parity", "squad-watch.py"), _load("sq_parity", "squad-wake.py")
+    lines = ["[squad] DONE: x", "[squad] END: x", "[squad] BLOCKED: x", "  > [squad] done: x",
+             "`[squad] DONE: <evidence>`", "[squad] DONE: <evidence: PRs merged, cards DONE>",
+             "[squad] END: <why nothing is left>", "[squad] DONE: PR #64 merged, cards DONE",
+             "see [squad] DONE: x", "[squad] DONE:", "[squad] MAYBE: x"]
+    verdicts = [(bool(watch.MARK.search(x)), bool(wake.MARK.search(x))) for x in lines]
+    assert all(a == b for a, b in verdicts), list(zip(lines, verdicts))
+    assert [a for a, _ in verdicts][:3] == [True, True, True]
+    assert watch.MARK.pattern == wake.MARK.pattern
+
+
 def test_a_blocked_goal_expires_after_a_week():
     s = Session()
     s.owner("[squad] GOAL: ship the checkout feature")

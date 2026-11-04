@@ -406,8 +406,11 @@ The session stops by ending a reply with one line:
 
 The text after the colon is the session's own: a line whose text starts with `<`
 is read as a quoted template, so a copied `<placeholder>` does not exit.
-These are the same lines `squad-wake.py` reads, so a session that stopped for a
-reason the hook cannot see (an API error, a reboot) is still woken by the timer.
+These are the same lines `squad-wake.py` reads: the pattern in `squad-watch.py`
+is a copy of that file's `MARK`, kept so a Stop without a goal never loads
+`squad-wake.py`, and `tests/test_carry_on.py` fails when the two differ. So a session that stopped
+for a reason the hook cannot see (an API error, a reboot) is still woken by
+the timer.
 
 The order names what the session must do itself before it calls anything the
 owner's: push, open or reopen a session or pane, merge where the project's

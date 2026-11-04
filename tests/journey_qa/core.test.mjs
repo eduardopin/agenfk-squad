@@ -620,6 +620,82 @@ test("actor workdir: a folder owned by another user is refused", async (t) => {
   assert.throws(() => assertPrivateDir(dir, process.getuid() + 1), (e) => e.code === "unsafe_workdir" && /belongs to uid/.test(e.message));
 });
 
+// A shared temporary folder the way /tmp is one: sticky, everyone can write.
+function sharedTmp() {
+  const dir = tmp();
+  chmodSync(dir, 0o1777);
+  return dir;
+}
+
+test("actor workdir: a shared temporary folder gets a 0700 folder of this user before the cache folder", async (t) => {
+  if (process.platform === "win32") return t.skip("no POSIX owner or mode on Windows: the root stays in the user's temporary folder");
+  const { actorRoot } = await lib("packet.mjs");
+  const home = tmp();
+  const name = `journey-qa-${process.getuid()}`;
+  // The cache folder puts HOME among the actor folder's ancestors, where Claude's upward search finds ~/CLAUDE.md.
+  const shared = sharedTmp();
+  const mine = join(realpathSync(shared), name);
+  assert.equal(actorRoot({ env: {}, tmp: shared, home }), join(mine, "journey-qa-actors"));
+  assert.equal(lstatSync(mine).mode & 0o777, 0o700, "created 0700");
+  assert.equal(actorRoot({ env: {}, tmp: shared, home }), join(mine, "journey-qa-actors"), "found again by the next call");
+  // Planted before journey-qa came: a symlink, or a folder others can enter. Refused, left as found, and the cache is used.
+  for (const plant of ["symlink", "open folder"]) {
+    const other = sharedTmp();
+    const p = join(other, name);
+    if (plant === "symlink") symlinkSync(tmp(), p, "dir");
+    else { mkdirSync(p); chmodSync(p, 0o755); }
+    assert.equal(actorRoot({ env: {}, tmp: other, home }), join(home, ".cache", "journey-qa-actors"), plant);
+    if (plant === "open folder") assert.equal(lstatSync(p).mode & 0o777, 0o755, "a planted folder is not repaired");
+  }
+});
+
+test("unsafe_workdir: a base others can write gets a chmod hint, a folder journey-qa makes gets a removal hint", async (t) => {
+  if (process.platform === "win32") return t.skip("no POSIX modes on Windows");
+  const { prepareActorWorkdir } = await lib("packet.mjs");
+  // ~/.cache made under umask 002: 0775. It is the user's, not journey-qa's, so removing it is the wrong advice.
+  const cache = tmp();
+  chmodSync(cache, 0o775);
+  const shared = sharedTmp();
+  mkdirSync(join(shared, `journey-qa-${process.getuid()}`), { mode: 0o700 });
+  chmodSync(join(shared, `journey-qa-${process.getuid()}`), 0o755); // the temporary-folder step is refused, so the cache is the base
+  const opts = { env: { XDG_CACHE_HOME: cache }, tmp: shared, home: tmp() };
+  const run = join(tmp(), "run");
+  assert.throws(() => prepareActorWorkdir(run, "ana", opts),
+    (e) => e.code === "unsafe_workdir" && e.message.includes(`chmod go-w ${cache}`) && !/Remove it/.test(e.message), "base");
+  chmodSync(cache, 0o700);
+  const actors = join(cache, "journey-qa-actors");
+  mkdirSync(actors, { mode: 0o700 });
+  chmodSync(actors, 0o755);
+  assert.throws(() => prepareActorWorkdir(run, "ana", opts),
+    (e) => e.code === "unsafe_workdir" && /Remove it and run again/.test(e.message) && !/chmod/.test(e.message), "journey-qa-actors");
+});
+
+test("actor workdir: the driver accepts a handed-over folder only when it is this actor's and private", async (t) => {
+  const { checkActorWorkdir, prepareActorWorkdir } = await lib("packet.mjs");
+  const base = tmp();
+  const run = join(tmp(), "run");
+  const env = { XDG_RUNTIME_DIR: base };
+  const wd = prepareActorWorkdir(run, "ana", { env });
+  const bruno = prepareActorWorkdir(run, "bruno", { env });
+  const otherRun = prepareActorWorkdir(join(tmp(), "run"), "ana", { env });
+  assert.equal(checkActorWorkdir(wd, run, "ana"), realpathSync(wd));
+  const refused = (dir, label) => assert.throws(() => checkActorWorkdir(dir, run, "ana"), (e) => e.code === "unsafe_workdir", label);
+  refused(undefined, "no folder");
+  refused(relative(base, wd), "a relative path");
+  refused(bruno, "another actor's folder");
+  refused(otherRun, "the same actor in another run");
+  refused(base, "the base itself");
+  const carla = join(dirname(wd), "carla");
+  assert.throws(() => checkActorWorkdir(carla, run, "carla"), (e) => e.code === "unsafe_workdir" && /missing/.test(e.message), "a folder that does not exist");
+  assert.equal(existsSync(carla), false, "the check creates nothing");
+  if (process.platform === "win32") return t.skip("no POSIX modes on Windows: the shape checks above are what applies");
+  chmodSync(wd, 0o755);
+  refused(wd, "an actor folder others can enter");
+  chmodSync(wd, 0o700);
+  chmodSync(base, 0o777);
+  assert.throws(() => checkActorWorkdir(wd, run, "ana"), (e) => e.code === "unsafe_workdir" && /chmod go-w/.test(e.message), "a base others can write");
+});
+
 test("actor spawn writes the actor folder 0700 and its files 0600 (act.mjs 0700), then removes it", async (t) => {
   if (process.platform === "win32") return t.skip("no POSIX modes on Windows");
   const { spawnActor, prepareActorWorkdir } = await lib("packet.mjs");

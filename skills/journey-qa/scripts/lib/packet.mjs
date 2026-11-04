@@ -285,17 +285,36 @@ function privateBase(dir) {
 }
 
 /**
- * Per-user root of the actor folders, outside any repository: XDG_RUNTIME_DIR (a 0700 folder of this user), else the
- * temporary folder when it already belongs to this user alone (macOS, Windows), else the user's cache folder. Never a
- * shared /tmp, where another local user could create the path, or a symlink, first and receive the driver token.
- * The path is derived, not random, because `actor wait` and the driver find the folder again from the run and actor.
+ * A folder of this user's own inside a shared temporary folder: `<tmp>/journey-qa-<uid>`, created with mode 0700 and
+ * accepted only when lstat finds it a real directory of this user with no group or other bits. A path someone else
+ * planted first (a symlink, a folder of theirs, a folder others can enter) is refused, never repaired: null.
  */
-export function actorRoot({ env = process.env } = {}) {
-  for (const base of [env.XDG_RUNTIME_DIR, tmpdir()]) {
+function privateTmpBase(tmp) {
+  if (!POSIX || !tmp || !isAbsolute(tmp)) return null;
+  const dir = join(tmp, `journey-qa-${process.getuid()}`);
+  try { mkdirSync(dir, { mode: 0o700 }); } catch (e) { if (e.code !== "EEXIST") return null; }
+  try { assertPrivateDir(dir); } catch { return null; }
+  return privateBase(dir);
+}
+
+/**
+ * Per-user root of the actor folders, outside any repository: XDG_RUNTIME_DIR (a 0700 folder of this user), else the
+ * temporary folder when it already belongs to this user alone (macOS, Windows), else a 0700 folder of this user inside
+ * the shared temporary folder (`<tmp>/journey-qa-<uid>`), else the user's cache folder. Never the shared /tmp itself,
+ * where another local user could create the path, or a symlink, first and receive the driver token. The cache folder
+ * comes last because it puts HOME among the actor folder's ancestors, where a host's upward search finds ~/CLAUDE.md.
+ * The path is derived, not random, because `actor wait` finds the folder again from the run and actor (the driver gets
+ * it from spawn, with the actor's token). Deciding the temporary-folder step creates that one empty 0700 folder, even
+ * when only the path is asked for (a planned spawn, a cleanup).
+ */
+export function actorRoot({ env = process.env, tmp = tmpdir(), home = homedir() } = {}) {
+  for (const base of [env.XDG_RUNTIME_DIR, tmp]) {
     const real = privateBase(base);
     if (real) return join(real, WORKDIR_ROOT);
   }
-  const cache = env.XDG_CACHE_HOME && isAbsolute(env.XDG_CACHE_HOME) ? env.XDG_CACHE_HOME : join(homedir(), ".cache");
+  const mine = privateTmpBase(tmp);
+  if (mine) return join(mine, WORKDIR_ROOT);
+  const cache = env.XDG_CACHE_HOME && isAbsolute(env.XDG_CACHE_HOME) ? env.XDG_CACHE_HOME : join(home, ".cache");
   return join(cache, WORKDIR_ROOT);
 }
 
@@ -303,11 +322,18 @@ export function actorRoot({ env = process.env } = {}) {
 const runKey = (runDir) => createHash("sha1").update(resolve(runDir)).digest("hex").slice(0, 10);
 
 /** Actor working directory outside any repository, so hosts do not discover AGENTS.md/CLAUDE.md/skills of the project. */
-export function actorWorkdir(runDir, actorId, { env = process.env } = {}) {
-  return join(actorRoot({ env }), runKey(runDir), actorId);
+export function actorWorkdir(runDir, actorId, opts = {}) {
+  return join(actorRoot(opts), runKey(runDir), actorId);
 }
 
+// The folders journey-qa creates (journey-qa-actors, the run, the actor) can be removed and are made again; the base
+// above them is the user's (XDG_RUNTIME_DIR, the cache folder), so for it the hint is to make it private instead.
 const unsafeWorkdir = (dir, why) => new ContractError(`Refusing the actor folder ${dir}: ${why}. Remove it and run again.`, "unsafe_workdir");
+const shellQuote = (p) => (/^[A-Za-z0-9_./:@%+=-]+$/.test(p) ? p : `'${p.replace(/'/g, "'\\''")}'`);
+const unsafeBase = (dir) => new ContractError(
+  `Refusing the base of the actor folders ${dir}: it is not a directory of this user that only this user can write. ` +
+  `It is not journey-qa's to remove: if it is yours, run \`chmod go-w ${shellQuote(dir)}\` and run again, ` +
+  "or point XDG_RUNTIME_DIR or XDG_CACHE_HOME at a folder only you can write.", "unsafe_workdir");
 
 /** One actor-folder component: a real directory (not a symlink), owned by `uid`, with no group or other bits. */
 export function assertPrivateDir(dir, uid = POSIX ? process.getuid() : null) {
@@ -323,12 +349,12 @@ export function assertPrivateDir(dir, uid = POSIX ? process.getuid() : null) {
  * a path planted by someone else is refused, never reused. On Windows the folder stays under the user's own temporary
  * folder (%LOCALAPPDATA%\Temp), protected by the profile's ACLs rather than by owner and mode bits.
  */
-export function prepareActorWorkdir(runDir, actorId, { env = process.env } = {}) {
+export function prepareActorWorkdir(runDir, actorId, opts = {}) {
   assertActorId(actorId);
-  const root = actorRoot({ env });
+  const root = actorRoot(opts);
   const base = dirname(root);
   mkdirSync(base, { recursive: true, mode: 0o700 });
-  if (!privateBase(base)) throw unsafeWorkdir(base, "it is not a directory of this user that only this user can write");
+  if (!privateBase(base)) throw unsafeBase(base);
   let dir = base;
   for (const part of [WORKDIR_ROOT, runKey(runDir), actorId]) {
     dir = join(dir, part);
@@ -338,9 +364,37 @@ export function prepareActorWorkdir(runDir, actorId, { env = process.env } = {})
   return dir;
 }
 
+/**
+ * The driver's check of an actor folder that spawn hands over with the actor's token: an absolute path that ends in
+ * journey-qa-actors/<run>/<actor> for this run and actor, under a base of this user that no one else can write, each
+ * of the three folders passing assertPrivateDir. Nothing is created. Returns the folder by its real path, so a symlink
+ * on the way to the base is resolved once, here; throws unsafe_workdir otherwise.
+ */
+export function checkActorWorkdir(dir, runDir, actorId) {
+  assertActorId(actorId);
+  if (typeof dir !== "string" || !isAbsolute(dir)) throw unsafeWorkdir(String(dir), "it is not an absolute path");
+  const parts = [WORKDIR_ROOT, runKey(runDir), actorId];
+  let base = dir;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (basename(base) !== parts[i]) throw unsafeWorkdir(dir, `it is not the folder spawn prepares for actor ${actorId} of this run (…/${parts.join("/")})`);
+    base = dirname(base);
+  }
+  const real = privateBase(base);
+  if (!real) throw unsafeBase(base);
+  let d = real;
+  for (const part of parts) {
+    d = join(d, part);
+    try { assertPrivateDir(d); } catch (e) {
+      if (e.code === "unsafe_workdir") throw e;
+      throw new ContractError(`The actor folder ${d} is missing or unreadable (${e.code ?? e.message}): spawn the actor again.`, "unsafe_workdir");
+    }
+  }
+  return d;
+}
+
 /** Remove the actor's scratch folder, which holds its driver token, once the actor has ended. Only the folder `actorWorkdir` names. */
-export function cleanupActorWorkdir(runDir, actorId, { env = process.env } = {}) {
-  rmSync(actorWorkdir(runDir, actorId, { env }), { recursive: true, force: true });
+export function cleanupActorWorkdir(runDir, actorId, opts = {}) {
+  rmSync(actorWorkdir(runDir, actorId, opts), { recursive: true, force: true });
 }
 
 // A fresh file in the actor folder: whatever had the name is removed first, and `wx` refuses anything that reappears.

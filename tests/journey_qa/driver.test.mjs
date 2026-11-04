@@ -2,10 +2,16 @@
 // the run. No browser and no network beyond the driver's own loopback port.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { send, startDriver } from "../../skills/journey-qa/scripts/lib/driver/client.mjs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { driverInfo, send, startDriver } from "../../skills/journey-qa/scripts/lib/driver/client.mjs";
+import { prepareActorWorkdir } from "../../skills/journey-qa/scripts/lib/packet.mjs";
+
+const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
+const jqa = (args, opts = {}) => spawnSync(process.execPath, [join(ROOT, "skills", "journey-qa", "scripts", "jqa.mjs"), ...args], { encoding: "utf8", ...opts });
 
 // One page with the fields below. `fail` makes fill and keyboard.type throw an error that quotes the typed text, the
 // worst case for the trace: the value would leak through the arguments and through the error message.
@@ -141,4 +147,72 @@ test("a fill that succeeds on a password field is masked as before", async () =>
   assert.deepEqual(traceEntries().at(-1).args, ["e5", `[hidden: ${value.length} characters]`]);
   assert.deepEqual(filesHolding(value), []);
   assert.equal(screenshots() - shots, 0);
+});
+
+// ---------- the actor folder travels with the actor token ----------
+// Each folder below sits under a private base the driver's own environment does not name, the way spawn and driver end
+// up when XDG_RUNTIME_DIR, TMPDIR or HOME differ between the two processes.
+const privateBase = () => mkdtempSync(join(tmpdir(), "jqa-actor-base-"));
+const asActor = async (token, body) => {
+  const res = await fetch(`http://127.0.0.1:${driverInfo(RUN).port}/cmd`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+  return res.json();
+};
+const tokenFor = (flags) => send(RUN, { cmd: "actor-token", actor: "ana", args: [], flags: { as: "coordinator", ...flags } });
+const revoke = () => send(RUN, { cmd: "actor-token-revoke", actor: "ana", args: [], flags: { as: "coordinator" } });
+const staged = (bytes) => filesHolding(bytes).filter((p) => p.startsWith(join(".jqa", "uploads")));
+
+test("an actor token carries the folder spawn prepared, and uploads are judged against that folder", async () => {
+  const wd = prepareActorWorkdir(RUN, "ana", { env: { XDG_RUNTIME_DIR: privateBase() } });
+  const t = await tokenFor({ workdir: wd });
+  assert.equal(t.ok, true, t.text);
+  try {
+    writeFileSync(join(wd, "photo.txt"), "bytes-from-the-handed-folder");
+    const res = await asActor(t.token, { cmd: "upload", args: ["e1", join(wd, "photo.txt")], flags: {} });
+    assert.notEqual(res.code, "privileged", res.text);
+    assert.equal(staged("bytes-from-the-handed-folder").length, 1, "the driver staged the file from the folder it was handed");
+    // The folder is checked again at upload time: one others can now enter is refused, and named for what it is.
+    if (process.platform !== "win32") {
+      chmodSync(wd, 0o755);
+      const late = await asActor(t.token, { cmd: "upload", args: ["e1", join(wd, "photo.txt")], flags: {} });
+      assert.equal(late.code, "unsafe_workdir", late.text);
+      chmodSync(wd, 0o700);
+    }
+  } finally {
+    await revoke();
+  }
+});
+
+test("the driver issues no actor token without a private folder of that actor", async () => {
+  const base = privateBase();
+  const missing = await tokenFor({});
+  assert.equal(missing.ok, false);
+  assert.equal(missing.code, "bad_args", missing.text);
+  assert.equal(missing.token, undefined);
+  const bruno = prepareActorWorkdir(RUN, "bruno", { env: { XDG_RUNTIME_DIR: base } });
+  const notAna = await tokenFor({ workdir: bruno });
+  assert.equal(notAna.code, "unsafe_workdir", notAna.text);
+  assert.equal(notAna.token, undefined);
+  if (process.platform === "win32") return;
+  const wd = prepareActorWorkdir(RUN, "ana", { env: { XDG_RUNTIME_DIR: base } });
+  chmodSync(wd, 0o755);
+  const open = await tokenFor({ workdir: wd });
+  assert.equal(open.code, "unsafe_workdir", open.text);
+  assert.equal(open.token, undefined);
+});
+
+test("actor spawn hands its folder to the driver: an upload works when spawn and driver see different environments", async (t) => {
+  if (process.platform === "win32") return t.skip("a custom host goes through cmd.exe there; the token and upload checks above cover Windows");
+  const card = { ...JSON.parse(readFileSync(join(ROOT, "skills", "journey-qa", "assets", "templates", "actor-card.json"), "utf8")), actor_id: "ana" };
+  const cardFile = join(fakeDir, "card.json");
+  writeFileSync(cardFile, JSON.stringify(card));
+  assert.equal(jqa(["actor", "packet", cardFile, "--run", RUN]).status, 0);
+  // The actor writes a file in its own folder and asks the browser to upload it through act.mjs and its token.
+  const actor = "const f=require('fs');f.writeFileSync('photo.txt','bytes-from-a-spawned-actor');" +
+    "const r=require('child_process').spawnSync(process.execPath,['act.mjs','upload','e1','photo.txt'],{encoding:'utf8'});console.log(r.stdout+r.stderr)";
+  const r = jqa(["actor", "spawn", "ana", "--run", RUN, "--exec", "--host", "custom", "--cmd", `"${process.execPath}" -e "${actor}"`, "--unsandboxed"],
+    { env: { ...process.env, XDG_RUNTIME_DIR: privateBase() } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const said = readFileSync(join(RUN, "actors", "ana", "transcript.md"), "utf8");
+  assert.ok(!/only files in the actor's own folder/.test(said), said);
+  assert.equal(staged("bytes-from-a-spawned-actor").length, 1, said);
 });

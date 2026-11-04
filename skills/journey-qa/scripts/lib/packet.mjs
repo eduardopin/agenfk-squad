@@ -304,8 +304,8 @@ function privateTmpBase(tmp) {
  * where another local user could create the path, or a symlink, first and receive the driver token. The cache folder
  * comes last because it puts HOME among the actor folder's ancestors, where a host's upward search finds ~/CLAUDE.md.
  * The path is derived, not random, so a spawn finds the folder an earlier spawn of the same actor left; the driver gets
- * it from spawn with the actor's token, and `actor wait` from spawn.json. Deciding the temporary-folder step creates that one empty 0700 folder, even
- * when only the path is asked for (a planned spawn, a cleanup).
+ * it from spawn with the actor's token, and `actor wait` from spawn.json. Deciding the temporary-folder step creates
+ * that one empty 0700 folder, even when only the path is asked for (a planned spawn).
  */
 export function actorRoot({ env = process.env, tmp = tmpdir(), home = homedir() } = {}) {
   for (const base of [env.XDG_RUNTIME_DIR, tmp]) {

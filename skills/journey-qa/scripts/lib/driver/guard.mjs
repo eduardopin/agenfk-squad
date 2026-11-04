@@ -22,3 +22,53 @@ export function addOrigins(allow, urls) {
   for (const o of origins) allow.add(new URL(o).origin);
   return allow;
 }
+
+// URLs with no origin of their own to check: a frame not yet navigated, about:blank and about:srcdoc (they inherit
+// the parent's origin), data:/blob: documents the product builds, and the error page left by an aborted navigation.
+const NO_ORIGIN = /^(about:(blank|srcdoc)([?#]|$)|data:|blob:|chrome-error:)/;
+
+/** True when a frame at `url` may be shown and driven: its origin is in `allow`, or it carries no origin to check. */
+export function originAllowed(allow, url) {
+  if (!url || NO_ORIGIN.test(url)) return true;
+  try {
+    return allow.has(new URL(url).origin);
+  } catch {
+    return false;
+  }
+}
+
+// An origin the hint may quote as a shell command: http(s), letters, digits, dots and hyphens in the host, an optional
+// port. A hostile page picks its frame's URL, and URL.origin keeps characters such as ` $ ( ) in a host, so anything
+// else gets no command to copy.
+const QUOTABLE_ORIGIN = /^https?:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?$/;
+
+/** How the coordinator lets a blocked origin in, for the notices about frames the product embeds; "" when the origin
+ * of `url` is missing, opaque or not safe to quote as a command. */
+export function allowHint(url) {
+  let origin = null;
+  try { origin = new URL(url).origin; } catch {}
+  return origin && QUOTABLE_ORIGIN.test(origin)
+    ? `; if the product needs it, the coordinator allows it with \`jqa browser allow ${origin}\``
+    : "";
+}
+
+/**
+ * Frames of `pages` that sit on an origin outside `allow`. A blocked main frame stands for its whole page (leaving it
+ * removes the subframes); otherwise each blocked subframe is listed. Pages and frames are Playwright's, or any object
+ * with the same isClosed/mainFrame/frames/url methods.
+ */
+export function blockedFrames(pages, allow) {
+  const out = [];
+  for (const page of pages) {
+    if (!page || page.isClosed()) continue;
+    const main = page.mainFrame();
+    if (!originAllowed(allow, main.url())) {
+      out.push({ page, frame: main, url: main.url(), main: true });
+      continue;
+    }
+    for (const frame of page.frames()) {
+      if (frame !== main && !originAllowed(allow, frame.url())) out.push({ page, frame, url: frame.url(), main: false });
+    }
+  }
+  return out;
+}

@@ -7,10 +7,19 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { send, startDriver } from "../../skills/journey-qa/scripts/lib/driver/client.mjs";
-import { blockedFrames, originAllowed } from "../../skills/journey-qa/scripts/lib/driver/guard.mjs";
+import { allowHint, blockedFrames, originAllowed } from "../../skills/journey-qa/scripts/lib/driver/guard.mjs";
 
 const APP = "https://app.example.test";
 const allow = new Set([APP]);
+
+test("allowHint quotes only a plain http(s) origin: a host with shell characters gets no command to copy", () => {
+  assert.match(allowHint("https://pay.example.net/widget?x=1"), /`jqa browser allow https:\/\/pay\.example\.net`$/);
+  assert.match(allowHint("http://127.0.0.1:39135/w"), /`jqa browser allow http:\/\/127\.0\.0\.1:39135`$/);
+  for (const u of ["http://a%60id%60.localhost:39135/widget", "http://x$(id).localhost:1/", "http://a(b).localhost/",
+    "data:text/html,x", "about:blank", "file:///etc/passwd", "not a url", ""]) {
+    assert.equal(allowHint(u), "", u);
+  }
+});
 
 test("originAllowed takes the allowlisted origin and URLs with no origin of their own, nothing else", () => {
   for (const u of [`${APP}/`, `${APP}/a?b=1#c`, "", "about:blank", "about:srcdoc", "about:blank#top", "data:text/html,x", "blob:https://x.test/1", "chrome-error://chromewebdata/"]) {

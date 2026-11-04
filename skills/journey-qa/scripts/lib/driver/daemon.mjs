@@ -3,7 +3,7 @@
 // action budgets, and writes every observation to the evidence ledger + trace.
 // Started by `jqa browser start`; talks HTTP on 127.0.0.1 with a bearer token.
 import { stageUploads } from "./upload.mjs";
-import { addOrigins, assertRole, blockedFrames, originAllowed as allowedIn } from "./guard.mjs";
+import { addOrigins, allowHint, assertRole, blockedFrames, originAllowed as allowedIn } from "./guard.mjs";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -226,12 +226,6 @@ async function ensurePage(actor) {
 // frame that cannot be moved is recorded once, not on every observation).
 const leaving = new WeakMap();
 
-/** How the coordinator lets a blocked origin in, for the notices about frames the product embeds. */
-function allowHint(url) {
-  let origin = null;
-  try { origin = new URL(url).origin; } catch {}
-  return origin && origin !== "null" ? `; if the product needs it, the coordinator allows it with \`jqa browser allow ${origin}\`` : "";
-}
 
 /** Answers a dialog raised on a blocked origin: dismissed, or accepted when it is a beforeunload (accept = leave). */
 function answerBlockedDialog(actor, page, d) {

@@ -3,7 +3,7 @@
 // action budgets, and writes every observation to the evidence ledger + trace.
 // Started by `jqa browser start`; talks HTTP on 127.0.0.1 with a bearer token.
 import { stageUploads } from "./upload.mjs";
-import { addOrigins, assertRole } from "./guard.mjs";
+import { addOrigins, assertRole, blockedFrames, originAllowed as allowedIn } from "./guard.mjs";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -28,6 +28,8 @@ const INTERACTIONS = new Set([
   "back", "forward", "reload", "dialog", "keydown", "keyup", "hold", "tab", "close-tab", "drag",
 ]);
 const PRIVILEGED = new Set(["eval", "console", "network", "storage", "cookies"]);
+// Interactions that take the tab elsewhere: allowed even while a frame of it sits on a blocked origin it could not leave.
+const ESCAPES = new Set(["open", "back", "forward", "reload", "tab", "close-tab", "dialog"]);
 
 const state = {
   pw: null, browser: null, mode: cfg.cdp ? "driver_cdp" : "driver_launch", browserName: null, browserVersion: null,
@@ -49,14 +51,7 @@ function maskUrl(u) {
     return String(u).slice(0, 300);
   }
 }
-function originAllowed(u) {
-  if (!u || u === "about:blank" || u.startsWith("data:") || u.startsWith("blob:") || u.startsWith("chrome-error:")) return true;
-  try {
-    return state.allow.has(new URL(u).origin);
-  } catch {
-    return false;
-  }
-}
+const originAllowed = (u) => allowedIn(state.allow, u);
 const JWT = /eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}/g;
 const maskSecrets = (text) => String(text).replace(JWT, "[jwt hidden]");
 function trace(event) {
@@ -119,7 +114,11 @@ function wirePage(actor, page) {
     actor.console.push({ t: nowIso(), type: "pageerror", text: String(e.message).slice(0, 600) });
     actor.consoleErrors++;
   });
-  page.on("framenavigated", (f) => { if (f === page.mainFrame()) page.__jqa.nav++; });
+  page.on("framenavigated", (f) => {
+    if (f === page.mainFrame()) page.__jqa.nav++;
+    // A server redirect is not routed (the route sees the first request only): the frame is left once it lands.
+    if (!originAllowed(f.url())) leaveBlocked(actor, f, f.url(), f === page.mainFrame()).catch(() => {});
+  });
   page.on("dialog", (d) => {
     actor.dialog = { dialog: d, type: d.type(), message: d.message().slice(0, 500), default: d.defaultValue?.() ?? "" };
     actor.notices.push(`${d.type()} dialog open: ${JSON.stringify(d.message().slice(0, 200))} → use \`dialog accept\` or \`dialog dismiss\``);
@@ -157,15 +156,19 @@ async function addActor(id, flags = {}) {
   const context = await state.browser.newContext(opts);
   const actor = {
     id, role: flags.role === "observer" ? "observer" : "actor", context, pages: [], page: null, net: [], console: [],
-    consoleErrors: 0, notices: [], dialog: null, refs: null, actions: 0, startedAt: null,
+    consoleErrors: 0, notices: [], dialog: null, refs: null, actions: 0, startedAt: null, blocked: [],
     maxActions: Number(flags["max-actions"] ?? cfg.maxActions ?? 60), maxMinutes: Number(flags["max-minutes"] ?? cfg.maxMinutes ?? 20),
     mobile: !!flags.mobile, contextId: randomBytes(4).toString("hex"),
   };
+  // Every navigation request, main frame and subframe, is checked here; what arrives without a routed request (a
+  // redirect, a page restored from history) is caught by framenavigated and enforceOrigins.
   await context.route("**/*", (route) => {
     const req = route.request();
-    if (req.isNavigationRequest() && req.frame().parentFrame() === null && !originAllowed(req.url())) {
-      actor.notices.push(`navigation blocked (outside the allowlist): ${maskUrl(req.url())}`);
-      trace({ actor_id: id, as: "driver", cmd: "blocked-navigation", url: maskUrl(req.url()), ok: false });
+    if (req.isNavigationRequest() && !originAllowed(req.url())) {
+      let sub = false;
+      try { sub = req.frame().parentFrame() !== null; } catch {}
+      actor.notices.push(`${sub ? "frame " : ""}navigation blocked (outside the allowlist): ${maskUrl(req.url())}`);
+      trace({ actor_id: id, as: "driver", cmd: "blocked-navigation", url: maskUrl(req.url()), frame: sub ? "sub" : "main", ok: false });
       return route.abort("blockedbyclient");
     }
     return route.fallback();
@@ -207,8 +210,41 @@ async function ensurePage(actor) {
   if (!actor.page || actor.page.isClosed()) {
     actor.page = await actor.context.newPage();
   }
+  await enforceOrigins(actor);
   return actor.page;
 }
+
+// ---------- origin guard (after the route) ----------
+// frame -> { url, done } while the driver takes it off a blocked origin, and after that while it is stuck there (so a
+// frame that cannot be moved is recorded once, not on every observation).
+const leaving = new WeakMap();
+
+/**
+ * Takes a frame off an origin outside the allowlist: a main frame (the whole tab) or a subframe goes to about:blank.
+ * Recorded once per landing in actor.blocked, the notices and the trace; `interact` turns a main-frame entry into
+ * origin_blocked. When the frame cannot be moved, refs and actions in it are still refused (resolveRef, interact).
+ */
+function leaveBlocked(actor, frame, url, main) {
+  const current = leaving.get(frame);
+  if (current?.url === url) return current.done;
+  actor.blocked.push({ url, main });
+  actor.notices.push(`${main ? "page" : "frame"} reached an origin outside the allowlist (${maskUrl(url)}): taken to about:blank, refs in it refused`);
+  trace({ actor_id: actor.id, as: "driver", cmd: "blocked-navigation", url: maskUrl(url), frame: main ? "main" : "sub", left: true, ok: false });
+  const done = frame.goto("about:blank", { timeout: 10000 })
+    .catch((e) => log(`could not leave ${maskUrl(url)}: ${e.message.split("\n")[0]}`))
+    .finally(() => { if (leaving.get(frame)?.done === done && frame.url() !== url) leaving.delete(frame); });
+  leaving.set(frame, { url, done });
+  return done;
+}
+
+/** Leaves every frame of the actor's tabs that sits outside the allowlist; returns what it found. */
+async function enforceOrigins(actor) {
+  const hits = blockedFrames(actor.pages, state.allow);
+  for (const h of hits) await leaveBlocked(actor, h.frame, h.url, h.main);
+  return hits;
+}
+
+const blockedError = (what, url) => err("origin_blocked", `${what} is on an origin outside the allowlist (${maskUrl(url)}). Allowed: ${[...state.allow].join(", ")}`);
 
 async function settle(page, maxMs = 2500) {
   try { await page.waitForLoadState("domcontentloaded", { timeout: Math.min(maxMs, 8000) }); } catch {}
@@ -238,6 +274,12 @@ async function snapshot(actor, { full = false, frames = false, record = true, re
   for (let i = 0; i < targets.length; i++) {
     const f = targets[i];
     const prefix = i === 0 ? "" : `f${i}`;
+    // A frame that could not be read keeps its slot, so the f<i> of each ref still names the frame it came from.
+    if (!originAllowed(f.url())) {
+      refFrames.push({ frame: f, meta: [], prefix });
+      sections.push(`# frame ${prefix || "main"}: blocked, outside the allowlist (${maskUrl(f.url())}); no refs`);
+      continue;
+    }
     try {
       const r = await f.evaluate(`(${SNAPSHOT_FN})(${JSON.stringify({ full, prefix, key: refKey(actor) })})`);
       refFrames.push({ frame: f, meta: r.meta, prefix });
@@ -246,6 +288,7 @@ async function snapshot(actor, { full = false, frames = false, record = true, re
       else sections.push(`# frame f${i}: ${maskUrl(r.url)}`);
       sections.push(r.lines.join("\n") || "(no visible elements)");
     } catch (e) {
+      refFrames.push({ frame: f, meta: [], prefix });
       sections.push(`# frame ${i}: inaccessible (${e.message.split("\n")[0]})`);
     }
   }
@@ -288,6 +331,9 @@ async function resolveRef(actor, ref) {
   const idx = Number(m[2]) - 1;
   const fr = refs.frames[frameIdx];
   if (!fr || !fr.meta[idx]) throw err("bad_ref", `Ref ${ref} does not exist in the last snapshot.`);
+  // The frame may have moved to a blocked origin since the snapshot (a redirect does not bump the page's nav count).
+  if (!originAllowed(page.url())) throw Object.assign(blockedError("The page", page.url()), { refused: true });
+  if (!originAllowed(fr.frame.url())) throw Object.assign(blockedError(`The frame of ${ref}`, fr.frame.url()), { refused: true });
   const handle = (await fr.frame.evaluateHandle(([i, k]) => window[Symbol.for(k)]?.refs?.[i] ?? null, [idx, refKey(actor)])).asElement();
   if (!handle) throw err("stale_ref", `Ref ${ref} expired. Observe again.`);
   const connected = await handle.evaluate((el) => el.isConnected);
@@ -317,7 +363,12 @@ async function interact(actor, cmd, args, flags, fn) {
   // Typed text stays hidden until fill/type classify the field as not secret, before acting on it: an action that
   // fails, or a ref that never resolves, must not put the value in the trace or take the automatic screenshot.
   const field = { secret: !!flags.secret || cmd === "fill" || cmd === "type" };
+  const blockedBefore = actor.blocked.length;
   try {
+    // ensurePage already tried to leave any blocked frame. One it could not move still holds the focus and the input:
+    // only commands that take the tab elsewhere go through.
+    const stuck = ESCAPES.has(cmd) ? null : blockedFrames([page], state.allow)[0];
+    if (stuck) throw Object.assign(blockedError(stuck.main ? "The page" : "A frame of the page", stuck.url), { refused: true });
     const r = await fn(page, field);
     target = r?.target ?? null;
     detail = r?.detail ?? null;
@@ -326,12 +377,20 @@ async function interact(actor, cmd, args, flags, fn) {
   }
   const secret = field.secret;
   const typed = secret && (cmd === "fill" || cmd === "type") ? String(args[1] ?? "") : "";
-  const errMessage = error ? (typed ? error.message.split(typed).join("[hidden]") : error.message).split("\n")[0] : "";
-  const notCounted = error && ["bad_ref", "stale_ref", "no_snapshot", "bad_args", "no_dialog"].includes(error.code);
+  const notCounted = error && (error.refused || ["bad_ref", "stale_ref", "no_snapshot", "bad_args", "no_dialog"].includes(error.code));
   // Observer/coordinator interactions are interventions recorded in the trace, not the actor's budget.
   if (!notCounted && (flags.as ?? "actor") === "actor") actor.actions++;
-  const active = actor.page ?? page;
+  let active = actor.page ?? page;
   if (!active.isClosed()) await settle(active, flags.settle ? Number(flags.settle) : 2500);
+  // A redirect or a page restored from history reaches its origin without a routed request: check where the action
+  // landed. A tab that got there was left (framenavigated, or here) and the action reports origin_blocked, in place of
+  // whatever error the interrupted navigation raised.
+  await enforceOrigins(actor);
+  const landed = actor.blocked.slice(blockedBefore).find((b) => b.main);
+  if (landed && error?.code !== "origin_blocked") error = blockedError(`${cmd} reached a page that`, landed.url);
+  if (landed) error.message = `${error.message}. The tab was taken to about:blank.`;
+  active = actor.page ?? page;
+  const errMessage = error ? (typed ? error.message.split(typed).join("[hidden]") : error.message).split("\n")[0] : "";
   const evidenceIds = [];
   let snap = null;
   if (!error || !["bad_ref", "stale_ref", "no_snapshot", "bad_args"].includes(error.code)) {

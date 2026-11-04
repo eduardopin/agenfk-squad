@@ -30,6 +30,7 @@ function makePage() {
     };
   };
   const frame = {
+    url: () => "https://app.example.test/login",
     evaluate: async () => ({
       title: "Sign in", url: "https://app.example.test/login", scroll: { y: 0, max: 0 }, truncated: false, count: FIELDS.length,
       meta: FIELDS.map((f) => ({ role: "textbox", name: f.name })), lines: FIELDS.map((f, i) => "textbox " + JSON.stringify(f.name) + " [e" + (i + 1) + "]"),
@@ -60,7 +61,8 @@ writeFileSync(FAKE, FAKE_PLAYWRIGHT);
 const RUN = mkdtempSync(join(tmpdir(), "jqa-driver-"));
 process.env.JQA_PLAYWRIGHT = FAKE;
 try {
-  await startDriver(RUN, { "start-timeout": 30000 });
+  // The fake page claims app.example.test; the driver checks every frame it drives against the allowlist.
+  await startDriver(RUN, { "start-timeout": 30000, allow: "https://app.example.test" });
 } finally {
   delete process.env.JQA_PLAYWRIGHT;
 }

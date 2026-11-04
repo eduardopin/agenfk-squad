@@ -42,30 +42,40 @@ are taken as given: `SQUAD_MAX_REVIEWS=0` denies every reviewer.
 
 A session that writes its handoff stops on Claude Code's "Do you want to create
 <file>?" dialog, and the answer is always yes. `hooks/squad-allow.py` runs on the
-`PermissionRequest` event for Write, Edit, MultiEdit and NotebookEdit. It answers
-yes in exactly two cases:
+`PermissionRequest` event for Write, Edit, MultiEdit and NotebookEdit. It is
+default-deny: it answers yes in exactly three cases and prints nothing otherwise,
+so the dialog appears.
 
-1. Any of the four tools on a file inside the squad's folders: `.claude/handoffs/`
-   of any repository, `~/.claude/squad/` (and `$CLAUDE_CONFIG_DIR/squad/`), and
-   `docs/architect/` inside the session's project.
-2. Write creating a plain new file inside the session's project. The project is
-   the session's working directory and its git toplevel. No path component under
-   that root may start with a dot (`.github/`, `.vscode/`, `.husky/`, `.claude/`
-   are out), and the name must not be one that gets run or read later:
-   `CLAUDE*.md`, `AGENTS*.md`, `Makefile`, `GNUmakefile`, `Justfile`, `Dockerfile*`,
-   `*.sh`, `package.json`, `pyproject.toml`, `setup.py`, `setup.cfg`, `conftest.py`,
-   `*.pth`, `.envrc`, `.*rc`, `.*profile`. A new file outside the project (a
-   `~/.bashrc` that does not exist yet) is not answered.
+The project root is the session's working directory, resolved. It is not widened to
+the git toplevel, and a session started in `/`, in `$HOME` or in a parent of `$HOME`
+has no project.
 
-It stays silent, so the dialog appears, for paths that steer the agent or hold
-secrets, even inside the squad folders: `settings*.json`, anything under `hooks/`,
-`CLAUDE.md`, `AGENTS.md`, `.claude/agents|skills|commands|plugins`, `~/.claude/*.json`
-(and the same under `CLAUDE_CONFIG_DIR`), `.git/`, `.env*`, `*.pem`, `*.key`,
-`id_rsa*`, `id_ed25519*`, `credentials*`, `.aws/`, `.ssh/`, `.mcp.json`, and the
-squad's own clone. The list is checked on the path as written and on the path after
-symlinks and `..` are resolved, case-insensitively; a match on either refuses. It
-never answers deny, and on any doubt or error it prints nothing. Each allow is one
-line (time, session, tool, path) in `~/.claude/squad/allow.log`.
+- **A. A new plain file in the project.** Write only, the file does not exist (a
+  dangling symlink counts as existing), and the extension is one of `.md .txt .csv
+  .tsv .log .png .jpg .jpeg .svg .pdf`. No path component under the root starts
+  with a dot or is named `node_modules`, `vendor`, `.terraform`, `bin`, `sbin`,
+  `hooks`, `githooks` or `.githooks`, and the name is not `CLAUDE*.md` or `AGENTS*.md`.
+- **B. Architect plan files.** Write of a new, or Edit and MultiEdit of an existing,
+  `.md` or `.json` file under `<project>/docs/architect/`.
+- **C. A new handoff.** Write of a new `.md` file under `<project>/.claude/handoffs/`
+  or under `<claude dir>/squad/handoffs/` (the claude dir is `~/.claude` and
+  `$CLAUDE_CONFIG_DIR`). An existing handoff is never edited without a person, because
+  the pickup reads it as instructions, and no other folder of `squad/` is answered.
+
+Whatever the case, it stays silent for paths that steer the agent or hold secrets:
+`settings*.json`, anything under `hooks/`, `CLAUDE.md`, `AGENTS.md`,
+`.claude/agents|skills|commands|plugins`, `~/.claude/*.json` (and the same under
+`CLAUDE_CONFIG_DIR`), `.git/`, `.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`,
+`credentials*`, `.aws/`, `.ssh/`, `.mcp.json`, and the squad's own clone. The list is
+checked on the path as written and on the path after symlinks and `..` are
+resolved, case-insensitively; a match on either refuses, and the allow rules need
+both spellings inside the root. The hook never answers deny, and on any doubt or
+error it prints nothing. Each allow is one line (time, session, tool, path) in
+`~/.claude/squad/allow.log`.
+
+Known race: the hook checks that the file does not exist before the write happens, so a
+symlink planted in between could redirect it. Planting one takes a Bash call, and
+Bash prompts.
 
 ## Skill trials
 

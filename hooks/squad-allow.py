@@ -3,25 +3,32 @@
 
 A session that writes its handoff stops on Claude Code's "Do you want to create
 <file>?" dialog, and the answer is always yes. This is the PermissionRequest hook
-that answers it, for a narrow set of writes:
+that answers it. It is default-deny: it prints allow in three cases only, and nothing
+for everything else.
 
-- Write, Edit, MultiEdit or NotebookEdit inside the squad's own folders:
-  <any>/.claude/handoffs/, ~/.claude/squad/ (and $CLAUDE_CONFIG_DIR/squad/), and
-  docs/architect/ inside the session's project;
-- Write creating a plain new file inside the session's project: the payload cwd
-  and its git toplevel (git asked for at most 2 s), no path component below that
-  root starting with a dot, and a basename that is not run or read later
-  (CLAUDE*.md, AGENTS*.md, Makefile, Dockerfile*, *.sh, package.json, pyproject.toml,
-  setup.py, setup.cfg, conftest.py, *.pth, .envrc, .*rc, .*profile and the like).
+A. Write of a NEW file (lexists is false, so a dangling symlink is not new) with an
+   inert extension (.md .txt .csv .tsv .log .png .jpg .jpeg .svg .pdf), inside the
+   project root, which is realpath(payload cwd) and nothing wider (no git toplevel).
+   Refused outright when the root is "/", $HOME or an ancestor of $HOME. No path
+   component below the root may start with "." or be named node_modules, vendor,
+   .terraform, bin, sbin, hooks, githooks or .githooks, and the name may not be
+   CLAUDE*.md or AGENTS*.md.
+B. Write (new) or Edit/MultiEdit of .md or .json under <root>/docs/architect/.
+C. Write of a NEW .md file under <root>/.claude/handoffs/ or under
+   <claude dir>/squad/handoffs/ (claude dir: ~/.claude and CLAUDE_CONFIG_DIR). Never
+   Edit there, never another subfolder of squad/: a handoff is read as instructions.
 
-It never answers for a path that steers the agent or holds a secret, new or not:
+Whatever the case, it never answers for a path that steers the agent or holds a secret, new or not:
 settings*.json, anything under a hooks/ dir, CLAUDE.md, AGENTS.md, .claude/agents,
 .claude/skills, .claude/commands, .claude/plugins, ~/.claude/*.json and the same under
 CLAUDE_CONFIG_DIR, .git/, .env*, *.pem, *.key, id_rsa*, id_ed25519*, credentials*, .aws/,
 .ssh/, .mcp.json, and the squad's own source tree (two levels above this file). The
 deny list runs on the literal path (made absolute, no symlink followed) and on the
 realpath, case-insensitively, and either one matching refuses; the new-file rule needs
-both spellings inside the project. The deny list wins over the squad folders.
+both spellings inside the root. The deny list is checked first.
+
+Known race: the hook looks at the disk before the write happens. Planting a symlink in
+between needs a Bash call, which prompts.
 
 It never answers deny. When it is unsure (another tool, a path it cannot resolve,
 malformed input, any error) it prints nothing and the normal dialog appears, and it
@@ -39,7 +46,6 @@ after an allow. Standard library only.
 import fnmatch
 import json
 import os
-import subprocess
 import sys
 import time
 
@@ -48,9 +54,8 @@ NAMES = ("settings*.json", "claude.md", "agents.md", ".env*", "*.pem", "*.key", 
          "credentials*", ".mcp.json")
 DIRS = {"hooks", ".git", ".aws", ".ssh"}
 CLAUDE_DIRS = {"agents", "skills", "commands", "plugins"}
-# a new file with one of these names is read or run by something later: not a plain file
-RUNS = ("claude*.md", "agents*.md", "makefile", "gnumakefile", "justfile", "dockerfile*", "*.sh", "package.json",
-        "pyproject.toml", "setup.py", "setup.cfg", "conftest.py", "*.pth", ".envrc", ".*rc", ".*profile")
+INERT = {".md", ".txt", ".csv", ".tsv", ".log", ".png", ".jpg", ".jpeg", ".svg", ".pdf"}
+BAD = {"node_modules", "vendor", ".terraform", "bin", "sbin", "hooks", "githooks", ".githooks"}
 
 
 def parts(path):
@@ -105,66 +110,54 @@ def denied(path, homes):
     return False
 
 
-def squad_folder(real, homes):
-    comps = parts(real)[:-1]
-    if has_pair(comps, ".claude", "handoffs"):
-        return True
-    return any(under(real, os.path.join(c, "squad")) for h in homes for c in claude_dirs(h))
+def inside(path, root):
+    return under(path, root) and path != root
 
 
-def project_roots(cwd):
-    """The session's project: the resolved cwd, widened to its git toplevel when git answers in time."""
-    roots = [os.path.realpath(cwd)]
-    try:
-        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True,
-                           timeout=2, stdin=subprocess.DEVNULL)
-        top = r.stdout.strip()
-        if r.returncode == 0 and top:
-            roots.append(os.path.realpath(top))
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        pass
-    return roots
+def clean(path, base):
+    """No component below base starts with a dot or names a place that runs or vendors code."""
+    return all(not c.startswith(".") and c.lower() not in BAD for c in parts(os.path.relpath(path, base)))
 
 
-def inside(path, roots):
-    """The root that holds path, or None; commonpath on resolved paths."""
-    for root in sorted(roots, key=len):
-        try:
-            if os.path.commonpath([path, root]) == root:
-                return root
-        except ValueError:
-            pass
-    return None
-
-
-def plain_new_file(literal, real, roots):
-    root = inside(real, roots)
-    if root is None or inside(literal, roots) is None:
-        return False
-    for p, r in ((real, root), (literal, inside(literal, roots))):
-        rel = parts(os.path.relpath(p, r))
-        if not rel or rel[0] == ".." or any(c.startswith(".") for c in rel):
-            return False
-    name = os.path.basename(real).lower()
-    return not any(fnmatch.fnmatchcase(name, n) for n in RUNS) and \
-        not any(fnmatch.fnmatchcase(os.path.basename(literal).lower(), n) for n in RUNS)
+def steer(*names):
+    return any(fnmatch.fnmatchcase(n.lower(), pat) for n in names for pat in ("claude*.md", "agents*.md"))
 
 
 def decide(tool, path, cwd, homes):
-    """True only when the write is safe to wave through."""
-    if not path or "\0" in path:
+    """True only when the write is one of the three cases the module docstring lists."""
+    if not path or "\0" in path or tool not in WRITERS:
         return False
     literal = os.path.abspath(os.path.join(cwd, path))
     real = os.path.realpath(literal)
     if denied(literal, homes) or denied(real, homes):
         return False
-    roots = project_roots(cwd)
-    if squad_folder(real, homes):
-        return True
-    root = inside(real, roots)
-    if root is not None and has_pair(parts(real)[:-1], "docs", "architect"):
-        return True
-    return tool == "Write" and not os.path.exists(real) and plain_new_file(literal, real, roots)
+    new = not os.path.lexists(literal) and not os.path.lexists(real)
+    ext = os.path.splitext(literal)[1].lower(), os.path.splitext(real)[1].lower()
+    names = os.path.basename(literal), os.path.basename(real)
+    lroot, rroot = os.path.abspath(cwd), os.path.realpath(cwd)
+    if rroot == os.sep or any(under(h, rroot) or under(h, lroot) for h in homes):
+        project = False
+    else:
+        project = inside(literal, lroot) and inside(real, rroot)
+
+    def both(lbase, rbase):
+        return inside(literal, lbase) and inside(real, rbase) and clean(literal, lbase) and clean(real, rbase)
+
+    if tool == "Write" and new and ext == (".md", ".md") and not steer(*names):          # C
+        if project and both(os.path.join(lroot, ".claude", "handoffs"), os.path.join(rroot, ".claude", "handoffs")):
+            return True
+        for h in homes:
+            for c in claude_dirs(h):
+                if both(os.path.join(c, "squad", "handoffs"), os.path.join(os.path.realpath(c), "squad", "handoffs")):
+                    return True
+    if not project:
+        return False
+    if ext[0] == ext[1] and ext[0] in (".md", ".json") and both(os.path.join(lroot, "docs", "architect"),   # B
+                                                                os.path.join(rroot, "docs", "architect")):
+        if tool in ("Edit", "MultiEdit") or (tool == "Write" and new):
+            return True
+    return (tool == "Write" and new and ext[0] in INERT and ext[1] in INERT and not steer(*names)   # A
+            and clean(literal, lroot) and clean(real, rroot))
 
 
 def main():

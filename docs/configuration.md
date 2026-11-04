@@ -93,6 +93,17 @@ Per repository, with `git config`:
 
 `SQUAD_TURN_IDLE`, `SQUAD_TURN_MAX` and `SQUAD_TURN_CLAIM` were removed: the turn now covers only the merge call itself.
 
+## Project decisions
+
+Read by `hooks/squad-decisions.py` (the SessionStart index and the
+`squad-decisions` command). See [decisions.md](decisions.md).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SQUAD_DECISIONS` | on | `0` turns the SessionStart index off; the `squad-decisions` command still works |
+| `SQUAD_DECISIONS_DIR` | `~/.claude/squad/decisions` | Root of the decision stores; each repository gets `<root>/<repo key>/`, the same key from every worktree |
+| `SQUAD_DECISIONS_BUDGET` | 4000 | Bytes the SessionStart index may print; newest first, the rest named as left out |
+
 ## The session switch
 
 | Variable | Default | Meaning |

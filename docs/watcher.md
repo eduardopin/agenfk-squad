@@ -78,57 +78,60 @@ Rule 1 is the wall. Rule 2 is the interesting one.
 A high reread share with a small context is the cache doing its job, not
 waste. So rule 2 only applies above a floor.
 
-A fixed floor is still wrong. Picture a session that has just loaded 500k
+A fixed floor is still wrong. Picture a session that has just loaded 600k
 tokens of context and done almost nothing with it. Its reread share is high
 (it has produced little, so most of its spend is re-reading), and its context
-is at 70% of the window. Cutting it now throws away what it just paid to load.
+is at 60% of the window. Cutting it now throws away what it just paid to load.
 
 So the floor **weighs the burn**. With `window` the session's context window:
 
 ```
-floor_pct = 90 − (90 − 70) × min(1, burn_pct / 50)
+floor_pct = 90 − (90 − 50) × min(1, burn_pct / 50)
 floor     = max(2 × SQUAD_CTX_BASE, window × floor_pct / 100)
 ```
 
-where 90 is `SQUAD_CTX_PCT`, 70 is `SQUAD_REREAD_FLOOR` and the
+where 90 is `SQUAD_CTX_PCT`, the first 50 is `SQUAD_REREAD_FLOOR` and the
 divisor 50 is `SQUAD_BURN_FULL`. In words: the floor starts at 90% of the
 window for a session that has burned nothing, and falls in a straight line to
-70% once the session has burned half its budget.
+50% once the session has burned half its budget.
 
 For a 1M window and a 20M budget:
 
 | Burn so far | `burn_pct` | Floor |
 |---|---|---|
 | 0 | 0% | 900k (90%) |
-| 2M | 10% | 860k (86%) |
-| 5M | 25% | 800k (80%) |
-| 8M | 40% | 740k (74%) |
-| 10M or more | ≥ 50% | 700k (70%) |
+| 2M | 10% | 820k (82%) |
+| 5M | 25% | 700k (70%) |
+| 8M | 40% | 580k (58%) |
+| 10M or more | ≥ 50% | 500k (50%) |
 
 Until October 2026 these were 80% and 50%: the handoff went out early enough
-to interrupt work that was still paying for itself.
+to interrupt work that was still paying for itself. From then until November
+2026 the lowest floor was 70%, and no main session ever reached it: live
+sessions rereading 74–87% of their spend, the largest at 672k with 143% burn,
+were never ordered to hand off.
 
 ### Worked examples
 
-**A. Just loaded, barely used.** Context 700k, burn 2M (10%), reread share 70%.
-Floor is 860k. Context is below the floor, so rule 2 does not fire. Rule 1
-does not fire either (700k < 900k). The session keeps working. It gets at most
+**A. Just loaded, barely used.** Context 600k, burn 2M (10%), reread share 70%.
+Floor is 820k. Context is below the floor, so rule 2 does not fire. Rule 1
+does not fire either (600k < 900k). The session keeps working. It gets at most
 an informational notice, which is not an order to stop.
 
-**B. Same context, long session.** Context 700k, burn 11M (55%), reread share 68%.
-Floor is 700k. Context ≥ floor and share ≥ 60%: `PROACTIVE HANDOFF`. Each
-further turn costs a toll of 70k weighted tokens. A restart costs
-1.25 × 40k + 10k = 60k, and saves 0.1 × (700k − 40k) = 66k per turn, so the
-fresh session pays for itself in 60 / 66 ≈ 0.9 turns.
+**B. Same context, long session.** Context 600k, burn 11M (55%), reread share 68%.
+Floor is 500k. Context ≥ floor and share ≥ 60%: `PROACTIVE HANDOFF`. Each
+further turn costs a toll of 60k weighted tokens. A restart costs
+1.25 × 40k + 10k = 60k, and saves 0.1 × (600k − 40k) = 56k per turn, so the
+fresh session pays for itself in 60 / 56 ≈ 1.1 turns.
 
-**C. Productive session, low reread.** Context 820k, burn 12M, reread share 41%.
+**C. Productive session, low reread.** Context 820k, burn 12M (60%), reread share 41%.
 Share is under 60%, so rule 2 does not fire. Context is under 900k, so rule 1
 does not fire. The session continues, even though it is large: it is still
 producing more than it re-reads.
 
 **D. The wall.** Context 910k, any burn, any share. Rule 1: `PROACTIVE HANDOFF`.
 
-The cut therefore always falls between 70% and 90% of the window. Above 70%
+The cut therefore always falls between 50% and 90% of the window. Above 50%
 without the arithmetic closing, the session receives only an informational
 notice.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The watcher cuts the main session between 70% and 90% of the window, and only by arithmetic;
+"""The watcher cuts the main session between 50% and 90% of the window, and only by arithmetic;
 it switches the session even with a background task running.
 
 Self-checking: the exit code is the verdict. Runs in a throwaway HOME, with a
@@ -123,33 +123,34 @@ def test_the_math_is_fixed():
     def due(share, ctx, window, burn=60):
         reread = share * burn / 100 * cx.BUDGET
         return cx.handoff_math(int(reread * (1 - share) / share), 0, int(reread / 0.1), 0, ctx, window)["due"]
-    assert cx.REREAD_SHARE == 0.60 and cx.REREAD_FLOOR_PCT == 70 and cx.HANDOFF_NOW == 90
+    assert cx.REREAD_SHARE == 0.60 and cx.REREAD_FLOOR_PCT == 50 and cx.HANDOFF_NOW == 90
     assert not due(0.95, 150_000, M)        # the case that used to cut sessions at 15%
-    assert not due(0.95, 510_000, M)        # and the one that cut them at 51% (rule until October 2026)
-    assert not due(0.95, 699_000, M)
+    # lowest floor 50% since November 2026: at 70% no main session ever reached it
+    assert not due(0.95, 499_000, M) and due(0.95, 500_000, M)
     assert due(0.60, 700_000, M)
     assert not due(0.59, 890_000, M)
     assert due(0.61, 90_000, 0)             # sub-session: floor 2*CTX_BASE
     assert due(0.61, 90_000, 0, burn=1)     # ...and with no window the burn does not move the floor
-    # the floor weighs the burn: 90% of the window with zero burn, 70% with burn at 50% of the budget
+    # the floor weighs the burn: 90% of the window with zero burn, 50% with burn at 50% of the budget
     assert cx.BUDGET == 20_000_000 and cx.BURN_FULL_PCT == 50
-    assert not due(0.90, 700_000, M, burn=10)   # context 70%, burn 10%: not the time
-    assert not due(0.90, 850_000, M, burn=10) and due(0.90, 860_000, M, burn=10)
-    assert not due(0.90, 790_000, M, burn=25) and due(0.90, 800_000, M, burn=25)
-    assert due(0.90, 700_000, M, burn=80)
-    # the floor table at its boundaries: burn 0% -> 90%, 25% -> 80%, 50% and beyond -> 70%
+    assert not due(0.90, 500_000, M, burn=10)   # context 50%, burn 10%: not the time
+    assert not due(0.90, 700_000, M, burn=10)   # nor at 70%
+    assert not due(0.90, 810_000, M, burn=10) and due(0.90, 830_000, M, burn=10)   # floor 82%
+    assert not due(0.90, 690_000, M, burn=25) and due(0.90, 710_000, M, burn=25)   # floor 70%
+    assert not due(0.90, 499_000, M, burn=80) and due(0.90, 500_000, M, burn=80)   # floor 50%
+    # the floor table at its boundaries: burn 0% -> 90%, 10% -> 82%, 25% -> 70%, 50% and beyond -> 50%
     def floor(burn_pct):
         return cx.handoff_math(int(burn_pct / 100 * cx.BUDGET), 0, 0, 0, 500_000, M)["floor"]
-    assert [floor(b) for b in (0, 25, 50, 100)] == [900_000, 800_000, 700_000, 700_000]
-    assert not due(0.90, 699_000, M, burn=50) and due(0.90, 700_000, M, burn=50)
+    assert [floor(b) for b in (0, 10, 25, 50, 100)] == [900_000, 820_000, 700_000, 500_000, 500_000]
+    assert not due(0.90, 499_000, M, burn=50) and due(0.90, 500_000, M, burn=50)
 
 
-def test_cut_between_70_and_90_percent():
-    cases = [  # context, reread, what the watcher says
+def test_cut_between_50_and_90_percent():
+    cases = [  # context, reread, what the watcher says (burn 60%: floor at 50%)
         (100_000, 0.90, "nothing"), (150_000, 0.90, "nothing"), (300_000, 0.90, "nothing"),
-        (520_000, 0.90, "nothing"), (690_000, 0.90, "nothing"),
-        (700_000, 0.60, "PROACTIVE HANDOFF"), (720_000, 0.90, "PROACTIVE HANDOFF"),
-        (720_000, 0.00, "Informational only"), (850_000, 0.50, "Informational only"),
+        (490_000, 0.90, "nothing"), (499_000, 0.90, "nothing"),
+        (500_000, 0.60, "PROACTIVE HANDOFF"), (520_000, 0.90, "PROACTIVE HANDOFF"),
+        (520_000, 0.00, "Informational only"), (850_000, 0.50, "Informational only"),
         (890_000, 0.00, "Informational only"),
         (900_000, 0.00, "PROACTIVE HANDOFF"), (950_000, 0.30, "PROACTIVE HANDOFF"),
     ]
@@ -162,11 +163,12 @@ def test_cut_between_70_and_90_percent():
                                               "PROACTIVE HANDOFF": 2}[expected]
 
 
-def test_context_at_70_with_low_burn_is_not_handoff_time():
+def test_context_at_50_with_low_burn_is_not_handoff_time():
+    # lowest floor 50% since November 2026: burn 10% -> 82%, burn 25% -> 70%, burn >= 50% -> 50%
     h = home()
-    cases = [(700_000, 10, "Informational only"), (840_000, 10, "Informational only"),
-             (870_000, 10, "PROACTIVE HANDOFF"), (780_000, 25, "Informational only"),
-             (810_000, 25, "PROACTIVE HANDOFF"), (700_000, 60, "PROACTIVE HANDOFF")]
+    cases = [(550_000, 10, "Informational only"), (810_000, 10, "Informational only"),
+             (830_000, 10, "PROACTIVE HANDOFF"), (690_000, 25, "Informational only"),
+             (710_000, 25, "PROACTIVE HANDOFF"), (500_000, 60, "PROACTIVE HANDOFF")]
     for i, (ctx, burn, expected) in enumerate(cases):
         sid = f"aaaabbbb-{i:04d}"
         text = said(run(h, "PostToolUse", sid, session(h, sid, ctx, 0.9, burn)))
@@ -353,8 +355,9 @@ def dispatch(h, sid, tr, agent_type="developer", env=None):
 def test_no_slot_heavy_session_becomes_handoff_with_plan_and_switch():
     h = home()
     sid = "12345678-0003"
-    tr = session(h, sid, 550_000, 0.0)                   # 55%: no context alert at all
-    assert said(run(h, "PostToolUse", sid, tr)) == "nothing"
+    tr = session(h, sid, 550_000, 0.0)                   # 55%: only the informational notice (lowest floor 50%)
+    assert kind(said(run(h, "PostToolUse", sid, tr))) == "Informational only"
+    assert state(h, sid)["ctx_level"] == 1 and not state(h, sid).get("ordered")   # nothing ordered yet
     orchestrators(h, 6)
     out = dispatch(h, sid, tr)
     assert "DISPATCH DENIED" in out and "PLAN of the denied dispatch" in out, out
@@ -475,7 +478,10 @@ def test_notice_ahead_of_the_brake_only_for_whoever_orchestrates():
     sid = "12345678-0006"
     tr = session(h, sid, 550_000, 0.0)
     orchestrators(h, 6)
-    assert said(run(h, "PostToolUse", sid, tr)) == "nothing"     # never dispatched: not its concern
+    # 550k is past the lowest floor of 50% (informational notice, level 1); what matters
+    # here is that a session that never dispatched does not get the DISPATCH NOTICE
+    first = said(run(h, "PostToolUse", sid, tr))
+    assert kind(first) == "Informational only" and "DISPATCH NOTICE" not in first, first
     path = os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json")
     def remeasure():
         st = state(h, sid)

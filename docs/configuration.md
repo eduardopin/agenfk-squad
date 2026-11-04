@@ -52,7 +52,7 @@ See [watcher.md](watcher.md#the-handoff-arithmetic) for the arithmetic.
 | `SQUAD_WINDOW` | 1,000,000 | Context window of the main session, in tokens. When unset, the watcher uses 1M, or a larger value if a status line recorded one in `~/.claude/cache/session-tokens/<session>.json` |
 | `SQUAD_CTX_PCT` | 90 | Percent of the window at which the handoff is ordered regardless of anything else. Clamped to 10–100 |
 | `SQUAD_REREAD` | 60 | Reread share, in percent, at which the reread rule can fire. Clamped to 10–95 |
-| `SQUAD_REREAD_FLOOR` | 70 | Percent of the window that is the lowest the floor can go |
+| `SQUAD_REREAD_FLOOR` | 50 | Percent of the window that is the lowest the floor can go |
 | `SQUAD_BURN_FULL` | 50 | Percent of the session budget at which the floor reaches its lowest point |
 | `CLAUDE_SESSION_BUDGET` | 20,000,000 | Weighted tokens one session is expected to spend. `burn_pct` is measured against it |
 | `SQUAD_CTX_BASE` | 40,000 | Context of a fresh session that has just read a handoff. Used for the payback and for the minimum floor (2 × this) |

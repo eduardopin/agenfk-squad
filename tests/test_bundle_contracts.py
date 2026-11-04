@@ -113,6 +113,15 @@ class ContractTests(unittest.TestCase):
         self.assertIn('%d%% of the window with burn ≥ %d%% of the session budget'
                       % (default(ctx, 'SQUAD_REREAD_FLOOR'), default(ctx, 'SQUAD_BURN_FULL')), flat)
         self.assertIn('rising to %d%% with zero burn' % default(watch, 'SQUAD_CTX_PCT'), flat)
+        # Lowest floor 50% since November 2026: at 70% no main session ever reached it.
+        self.assertEqual(default(ctx, 'SQUAD_REREAD_FLOOR'), 50)
+        # The "not the time" example sits at or above the lowest floor and below the floor for its burn.
+        example = re.search(r'context at (\d+)% with burn at (\d+)% is not the time', flat)
+        self.assertIsNotNone(example)
+        low, top, full = (default(ctx, 'SQUAD_REREAD_FLOOR'), default(watch, 'SQUAD_CTX_PCT'),
+                          default(ctx, 'SQUAD_BURN_FULL'))
+        at, burn = int(example[1]), int(example[2])
+        self.assertTrue(low <= at < top - (top - low) * min(1.0, burn / full), example[0])
         self.assertIn('orchestrator context ≥ %dk' % (default(watch, 'SQUAD_CTX_CEILING') // 1000), flat)
         self.assertIn('%d sub-sessions in the session' % default(watch, 'SQUAD_MAX_SUBS'), flat)
         self.assertIn('%d sessions orchestrating at the same time' % default(watch, 'SQUAD_MAX_ORCH'), flat)

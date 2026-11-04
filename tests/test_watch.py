@@ -1710,15 +1710,17 @@ def test_review_gate_fails_open_and_says_why():
     took = time.time() - t0
     assert took < 8, took
     assert "took more than" in gate_log(h)[-1]["why"], gate_log(h)[-1]
-    # agenfk too slow for the first card: the next is let through unasked (logged), not waited on again
+    # agenfk too slow for the first card: that card fails open, the next is not waited on again and,
+    # left unchecked, is denied: only the first card a call asks about may pass unchecked
     t0 = time.time()
-    assert verify(h, sid, CARD_A, env, f"agenfk verify {CARD_A} && agenfk verify {CARD_B}", {"cwd": ROOT}) == "nothing"
+    out = verify(h, sid, CARD_A, env, f"agenfk verify {CARD_A} && agenfk verify {CARD_B}", {"cwd": ROOT})
     took = time.time() - t0
     assert took < 6, took
+    assert "ONE CARD PER CALL" in out and CARD_B in out and "took more than" in out, out
     assert "took more than" in gate_log(h)[-2]["why"] and gate_log(h)[-2]["card"] == CARD_A, gate_log(h)[-2]
+    assert gate_log(h)[-2]["decision"] == "allow", gate_log(h)[-2]
     last = gate_log(h)[-1]
-    assert (last["card"], last["decision"], last["why"]) == (
-        CARD_B, "allow", "agenfk failed for an earlier card in this call"), last
+    assert (last["card"], last["decision"]) == (CARD_B, "deny") and "one card per call" in last["why"], last
     if os.name != "nt":
         with open(os.path.join(h, "agenfk-kid")) as fh:
             kid = int(fh.read())
@@ -1730,6 +1732,35 @@ def test_review_gate_fails_open_and_says_why():
             time.sleep(0.1)
         else:
             raise AssertionError(f"the stub's child {kid} outlived the timeout")
+
+
+def test_an_id_agenfk_fails_on_does_not_open_the_gate_for_the_next_card():
+    """A non-zero exit or unreadable output is that id's own fail-open: the other cards in the call
+    are still asked. `agenfk verify bogus && agenfk verify <REVIEW card>` used to let the second through."""
+    h = home()
+    env, no_stub = fake_agenfk(h, {CARD_A: "REVIEW", CARD_B: "TEST"})
+    sid = "abcdef12-0136"
+    bogus = "bogus-0000"                                              # agenfk get: "No item found", exit 1
+    for first in (bogus, "00000000-dead"):
+        out = verify(h, sid, CARD_A, env, f"agenfk verify {first} && agenfk verify {CARD_A} --evidence ok")
+        assert "REVIEW REQUIRED" in out and CARD_A in out, (first, out)
+        rows = gate_log(h)[-2:]
+        assert (rows[0]["card"], rows[0]["decision"]) == (first, "allow") and "exited 1" in rows[0]["why"], rows
+        assert (rows[1]["card"], rows[1]["decision"]) == (CARD_A, "deny"), rows
+    assert verify(h, sid, CARD_A, env, f"agenfk verify {bogus} && agenfk verify {CARD_B}") == "nothing"
+    # agenfk missing: one card fails open and is logged; a second card in the same call is not let through
+    assert verify(h, sid, CARD_A, no_stub) == "nothing"
+    last = gate_log(h)[-1]
+    assert (last["card"], last["decision"], last["why"]) == (CARD_A, "allow", "agenfk not found"), last
+    out = verify(h, sid, CARD_A, no_stub, f"agenfk verify {CARD_B} && agenfk verify {CARD_A}")
+    assert "ONE CARD PER CALL" in out and CARD_A in out and "agenfk not found" in out, out
+    rows = gate_log(h)[-2:]
+    assert (rows[0]["card"], rows[0]["decision"]) == (CARD_B, "allow"), rows
+    assert (rows[1]["card"], rows[1]["decision"]) == (CARD_A, "deny"), rows
+    # what needs no agenfk still passes after it: a card with a reviewer, a word that is not an id
+    reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
+    assert verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_B} && agenfk verify {CARD_A} && agenfk verify "$X"') \
+        == "nothing"
 
 
 def test_review_memory_expires_and_the_owner_lets_one_card_through_once():
@@ -1818,6 +1849,9 @@ def test_many_cards_in_one_call_are_all_checked_or_denied():
     assert took < 9.5, took
     last = gate_log(h)[-1]
     assert last["decision"] == "deny" and "one card per call" in last["why"], last
+    # the REVIEW card itself is the one agenfk runs out of time on, after answering for the others
+    out = verify(h, sid, CARD_A, env, " && ".join(f"agenfk verify {c}" for c in tests[:3] + [CARD_A]), {"cwd": ROOT})
+    assert "ONE CARD PER CALL" in out and "then failed for this one" in out, out
     assert verify(h, sid, CARD_A, env, f"agenfk verify {tests[0]}", {"cwd": ROOT}) == "nothing"   # one card: fine
 
 
@@ -1905,15 +1939,30 @@ def test_no_session_writes_the_review_records_with_a_tool():
         for cmd in (f"echo '{body}' > ~/.claude/squad/reviews/{CARD_A}.json",
                     f"mkdir -p {sh(folder)} && cp /tmp/x {sh(record)}",
                     f'python3 -c "open(\'{sh(record)}\', \'w\')"',
-                    "find ~/.claude/squad/reviews -delete", "rm -rf $HOME/.claude/squad/reviews"):
+                    "find ~/.claude/squad/reviews -delete", "rm -rf $HOME/.claude/squad/reviews",
+                    # readers that can also write a file, and find's other writing action
+                    f"sort -o ~/.claude/squad/reviews/{CARD_A}.json /tmp/x",
+                    f"uniq /tmp/x ~/.claude/squad/reviews/{CARD_A}.json",
+                    f"tree -o ~/.claude/squad/reviews/{CARD_A}.json /tmp",
+                    f"less ~/.claude/squad/reviews/{CARD_A}.json", f"more ~/.claude/squad/reviews/{CARD_A}.json",
+                    f"find /tmp -maxdepth 0 -fprint0 ~/.claude/squad/reviews/{CARD_A}.json",
+                    # a redirection with `&` into a file is still a redirection into a file
+                    f"echo x >& ~/.claude/squad/reviews/{CARD_A}.json",
+                    f"echo x &> ~/.claude/squad/reviews/{CARD_A}.json",
+                    f"echo x >&~/.claude/squad/reviews/{CARD_A}.json"):
             out = call("Bash", {"command": cmd}, agent)
             assert "REVIEW RECORD" in out, (cmd, agent, out)
         assert "REVIEW RECORD" in call("Bash", {"command": f"touch {CARD_A}.json"}, agent, cwd=folder)
+        for cmd in (f"echo x >& reviews/{CARD_A}.json", f"echo x &> reviews/{CARD_A}.json"):
+            out = call("Bash", {"command": cmd}, agent, cwd=os.path.dirname(folder))
+            assert "REVIEW RECORD" in out, (cmd, agent, out)
     assert not os.path.exists(record)
     # reading passes, and so do writes anywhere else
     for tool, inp in (("Read", {"file_path": record}),
                       ("Bash", {"command": "cat ~/.claude/squad/reviews/*.json 2>/dev/null | head"}),
                       ("Bash", {"command": f"ls -la {sh(folder)} && jq . {sh(record)} 2>&1"}),
+                      ("Bash", {"command": f"cat {sh(record)} >/dev/null 2>&1 || echo none >&2"}),
+                      ("Bash", {"command": f"grep -c ts {sh(record)} 1>&- &>/dev/null"}),
                       ("Write", {"file_path": os.path.join(h, "reviews", "x.json"), "content": "{}"}),
                       ("Bash", {"command": f"echo x > {sh(os.path.join(h, 'reviews.json'))}"})):
         assert call(tool, inp) == "nothing", (tool, inp)

@@ -883,25 +883,27 @@ def kill_tree(proc):
 
 
 def card_step(card, cwd, wait=AGENFK_WAIT):
-    """(step, "") from `agenfk get <id> --json`, or (None, why it could not be read)."""
+    """(step, "", False) from `agenfk get <id> --json`, or (None, why it could not be read, broken):
+    broken is True when agenfk itself could not be run (missing, did not start, too slow), False
+    when it ran and had no step for this id (a non-zero exit, output it cannot read)."""
     if wait < 0.5:
-        return None, "no time left in the hook's budget"
+        return None, "no time left in the hook's budget", True
     exe = shutil.which("agenfk")
     if not exe:
-        return None, "agenfk not found"
+        return None, "agenfk not found", True
     try:
         proc = subprocess.Popen([exe, "get", card, "--json"], cwd=cwd if cwd and os.path.isdir(cwd) else None,
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", errors="replace", **detached_kwargs())
     except OSError as exc:
-        return None, f"agenfk did not start ({type(exc).__name__})"
+        return None, f"agenfk did not start ({type(exc).__name__})", True
     try:
         out, _ = proc.communicate(timeout=wait)
     except subprocess.TimeoutExpired:
         kill_tree(proc)                   # never communicate() again: a child holding the pipe would hang it
-        return None, f"agenfk get took more than {wait:.1f} s"
+        return None, f"agenfk get took more than {wait:.1f} s", True
     if proc.returncode != 0:
-        return None, f"agenfk get exited {proc.returncode}"
+        return None, f"agenfk get exited {proc.returncode}", False
     step = None
     i = out.find("{")
     if i >= 0:
@@ -914,8 +916,8 @@ def card_step(card, cwd, wait=AGENFK_WAIT):
         m = re.search(r"^\s*Status:\s*([A-Za-z_]+)\s*$", out, re.M)
         step = m.group(1) if m else None
     if not step:
-        return None, "agenfk get output unreadable"
-    return step.strip().upper(), ""
+        return None, "agenfk get output unreadable", False
+    return step.strip().upper(), "", False
 
 
 def verify_ids(cmd, depth=0):
@@ -979,25 +981,28 @@ def verify_ids(cmd, depth=0):
     return ids
 
 
-def review_check(p, card, wait=AGENFK_WAIT, cut=False):
-    """(denial or "", how agenfk did): "" when it was not asked, "answered", "failed" with
-    the reason already logged, or "budget" when `cut` (the wait was shortened by the
-    call's budget after agenfk answered for other cards) left the card unchecked."""
+def review_check(p, card, wait=AGENFK_WAIT, answered=False):
+    """(denial or "", how, note). how: "" when agenfk was not needed; "answered" when agenfk
+    ran, including a non-zero exit or output it cannot read for this id (that id fails open,
+    logged); "broken" when agenfk could not be run for the first card it was asked about (fails
+    open, logged, note says why); "unchecked" when the card needed agenfk and was not checked:
+    no time left (`wait` under 0.5 s, or 0 after agenfk broke for an earlier card), or agenfk
+    answered for an earlier card of this call and then broke on this one (note says which)."""
     if not CARD_ID.fullmatch(card):
         review_log(p, card, "", "allow", "not a card id")   # `$ID`, `--`: never handed to agenfk
-        return "", ""
+        return "", "", ""
     if any(d["dispatches"] for _, d in review_files(card)):
-        return "", ""                     # a reviewer was dispatched: no need to ask agenfk
-    if cut and wait < 0.5:
-        return "", "budget"
-    step, why = card_step(card, str(p.get("cwd") or ""), wait)
-    if step is None and cut and why.startswith("agenfk get took more than"):
-        return "", "budget"
+        return "", "", ""                 # a reviewer was dispatched: no need to ask agenfk
+    if wait < 0.5:
+        return "", "unchecked", ""
+    step, why, broken = card_step(card, str(p.get("cwd") or ""), wait)
+    if step is None and broken and answered:
+        return "", "unchecked", why       # agenfk works in this call: one card per call, never let through
     if step is None:
         review_log(p, card, "", "allow", why)       # fail open: a broken agenfk must not hold the flow
-        return "", "failed"
+        return "", "broken" if broken else "answered", why
     if step not in REVIEW_STEPS:
-        return "", "answered"
+        return "", "answered", ""
     owner = os.environ.get("SQUAD_SELF_REVIEW_OK", "").strip()
     used = ""
     if owner and same_card(owner, card):
@@ -1011,7 +1016,7 @@ def review_check(p, card, wait=AGENFK_WAIT, cut=False):
             d["override"] = time.time()
             save(path, d)
             review_log(p, card, step, "allow", "SQUAD_SELF_REVIEW_OK")
-            return "", "answered"
+            return "", "answered", ""
         used = (" SQUAD_SELF_REVIEW_OK for this card was already used once, at "
                 f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(max(spent)))}.")
     review_log(p, card, step, "deny", "no reviewer recorded")
@@ -1022,13 +1027,15 @@ def review_check(p, card, wait=AGENFK_WAIT, cut=False):
             f"`verifier`) in a clean context, with the card id {card} and the branch in the brief, never the "
             "implementer's narrative. When it returns SHIP, run `agenfk verify` again with its verdict as the "
             "evidence; FIX_FIRST or REJECT goes back to whoever implemented. Do not work around this with "
-            "another tool."), "answered"
+            "another tool."), "answered", ""
 
 
 # Commands that only read: with one of these at every command position and no redirection into a file,
-# a command naming the review records passes.
-READERS = {"cat", "ls", "head", "tail", "less", "more", "jq", "grep", "rg", "wc", "stat", "file", "find", "cd",
-           "echo", "printf", "diff", "sort", "uniq", "du", "tree", "realpath", "readlink", "test", "["}
+# a command naming the review records passes. Not here, because they can write a file: sort -o, uniq's
+# second operand, tree -o, and less or more saving the buffer (find's writing actions are refused below).
+READERS = {"cat", "ls", "head", "tail", "jq", "grep", "rg", "wc", "stat", "file", "find", "cd",
+           "echo", "printf", "diff", "du", "realpath", "readlink", "test", "["}
+FIND_WRITES = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 REVIEWS_NAMED = re.compile(r"\.claude[\\/]+squad[\\/]+reviews(?![\w.-])")
 
 
@@ -1069,7 +1076,8 @@ def writes_reviews(p):
             at = True
         elif t and all(c in "<>&|" for c in t) and ">" in t:
             nxt = toks[i + 1] if i + 1 < len(toks) else ""
-            if not (t.endswith("&") or nxt == "/dev/null"):   # 2>&1 and >/dev/null write no file
+            # 2>&1, >&- and >/dev/null write no file; `>& file` and `&> file` do
+            if not ((t.endswith(">&") and re.fullmatch(r"\d+|-", nxt)) or nxt == "/dev/null"):
                 return True
         elif at and ASSIGN.match(t):
             continue
@@ -1077,7 +1085,7 @@ def writes_reviews(p):
             at = False
             if os.path.basename(t) not in READERS:
                 return True
-        elif t in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"):
+        elif t in FIND_WRITES:
             return True                   # find that writes
     return False
 
@@ -1105,26 +1113,30 @@ def review_gate(p):
         cards = [card] if card else []
     else:
         return False
-    start, answered, failed = time.time(), False, False
-    for card in dict.fromkeys(cards):     # 3 s per card, 7 s for them all
-        if failed:                        # agenfk already failed in this call: the rest fail open, unasked
-            if CARD_ID.fullmatch(card) and not any(d["dispatches"] for _, d in review_files(card)):
-                review_log(p, card, "", "allow", "agenfk failed for an earlier card in this call")
-            continue
-        wait = min(AGENFK_WAIT, AGENFK_TOTAL - (time.time() - start))
-        why, how = review_check(p, card, wait, cut=answered and wait < AGENFK_WAIT)
-        if how == "budget":
-            # agenfk answers; the call just carries more cards than the hook has time for, and
-            # letting this one through unasked would be the cheapest way past the gate
-            review_log(p, card, "", "deny", "out of time: advance one card per call")
-            why = (f"[squad-watch] ONE CARD PER CALL: this call advances {len(dict.fromkeys(cards))} cards, and "
-                   f"card {card} was left unchecked when the hook's {AGENFK_TOTAL} s for asking agenfk ran out "
-                   "(agenfk answered for the cards before it). Where the work continues: advance one card per "
-                   f"call, `agenfk verify {card} ...` on its own.")
+    todo = list(dict.fromkeys(cards))
+    start, answered, broken = time.time(), False, ""
+    for card in todo:                     # 3 s per card, 7 s for them all
+        # once agenfk could not be run at all, no card after it is asked: only the first card a call
+        # asks about may fail open unchecked, or `verify <id> && verify <REVIEW card>` would slip by
+        wait = 0 if broken else min(AGENFK_WAIT, AGENFK_TOTAL - (time.time() - start))
+        why, how, note = review_check(p, card, wait, answered)
+        if how == "unchecked":
+            if broken:
+                left = (f"agenfk could not be asked for a card before it ({broken}), and only the first card "
+                        "a call asks about passes unchecked")
+            elif note:
+                left = f"agenfk answered for the cards before it, then failed for this one ({note})"
+            else:
+                left = (f"the hook's {AGENFK_TOTAL} s for asking agenfk ran out (agenfk answered for the cards "
+                        "before it)")
+            review_log(p, card, "", "deny", f"left unchecked: advance one card per call ({left})")
+            why = (f"[squad-watch] ONE CARD PER CALL: this call advances {len(todo)} cards, and card {card} was "
+                   f"left unchecked: {left}. Where the work continues: advance one card per call, "
+                   f"`agenfk verify {card} ...` on its own.")
         if why:
             deny(why)
             return True
-        failed = how == "failed"
+        broken = broken or (note if how == "broken" else "")
         answered = answered or how == "answered"
     return False
 

@@ -245,9 +245,11 @@ as a pass. Sub-sessions are not checked, because only the main session
 advances cards.
 
 **One card per call.** When a call advances several cards and `agenfk`
-answers for the first ones but the 7 seconds run out before the last, the card
-left unchecked is not let through. The call is denied with `ONE CARD PER
-CALL`, and the way forward is to advance that card on its own.
+answers for the first ones but the 7 seconds run out before the last, or
+`agenfk` breaks on a later card, the card left unchecked is not let through.
+The same holds after `agenfk` could not be run at all for the first card: the
+cards after it are not asked and not let through. The call is denied with
+`ONE CARD PER CALL`, and the way forward is to advance that card on its own.
 
 **What counts as a reviewer dispatch.** It is the same dispatch the reviewer
 cap counts: an `Agent` or `Task` call whose agent type matches review, verify,
@@ -267,13 +269,20 @@ removed the next time a reviewer is dispatched. Once a card has a record, the
 watcher does not call `agenfk` for it at all. Only the watcher writes there: a
 `Write`, `Edit` or `MultiEdit` into that folder, or a Bash command that names
 it and does more than read it (`cat`, `ls`, `jq`, `grep` and the like), is
-denied with `REVIEW RECORD`, in any session or sub-session.
+denied with `REVIEW RECORD`, in any session or sub-session. Commands that can
+also write a file (`sort -o`, `uniq`, `tree -o`, `less`, `more`) do not count
+as reading, and neither do `find` with a writing action nor a redirection into
+a file (`>`, `>&`, `&>`), while `2>&1` and `>/dev/null` do.
 
-**It fails open, on purpose.** If `agenfk` is missing, fails, takes longer
-than 3 seconds, or prints something the watcher cannot read (JSON first, then
-a `Status:` line), the call passes. Once `agenfk` has failed for one card, the
-other cards in the same call pass without asking it again. The reason is
-logged to `~/.claude/squad/review-gate.jsonl`. A slow `agenfk` is killed
+**It fails open, on purpose.** If `agenfk` is missing, cannot start, takes
+longer than 3 seconds, exits with an error for the card, or prints something
+the watcher cannot read (JSON first, then a `Status:` line), that card passes.
+An error or unreadable output is about that one id, so the watcher still asks
+about every other card in the call; an id that does not exist does not open
+the gate for the card after it. When `agenfk` itself cannot be run, only the
+first card the call asks about passes; the ones after it are denied with
+`ONE CARD PER CALL`. The reason is logged to
+`~/.claude/squad/review-gate.jsonl`. A slow `agenfk` is killed
 together with its children, so the hook stays well inside its 10-second
 budget. The
 reasoning is the same as for the rest of the watcher: a broken board must not
@@ -287,6 +296,8 @@ aliases, shell functions, scripts, variables holding the command and other
 indirection are not parsed, and they pass (logged, when the command still
 holds `agenfk` and `verify`). The record folder is guarded the same way: the
 obvious writes are denied, a write hidden behind indirection is not caught.
+The record guard is a textual check of the command, so a path to the folder
+that is only built at run time (a variable, a glob, a script) is not seen.
 
 **The owner's way out.** When the owner decides a card ships without review,
 the owner sets `SQUAD_SELF_REVIEW_OK=<card id>` in the environment Claude Code

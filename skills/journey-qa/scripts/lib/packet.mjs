@@ -2,8 +2,8 @@
 // Builds the mission text, a restricted browser wrapper (act.mjs) and, optionally,
 // the command that runs the actor in a fresh host process (clean model context).
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { ContractError, readJson } from "./json.mjs";
@@ -269,15 +269,86 @@ export function spawnCommand(host, { model = null, custom = null, bare = false, 
 // Windows: .cmd shims need a shell; quote every argument ourselves (no prompt text is ever passed as an argument).
 const winQuote = (a) => (/^[A-Za-z0-9_./:=@-]+$/.test(a) ? a : `"${a.replace(/"/g, '""')}"`);
 
+// POSIX owner and mode checks; Windows has neither (no process.getuid), so there only the symlink check applies.
+const POSIX = typeof process.getuid === "function";
+const WORKDIR_ROOT = "journey-qa-actors";
+
+/**
+ * A base for the actors' root: a directory owned by this user that no one else can write. Returns its real path, so
+ * a symlink on the way to it is resolved once, when checked, and cannot be pointed elsewhere afterwards; else null.
+ */
+function privateBase(dir) {
+  if (!dir || !isAbsolute(dir)) return null;
+  let real, st;
+  try { real = realpathSync(dir); st = statSync(real); } catch { return null; }
+  return st.isDirectory() && (!POSIX || (st.uid === process.getuid() && (st.mode & 0o022) === 0)) ? real : null;
+}
+
+/**
+ * Per-user root of the actor folders, outside any repository: XDG_RUNTIME_DIR (a 0700 folder of this user), else the
+ * temporary folder when it already belongs to this user alone (macOS, Windows), else the user's cache folder. Never a
+ * shared /tmp, where another local user could create the path, or a symlink, first and receive the driver token.
+ * The path is derived, not random, because `actor wait` and the driver find the folder again from the run and actor.
+ */
+export function actorRoot({ env = process.env } = {}) {
+  for (const base of [env.XDG_RUNTIME_DIR, tmpdir()]) {
+    const real = privateBase(base);
+    if (real) return join(real, WORKDIR_ROOT);
+  }
+  const cache = env.XDG_CACHE_HOME && isAbsolute(env.XDG_CACHE_HOME) ? env.XDG_CACHE_HOME : join(homedir(), ".cache");
+  return join(cache, WORKDIR_ROOT);
+}
+
+// Folder name of a run under the actors' root: one per run, so two runs never share an actor folder.
+const runKey = (runDir) => createHash("sha1").update(resolve(runDir)).digest("hex").slice(0, 10);
+
 /** Actor working directory outside any repository, so hosts do not discover AGENTS.md/CLAUDE.md/skills of the project. */
-export function actorWorkdir(runDir, actorId) {
-  const key = createHash("sha1").update(resolve(runDir)).digest("hex").slice(0, 10);
-  return join(tmpdir(), "journey-qa-actors", key, actorId);
+export function actorWorkdir(runDir, actorId, { env = process.env } = {}) {
+  return join(actorRoot({ env }), runKey(runDir), actorId);
+}
+
+const unsafeWorkdir = (dir, why) => new ContractError(`Refusing the actor folder ${dir}: ${why}. Remove it and run again.`, "unsafe_workdir");
+
+/** One actor-folder component: a real directory (not a symlink), owned by `uid`, with no group or other bits. */
+export function assertPrivateDir(dir, uid = POSIX ? process.getuid() : null) {
+  const st = lstatSync(dir);
+  if (st.isSymbolicLink() || !st.isDirectory()) throw unsafeWorkdir(dir, "it is a symlink or not a directory");
+  if (!POSIX) return;
+  if (st.uid !== uid) throw unsafeWorkdir(dir, `it belongs to uid ${st.uid}, not ${uid}`);
+  if (st.mode & 0o077) throw unsafeWorkdir(dir, `its mode ${(st.mode & 0o777).toString(8)} lets other users in (700 expected)`);
+}
+
+/**
+ * Creates the actor's folder one component at a time with mode 0700 and checks each with lstat (assertPrivateDir), so
+ * a path planted by someone else is refused, never reused. On Windows the folder stays under the user's own temporary
+ * folder (%LOCALAPPDATA%\Temp), protected by the profile's ACLs rather than by owner and mode bits.
+ */
+export function prepareActorWorkdir(runDir, actorId, { env = process.env } = {}) {
+  assertActorId(actorId);
+  const root = actorRoot({ env });
+  const base = dirname(root);
+  mkdirSync(base, { recursive: true, mode: 0o700 });
+  if (!privateBase(base)) throw unsafeWorkdir(base, "it is not a directory of this user that only this user can write");
+  let dir = base;
+  for (const part of [WORKDIR_ROOT, runKey(runDir), actorId]) {
+    dir = join(dir, part);
+    try { mkdirSync(dir, { mode: 0o700 }); } catch (e) { if (e.code !== "EEXIST") throw e; }
+    assertPrivateDir(dir);
+  }
+  return dir;
 }
 
 /** Remove the actor's scratch folder, which holds its driver token, once the actor has ended. Only the folder `actorWorkdir` names. */
-export function cleanupActorWorkdir(runDir, actorId) {
-  rmSync(actorWorkdir(runDir, actorId), { recursive: true, force: true });
+export function cleanupActorWorkdir(runDir, actorId, { env = process.env } = {}) {
+  rmSync(actorWorkdir(runDir, actorId, { env }), { recursive: true, force: true });
+}
+
+// A fresh file in the actor folder: whatever had the name is removed first, and `wx` refuses anything that reappears.
+function writeFresh(dir, name, data, mode = 0o600) {
+  const file = join(dir, name);
+  rmSync(file, { force: true });
+  writeFileSync(file, data, { flag: "wx", mode });
+  return file;
 }
 
 // Environment the jailed agent keeps; everything else (cloud, forge and agent sockets included) is cleared. A provider
@@ -358,10 +429,11 @@ export function spawnActor(runDir, actorId, { host, model, custom, bare = false,
   }
   const shown = `${spec.bin} ${args.map((a) => (/[\s*()"']/.test(a) ? JSON.stringify(a) : a)).join(" ")}${spec.stdin ? " < PACKET.md" : ""}`;
   if (!exec) return { planned: true, cwd, command: shown, jailed };
-  mkdirSync(cwd, { recursive: true });
-  for (const f of ["PACKET.md", "act.mjs"]) writeFileSync(join(cwd, f), readFileSync(join(src, f)));
+  prepareActorWorkdir(runDir, actorId);
+  writeFresh(cwd, "PACKET.md", readFileSync(join(src, "PACKET.md")));
+  writeFresh(cwd, "act.mjs", readFileSync(join(src, "act.mjs")), 0o700);
   rmSync(join(cwd, ".driver.json"), { force: true });
-  if (driver) writeFileSync(join(cwd, ".driver.json"), JSON.stringify(driver), { mode: 0o600 });
+  if (driver) writeFresh(cwd, ".driver.json", JSON.stringify(driver));
   else if (jailed) throw new ContractError("A jailed actor reaches the driver through its own token: start the driver (`jqa browser start`) and add the actor first.", "driver_not_running");
   const win = process.platform === "win32";
   const bin = win ? winQuote(spec.bin) : spec.bin;
@@ -369,8 +441,7 @@ export function spawnActor(runDir, actorId, { host, model, custom, bare = false,
   const meta = { actor_id: actorId, host, model: model ?? null, command: shown, cwd, started_at: new Date().toISOString() };
   if (background) {
     // Runner records the exit code so `actor wait` can report it.
-    const runner = join(cwd, ".runner.mjs");
-    writeFileSync(runner, `import { spawnSync } from "node:child_process";
+    const runner = writeFresh(cwd, ".runner.mjs", `import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 const r = spawnSync(${JSON.stringify(bin)}, ${JSON.stringify(finalArgs)}, { cwd: ${JSON.stringify(cwd)}, input: ${spec.stdin ? "readFileSync(" + JSON.stringify(join(cwd, "PACKET.md")) + ", 'utf8')" : "undefined"}, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, shell: ${win}, timeout: ${timeoutMinutes * 60000} });
 writeFileSync(${JSON.stringify(join(src, spec.stream ? "session.jsonl" : "transcript.md"))}, r.stdout ?? "");

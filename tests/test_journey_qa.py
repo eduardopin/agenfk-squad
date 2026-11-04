@@ -40,10 +40,10 @@ def node_version():
 
 NODE_MAJOR = node_version()
 NODE_REASON = "node >= 20 not found on PATH"
-# Node tests in tests/journey_qa/ today (36 in core, 6 in driver); a lower count means one was lost. A test may
-# skip itself where the system cannot do what it needs (symlinks on Windows without Developer Mode), so passed and
-# skipped count together.
-NODE_TESTS_FLOOR = 42
+# Node tests in tests/journey_qa/ today (41 in core, 6 in driver); a lower count means one was lost. A test may
+# skip itself where the system cannot do what it needs (symlinks on Windows without Developer Mode, POSIX modes on
+# Windows), so passed and skipped count together.
+NODE_TESTS_FLOOR = 47
 
 
 def read(path):

@@ -1,9 +1,9 @@
 // Contract, ledger, packet, architecture and infra tests. No browser, no network.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, truncateSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, truncateSync, statSync, chmodSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -539,19 +539,116 @@ test("browser allow adds only explicit origins, with the same error as start", a
 });
 
 test("an ended actor leaves no workdir and no driver token behind", async () => {
-  const { actorWorkdir, cleanupActorWorkdir } = await import("../../skills/journey-qa/scripts/lib/packet.mjs");
+  const { actorWorkdir, cleanupActorWorkdir, prepareActorWorkdir } = await lib("packet.mjs");
+  // The folders are made the way spawn makes them, under a private root of the test's own: a plain mkdir into the
+  // user's real root would leave a 0755 folder there that every later spawn refuses.
+  const env = { XDG_RUNTIME_DIR: tmp() };
   const run = join(tmp(), "run");
-  const wd = actorWorkdir(run, "ana");
-  mkdirSync(wd, { recursive: true });
+  const wd = prepareActorWorkdir(run, "ana", { env });
+  assert.equal(wd, actorWorkdir(run, "ana", { env }));
   writeFileSync(join(wd, ".driver.json"), JSON.stringify({ port: 1, token: "secret" }));
   writeFileSync(join(wd, "PACKET.md"), "x");
-  const other = actorWorkdir(run, "bruno");
-  mkdirSync(other, { recursive: true });
-  cleanupActorWorkdir(run, "ana");
+  const other = prepareActorWorkdir(run, "bruno", { env });
+  cleanupActorWorkdir(run, "ana", { env });
   assert.equal(existsSync(wd), false);
   assert.equal(existsSync(other), true, "another actor's folder is untouched");
-  cleanupActorWorkdir(run, "ana"); // already gone: no error
-  cleanupActorWorkdir(run, "bruno");
+  cleanupActorWorkdir(run, "ana", { env }); // already gone: no error
+  cleanupActorWorkdir(run, "bruno", { env });
+});
+
+// The actor folder holds the driver token and a runner that gets executed: it must be this user's alone.
+function workdirParts(actorWorkdir, base, run) {
+  return relative(realpathSync(base), actorWorkdir(run, "ana", { env: { XDG_RUNTIME_DIR: base } })).split(sep);
+}
+
+test("actor workdir: the root is a private per-user folder, never the shared temporary folder", async (t) => {
+  const { actorRoot } = await lib("packet.mjs");
+  const mine = realpathSync(tmp());
+  assert.equal(actorRoot({ env: { XDG_RUNTIME_DIR: mine } }), join(mine, "journey-qa-actors"));
+  // A symlinked base is resolved when checked, so repointing the link later does not move the actors.
+  const link = join(tmp(), "runtime");
+  let linked = true;
+  try { symlinkSync(mine, link, process.platform === "win32" ? "junction" : "dir"); } catch { linked = false; }
+  if (linked) assert.equal(actorRoot({ env: { XDG_RUNTIME_DIR: link } }), join(mine, "journey-qa-actors"));
+  if (process.platform === "win32") return t.skip("no POSIX owner or mode on Windows: the root stays in the user's temporary folder");
+  chmodSync(mine, 0o777);
+  assert.notEqual(actorRoot({ env: { XDG_RUNTIME_DIR: mine } }), join(mine, "journey-qa-actors"), "a base others can write is skipped");
+  if (process.getuid() !== 0) {
+    for (const foreign of ["/", "/tmp"]) {
+      if (existsSync(foreign)) assert.notEqual(actorRoot({ env: { XDG_RUNTIME_DIR: foreign } }), join(foreign, "journey-qa-actors"), foreign);
+    }
+  }
+  assert.ok(!actorRoot().startsWith(ROOT), "outside the repository");
+});
+
+test("actor workdir: a symlink planted anywhere on the path is refused and nothing is written through it", async (t) => {
+  const { actorWorkdir, prepareActorWorkdir } = await lib("packet.mjs");
+  const run = join(tmp(), "run");
+  for (let depth = 1; depth <= 3; depth++) {
+    const base = tmp();
+    const parts = workdirParts(actorWorkdir, base, run);
+    assert.equal(parts.length, 3);
+    let dir = base;
+    for (const p of parts.slice(0, depth - 1)) { dir = join(dir, p); mkdirSync(dir, { mode: 0o700 }); }
+    const target = tmp();
+    try { symlinkSync(target, join(dir, parts[depth - 1]), process.platform === "win32" ? "junction" : "dir"); } catch { return t.skip("symlinks unavailable"); }
+    assert.throws(() => prepareActorWorkdir(run, "ana", { env: { XDG_RUNTIME_DIR: base } }), (e) => e.code === "unsafe_workdir", `symlink at ${parts[depth - 1]}`);
+    assert.deepEqual(readdirSync(target), [], "nothing is created through the link");
+  }
+});
+
+test("actor workdir: a folder that group or others can enter is refused", async (t) => {
+  if (process.platform === "win32") return t.skip("no POSIX modes on Windows");
+  const { actorWorkdir, prepareActorWorkdir } = await lib("packet.mjs");
+  const run = join(tmp(), "run");
+  for (const [depth, mode] of [[1, 0o755], [2, 0o770], [3, 0o701]]) {
+    const base = tmp();
+    const parts = workdirParts(actorWorkdir, base, run);
+    let dir = base;
+    for (const p of parts.slice(0, depth)) { dir = join(dir, p); mkdirSync(dir, { mode: 0o700 }); }
+    chmodSync(dir, mode);
+    assert.throws(() => prepareActorWorkdir(run, "ana", { env: { XDG_RUNTIME_DIR: base } }), (e) => e.code === "unsafe_workdir" && /lets other users in/.test(e.message), `${parts[depth - 1]} ${mode.toString(8)}`);
+  }
+});
+
+test("actor workdir: a folder owned by another user is refused", async (t) => {
+  if (process.platform === "win32") return t.skip("no POSIX owner on Windows");
+  // Creating a folder that another user owns needs root, so the owner the check expects is changed instead.
+  const { assertPrivateDir } = await lib("packet.mjs");
+  const dir = tmp();
+  assert.doesNotThrow(() => assertPrivateDir(dir));
+  assert.throws(() => assertPrivateDir(dir, process.getuid() + 1), (e) => e.code === "unsafe_workdir" && /belongs to uid/.test(e.message));
+});
+
+test("actor spawn writes the actor folder 0700 and its files 0600 (act.mjs 0700), then removes it", async (t) => {
+  if (process.platform === "win32") return t.skip("no POSIX modes on Windows");
+  const { spawnActor, prepareActorWorkdir } = await lib("packet.mjs");
+  const base = tmp();
+  const work = tmp();
+  const run = join(work, "r");
+  assert.equal(jqa(["init", "--product", "p", "--out", run, "--no-current"]).status, 0);
+  const card = { ...JSON.parse(readFileSync(join(ROOT, "skills", "journey-qa", "assets", "templates", "actor-card.json"), "utf8")), actor_id: "ana" };
+  writeFileSync(join(work, "card.json"), JSON.stringify(card));
+  assert.equal(jqa(["actor", "packet", join(work, "card.json"), "--run", run]).status, 0);
+  // Files left by an earlier spawn are replaced, not rewritten in place with the mode they had.
+  const stale = prepareActorWorkdir(run, "ana", { env: { XDG_RUNTIME_DIR: base } });
+  writeFileSync(join(stale, "PACKET.md"), "old", { mode: 0o644 });
+  writeFileSync(join(stale, "act.mjs"), "old", { mode: 0o755 });
+  const probe = "const f=require('fs');const o={};for(const n of ['.',...f.readdirSync('.')])o[n]=(f.lstatSync(n).mode&511).toString(8);console.log(JSON.stringify(o))";
+  const saved = process.env.XDG_RUNTIME_DIR;
+  process.env.XDG_RUNTIME_DIR = base;
+  let r;
+  try {
+    r = spawnActor(run, "ana", { host: "custom", custom: `"${process.execPath}" -e "${probe}"`, exec: true, unsandboxed: true, driver: { port: 1, token: "t" } });
+  } finally {
+    if (saved === undefined) delete process.env.XDG_RUNTIME_DIR; else process.env.XDG_RUNTIME_DIR = saved;
+  }
+  assert.equal(r.exit_code, 0, readFileSync(join(run, "actors", "ana", "stderr.log"), "utf8"));
+  assert.ok(r.cwd.startsWith(join(realpathSync(base), "journey-qa-actors")), r.cwd);
+  const modes = JSON.parse(readFileSync(join(run, "actors", "ana", "transcript.md"), "utf8"));
+  assert.deepEqual(modes, { ".": "700", "PACKET.md": "600", "act.mjs": "700", ".driver.json": "600" });
+  for (const d of [join(realpathSync(base), "journey-qa-actors"), dirname(r.cwd)]) assert.equal(lstatSync(d).mode & 0o777, 0o700, d);
+  assert.equal(existsSync(r.cwd), false, "the folder and its token are gone after the actor ends");
 });
 
 test("actor spawn and actor wait call the cleanup after recording the transcript", () => {

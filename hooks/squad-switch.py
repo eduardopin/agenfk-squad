@@ -34,6 +34,9 @@ pane is not left stuck, unless the session is working. Giving up before the
 /clear rearms the watcher (synthetic Stop with squad_rearm): it decides again
 on the session's next Stop, with the handoff and the owner's request of then.
 
+Before sending the pickup it records switches/<new-session>.pickup (the copy's
+path): squad-wake resends the pickup if it never reaches the new transcript.
+
 Every step goes to ~/.claude/squad/switches.log. Any doubt = give up: the
 handoff is already written and the owner does the switch by hand.
 """
@@ -154,6 +157,27 @@ def claim(session):
         os.umask(0o077)
         os.makedirs(CLAIMS, exist_ok=True)
         os.close(os.open(claim_path(session), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        return True
+    except OSError:
+        return False
+
+
+def pending(session, copy):
+    """Records the new session's pickup: if it never becomes a request in the
+    transcript (prompt lost, pane busy), squad-wake sends it again.
+    The id comes from herdr: only a session id may become a file name, and the
+    write does not follow a symlink (exclusive tmp + os.replace, like the sealed copy)."""
+    if not re.fullmatch(r"[0-9a-f-]{8,64}", str(session or "")):
+        return False
+    try:
+        os.umask(0o077)
+        os.makedirs(CLAIMS, exist_ok=True)
+        dest = os.path.join(CLAIMS, f"{session}.pickup")
+        tmp = f"{dest}.{os.getpid()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(copy)
+        os.replace(tmp, dest)
         return True
     except OSError:
         return False
@@ -283,6 +307,9 @@ def main():
     if read_checked(copy, copy_digest) is None:     # the copy is rechecked right before sending
         log(pane, f"{session[:8]} -> {new[:8]} CLEARED, but the handoff copy does not match: pickup NOT sent; original at {handoff}")
         return 1
+    if not pending(new, copy):                      # squad-wake sends it again if the pickup does not land
+        log(pane, f"{session[:8]} -> {str(new)[:16]!r}: invalid new session id or write refused; "
+                  "pickup sent without a note (squad-wake will not resend it)")
     where = f'"{copy}"' if " " in copy else copy     # a Windows profile can hold a space: the prompt splits on it
     rc, _ = herdr("agent", "prompt", pane, f"{PICKUP} {where}" if PICKUP.startswith("/") else PICKUP, timeout=20)
     log(pane, f"{session[:8]} -> {new[:8]} " + ("pickup sent" if rc == 0 else "CLEARED, but the pickup was not accepted: run /clear-pickup pickup")

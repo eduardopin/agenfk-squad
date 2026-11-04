@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "project": "REPLACE with the exact project of the associated plan",
+  "assumptions": [
+    "TEMPLATE NOT EXECUTABLE ON ITS OWN: replace IDs, names, repo and estimates with the objects of the real plan; fill in task_estimates for all tasks.",
+    "Keep observed evidence empty until there is proof. For reuse not yet verified, declare verify_task_ids and expected_evidence.",
+    "Define explicitly the environments, quantities, exclusions, workers, budget, conditions and basis of the estimates.",
+    "Add REVIEW to the associated plan with an owner other than the author and a dependency on AUTHOR. Publish the concrete diff/plan before the review; apply only after the planned review and integration, checking that the plan still matches the content and environment. Reconcile new resources and review only material differences."
+  ],
+  "task_estimates": [
+    {
+      "task_id": "AUTHOR",
+      "optimistic_minutes": 20,
+      "likely_minutes": 40,
+      "conservative_minutes": 80
+    },
+    {
+      "task_id": "REVIEW",
+      "optimistic_minutes": 5,
+      "likely_minutes": 10,
+      "conservative_minutes": 20
+    },
+    {
+      "task_id": "APPLY",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 40
+    },
+    {
+      "task_id": "VERIFY",
+      "optimistic_minutes": 5,
+      "likely_minutes": 10,
+      "conservative_minutes": 20
+    }
+  ],
+  "contract_gates": [],
+  "pull_requests": [
+    {
+      "id": "PR-01",
+      "title": "REPLACE with the grouped capability of this change",
+      "owner": "plan-owner",
+      "reviewer": "another-owner",
+      "repository": "REPLACE/REPOSITORY",
+      "state": "planned",
+      "url": null,
+      "evidence": [],
+      "task_ids": [
+        "AUTHOR",
+        "REVIEW"
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "id": "RESOURCE",
+      "name": "REPLACE with the resource or capability in scope",
+      "kind": "REPLACE with the type",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "plan-owner",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "APPLY"
+      ],
+      "verify_task_ids": [
+        "VERIFY"
+      ],
+      "depends_on": [],
+      "justification": "Explain why this resource belongs to the scope and to this PR. REVIEW must depend on AUTHOR and review the concrete diff/plan before the apply. APPLY must depend on REVIEW and on all other tasks of the PR; VERIFY must depend on APPLY. Model a separate merge when applicable.",
+      "expected_evidence": [
+        "Describe the observation that proves the creation and behavior of the resource."
+      ],
+      "observed_evidence": []
+    }
+  ],
+  "milestones": [
+    {
+      "id": "M-READY",
+      "title": "Capability verified",
+      "task_ids": [
+        "VERIFY"
+      ]
+    }
+  ]
+}

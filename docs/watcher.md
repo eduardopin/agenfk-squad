@@ -15,6 +15,7 @@ measured. `SQUAD_WATCH=0` turns it off.
 - [The dispatch brake](#the-dispatch-brake)
 - [The soft stop](#the-soft-stop)
 - [The session switch](#the-session-switch)
+- [Waking a stopped session](#waking-a-stopped-session)
 - [The merge queue](#the-merge-queue)
 - [Metrics](#metrics)
 
@@ -179,7 +180,7 @@ ceilings:
 |---|---|---|
 | Context of the orchestrator | `SQUAD_CTX_CEILING` | 800,000 |
 | Sub-sessions spawned by this session | `SQUAD_MAX_SUBS` | 60 |
-| Sessions orchestrating at the same time | `SQUAD_MAX_ORCH` | 6 |
+| Sessions orchestrating at the same time, per repository | `SQUAD_MAX_ORCH` | 6 |
 | Reviewer dispatches for the same card | `SQUAD_MAX_REVIEWS` | 6 (the 7th is denied) |
 
 A session counts as orchestrating while it has a sub-session with activity in
@@ -288,6 +289,78 @@ The switch needs a pane it can type into, which today means the session runs
 inside **herdr** (`HERDR_PANE_ID` is set). Outside herdr the watcher still
 orders the handoff, and the session tells the owner the two commands.
 `SQUAD_SWITCH=0` disables only the switch.
+
+## Waking a stopped session
+
+A session can stop halfway through a delivery: the reply ended with nothing
+to call it back, a background command died, an API error, a reboot. No hook
+runs in a stopped session, so `hooks/squad-wake.py` runs from a clock outside
+them (a systemd `--user` timer installed by `install.sh`, every 2 minutes) and
+looks at every herdr pane hosting Claude Code:
+
+    squad-wake.py              one scan: wakes whoever needs it
+    squad-wake.py --dry-run    prints the decision for each pane, without acting
+
+A pane idle for `SQUAD_WAKE_AFTER` seconds (600) gets one prompt, one line,
+starting with `[squad-watch] WAKE`: check git status, the card, the merge queue
+and the background tasks, relaunch what died and carry on until it is
+delivered. The watcher skips that prefix: it is not the owner's request, and it
+never counts as asking to stop. When the last `Stop` left a background task
+alive (the watcher records `last_stop` with the time and the count of live
+tasks), the deadline is `SQUAD_WAKE_AFTER_BG` (2700), because the task wakes the
+session itself when it comes back.
+
+It never wakes a pane that is working or whose session changed between the
+decision and the send, a session whose owner asked to stop, a session at
+handoff level or switching, a session idle for more than `SQUAD_WAKE_AGE`
+(43200), or one whose last reply ends with a line `[squad] END: <why nothing
+is left>` (`[squad] DONE:` is accepted too) or `[squad] BLOCKED: <what only the
+owner can do>` (the owner gets a herdr notification once). Unreadable watcher
+state means no wake.
+
+Each wake without progress doubles the deadline, up to `SQUAD_WAKE_CEILING`
+(3600); after `SQUAD_WAKE_MAX` (6) wakes in a row without progress it only
+notifies the owner, once. Progress is work that changes state (Edit/Write, an
+agent dispatch, git commit/push/merge/rebase, `gh pr create|merge`, `agenfk
+verify|update|create`, `squad-turn request`), never the checks the WAKE asks
+for. A pane stuck on a dialog for `SQUAD_WAKE_BLOCKED` (900) is notified, never
+answered. At most `SQUAD_WAKE_BATCH` (3) wakes per scan.
+
+It also keeps the switch from getting stuck:
+
+- **stuck switch**: the old session is still in the pane, marked as switching
+  (`switched` with `switched_ts`, or a claim) and idle for `SQUAD_WAKE_SWITCH`
+  (900). squad-wake removes the claim, hands the watcher a rearm `Stop` and then
+  an expired-deadline `Stop`: the watcher redoes the switch with the handoff on
+  disk. A session that moved after the switch (the owner resumed it) and a
+  switch older than `SQUAD_WAKE_SWITCH_AGE` (21600) never get a `/clear`.
+- **lost pickup**: `squad-switch.py` records
+  `~/.claude/squad/switches/<new-session>.pickup` (the sealed copy's path)
+  before sending the pickup. If after `SQUAD_WAKE_PICKUP` (120) the new session
+  is idle and the pickup is not in its transcript, squad-wake sends
+  `/clear-pickup pickup <copy>` again. Only a copy path under
+  `~/.claude/squad/handoffs`, a regular file owned by the user, is ever sent.
+  The record is written only for a new session id herdr reports in the shape of
+  a session id (hex and dashes), never through a symlink; otherwise the pickup
+  still goes out, unrecorded, and `switches.log` says so.
+
+Each of the two tries twice, then notifies the owner once. State is kept in
+`~/.claude/squad/wake/<session>.json`; every decision goes to
+`~/.claude/squad/wakes.log` (`--dry-run` writes neither).
+
+squad-wake finds a session's transcript under `SQUAD_WAKE_PROJECTS`
+(default `~/.claude/projects`, the folder where Claude Code keeps
+`<project>/<session>.jsonl`); set it in `wake.env` only if your Claude Code
+keeps the transcripts elsewhere (`CLAUDE_CONFIG_DIR`).
+
+The timer does not inherit the shell's environment: put `SQUAD_WAKE=0` or the
+thresholds in `~/.claude/squad/wake.env`, not in the units: the installer
+rewrites `squad-wake.service` and `.timer` only when they carry its marker on
+the first line, and leaves a unit of your own alone (`SKIPPED`, non-zero exit,
+timer not enabled). `systemctl --user disable --now
+squad-wake.timer` stops it. Without a systemd user manager for your `HOME`
+(macOS, a container) the installer prints the line to run every 2 minutes from
+cron or launchd. Windows is not covered yet.
 
 ## The merge queue
 

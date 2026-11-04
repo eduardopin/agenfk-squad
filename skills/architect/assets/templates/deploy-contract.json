@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "service_id": "TO_DEFINE",
+  "owner": "TO_DEFINE",
+  "contract_version": "0.1.0",
+  "artifact": {
+    "format": "oci",
+    "image_repository": null,
+    "digest": null,
+    "cpu_architecture": null
+  },
+  "runtime": {
+    "port": null,
+    "protocol": null,
+    "health_endpoint": null,
+    "readiness_endpoint": null,
+    "graceful_shutdown_seconds": null,
+    "cpu": null,
+    "memory_mb": null
+  },
+  "identity": {
+    "mechanism": null,
+    "permissions_required": []
+  },
+  "configuration": {
+    "variables": [],
+    "secret_references": []
+  },
+  "data": {
+    "stores": [],
+    "migrations_owner": null,
+    "compatibility_window": null
+  },
+  "telemetry": {
+    "correlation": null,
+    "logs": null,
+    "metrics": null,
+    "traces": null,
+    "slo_reference": null
+  },
+  "infrastructure": {
+    "inputs": [],
+    "outputs": [],
+    "state_owner": null,
+    "external_locks": []
+  },
+  "rollout": {
+    "strategy": null,
+    "smoke_test": null,
+    "rollback": null
+  },
+  "notes": [
+    "Draft; null values are not deploy configuration.",
+    "Fill in and review the slice before stable; do not store secrets."
+  ]
+}
+

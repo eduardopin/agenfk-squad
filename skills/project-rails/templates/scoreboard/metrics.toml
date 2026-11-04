@@ -1,0 +1,24 @@
+# Scoreboard metrics: each one is measured by a command, at the project root.
+# floor = higher is better (only rises); ceiling = lower is better (only falls).
+# Start from today's value; `scoreboard.py tighten <id>` tightens it after each improvement.
+
+[[metric]]
+id = "tests"
+name = "Backend tests passing (offline suite)"
+command = "cd backend && .venv/bin/python -m pytest -q -p no:cacheprovider"
+regex = '(\d+) passed'
+floor = 0
+timeout = 1800
+
+[[metric]]
+id = "swept-routes"
+name = "Routes covered by the hostile sweep"
+command = "cd backend && .venv/bin/python -m pytest -q tests/test_hostile_sweep.py"
+regex = '(\d+) passed'
+floor = 0
+
+[[metric]]
+id = "lint"
+name = "Lint errors"
+command = "cd backend && .venv/bin/ruff check --statistics --exit-zero src | awk '{s+=$1} END {print s+0}'"
+ceiling = 0

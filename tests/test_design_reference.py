@@ -532,7 +532,7 @@ def test_colour_that_fetches_a_url_never_reaches_the_css():
         assert sw.looks_like_color(v), v
 
 
-def timed(files, limit, flag="--css"):
+def sweep_took(files, limit, flag="--css"):
     root = project(files)
     t = time.monotonic()
     try:
@@ -541,8 +541,27 @@ def timed(files, limit, flag="--css"):
         raise AssertionError(f"still running after {limit * 5}s")
     took = time.monotonic() - t
     assert code == 0 and "Traceback" not in err, err[-300:]
+    return out, took
+
+
+def timed(files, limit, flag="--css"):
+    out, took = sweep_took(files, limit, flag)
     assert took < limit, f"{took:.1f}s >= {limit}s"
     return out
+
+
+def scales_linearly(make, n, limit, flag="--json"):
+    """A sweep of n files may take at most RATIO times one of n/10 (linear is about 10; quadratic about 100),
+    or `limit` seconds, whichever is larger. A wall-clock bound alone fails on a loaded or slow runner (a
+    Windows leg took 5.1 s against 5); the ratio moves with the machine and still catches a quadratic loop."""
+    _, small = sweep_took(_many(n // 10, make), limit, flag)
+    out, big = sweep_took(_many(n, make), limit * 4, flag)
+    bound = max(limit, SCALE_RATIO * small)
+    assert big < bound, f"{n} files took {big:.1f}s, {n // 10} took {small:.1f}s: more than {bound:.1f}s"
+    return out
+
+
+SCALE_RATIO = 25
 
 
 # 5i. A var() that points at itself k times was k**9 calls; a fan-out chain was an exponential string
@@ -727,9 +746,9 @@ def _many(n, body):
 # 5t. roles_of copied every global token once per source, light and dark: 2000 token files of 100 tokens
 # took 16 s or more.
 def test_thousands_of_token_files_are_swept_fast():
-    out = timed(_many(2000, lambda i: ":root{--background:#fff;--foreground:#111;--primary:#0f766e;"
-                      + "".join(f"--x{i}-{k}:#abc;" for k in range(100)) + "} .dark{--background:#000}"),
-                5, "--json")
+    out = scales_linearly(lambda i: ":root{--background:#fff;--foreground:#111;--primary:#0f766e;"
+                          + "".join(f"--x{i}-{k}:#abc;" for k in range(100)) + "} .dark{--background:#000}",
+                          2000, 5)
     a = json.loads(out)
     assert a["roles"]["accent"] == "#0f766e" and len(a["tokens"]) == 3 + 2000 * 100, len(a["tokens"])
     assert a["dark"] == {"bg": "#000"}, a["dark"]
@@ -740,10 +759,10 @@ def test_thousands_of_token_files_are_swept_fast():
 # (about 50,000 lines) took 10 s or more. A set answers the lookup; the list keeps the order.
 def test_thousands_of_conflicting_files_are_swept_fast():
     roles = ("background", "card", "foreground", "muted-foreground", "primary", "border")
-    out = timed(_many(5500, lambda i: ":root{" + "".join(f"--{r}:#{(i * 9 + s) % 0xffffff:06x};"
-                                                         for s, r in enumerate(roles))
-                      + f"--font-display:D{i},serif;--font-body:B{i},sans-serif;--font-mono:M{i},monospace}}"),
-                5, "--json")
+    out = scales_linearly(lambda i: ":root{" + "".join(f"--{r}:#{(i * 9 + s) % 0xffffff:06x};"
+                                                     for s, r in enumerate(roles))
+                          + f"--font-display:D{i},serif;--font-body:B{i},sans-serif;--font-mono:M{i},monospace}}",
+                          5500, 5)
     conflicts = json.loads(out)["conflicts"]
     assert len(conflicts) == 9 * 5499 and len(set(conflicts)) == len(conflicts), len(conflicts)
     assert conflicts[0].startswith("bg: p00/t0000.css says #000000, p00/t0001.css says #000009;"), conflicts[0]

@@ -101,14 +101,17 @@ def load_manifest(path):
     plan = {}                                # event -> [(script, timeout, matcher)], in manifest order
     seen = set()
     for h in m["hooks"]:
+        events = h.get("events")             # a string would install one hook per character
+        if not isinstance(events, list) or not all(isinstance(e, str) for e in events):
+            raise BadManifest(f'{path}: "events" of {h["script"]} is not a list of event names')
         own = h.get("matchers", {})          # a hook's own matcher wins for its event
         if not isinstance(own, dict):
             raise BadManifest(f'{path}: "matchers" of {h["script"]} is not an object')
-        unknown = set(own) - set(h["events"])
+        unknown = set(own) - set(events)
         if unknown:                          # a typo here would fall back to the broad matcher
             raise BadManifest(f'{path}: {h["script"]} has matchers for events it does not list: '
                               f'{", ".join(sorted(unknown))}')
-        for event in h["events"]:
+        for event in events:
             if (h["script"], event) in seen:     # install would move it between its two groups on every run
                 raise BadManifest(f'{path}: {h["script"]} is listed twice for {event}')
             seen.add((h["script"], event))

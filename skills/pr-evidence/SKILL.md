@@ -12,7 +12,7 @@ mistaken for approval, or a repository template silently omitted by a CLI.
 
 Read the project's instructions, PR template, flow and required checks first.
 Its PR-format gate takes precedence. Preserve its language; English is not a
-reason to rewrite an existing Portuguese PR. No new mandatory mutation gate.
+reason to rewrite an existing Portuguese PR. It adds no mandatory gate of its own.
 The owner's instruction authorizes publishing only within the requested scope.
 
 ## 1. Write

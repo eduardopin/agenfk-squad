@@ -213,6 +213,7 @@ Then open a project that has an AgenFK board and ask for something:
 | `pr-evidence` | Repository-template answers and current-head independent reviews/checks/threads; offline, no auto-post or merge |
 | `ci-plan-evidence` | Complete current CI JSON plans, expected environments/checks and exact loss approval; no Terraform/cloud execution |
 | `parallel-plan` | Iterative dependency waves with inherited parent constraints, blocked prerequisites and conservative file collisions; forecast only |
+| `architect` | Plans a new app, stack or multi-front feature before it is built: contracts, a resource-to-PR table and optimistic/likely/conservative duration ranges computed from a task DAG (`scripts/plan.py`, `delivery_map.py`, `handoff.py`). It does not order dispatch: `parallel-plan` does that from the cards, and a `delivery_map.py` schedule is not a dispatch order |
 | `engineering-evidence` | On-demand diagnosis, contract, source-to-sink security and bounded-cost telemetry checklists |
 | `session-context` | Context indicators for Claude Code, Codex, pi and oh-my-pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |
 | `clear-pickup` | Writes a handoff file from ground truth (git state plus session state) before a context clear, and reloads it afterwards |
@@ -220,12 +221,15 @@ Then open a project that has an AgenFK board and ask for something:
 | `ci-cost` | Fewer CI minutes without loosening a gate: measure (billing API, per-job ceil, cancelled minutes), then cut in order of gain; PR mutation over the changed lines (`scripts/changed-ranges.mjs`, `scripts/mutation-since.sh`, Stryker) |
 | `board-heartbeat` | A scheduled, read-only look at the board between sessions (`scripts/heartbeat.py`): stalled cards, PRs with no review, a merge turn held too long, idle worktrees, old handoffs; one line each with who acts, silent when nothing is stuck |
 | `design-reference` | One design method: direction before code, a verifiable quality floor, the patterns that give away AI-generated UI, motion with rules |
+| `skill-trial` | Blind headless trials of a skill or hook change: N fresh `claude -p` sessions in a bubblewrap jail with a stub `gh`, no user hooks and no MCP, a check per trial, one PASS/FAIL/N/A table with cost and wall time (`scripts/trial.sh`, `scenarios/smoke`) |
 | `vendor/canvas-design`, `vendor/algorithmic-art` | Third-party skills by Anthropic, Apache-2.0, redistributed unmodified (see [NOTICE](NOTICE)) |
 
 Evidence-tool adoption decisions, exclusions and limits:
 [docs/bundle-adoption.md](docs/bundle-adoption.md). These are new generic
-implementations, not a copy of private tooling or its history. Scripts use only
-Python's standard library and write stdout; each supports `--help`. The existing
+implementations, not a copy of private tooling or its history, except
+`architect`, which is a port of the owner's own skill; its origin and what the
+port changed are in [skills/architect/PROVENANCE.md](skills/architect/PROVENANCE.md).
+Scripts use only Python's standard library and write stdout; each supports `--help`. The existing
 installer discovers the new skill directories without a settings change.
 
 ```sh

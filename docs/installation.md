@@ -174,6 +174,38 @@ before writing the handoff; a timeout never blocks the compaction.
 You can adopt the squad in stages. The agents and skills work without any
 hook. The router works without the watcher. The watcher works without herdr.
 
+## Check the install
+
+A half-installed squad fails silently: a hook missing from `settings.json`
+simply never runs. From the clone you installed, run the doctor:
+
+```bash
+python3 scripts/squad_doctor.py            # one line per check: ok, WARN or FAIL, and the fix
+python3 scripts/squad_doctor.py --json     # the same results as JSON
+```
+
+It reads and never writes. It checks, in this order:
+
+| Check | FAIL when | WARN when |
+|---|---|---|
+| `python` | this interpreter is older than 3.10 | |
+| `agenfk` | | `agenfk` is not on PATH, or `agenfk health` does not answer (server down) |
+| `links` | an agent, skill, `CLAUDE.md` or manifest hook is missing from `${CLAUDE_CONFIG_DIR:-~/.claude}`, is a real file, or links somewhere other than this clone | a copy `install.ps1` marked as its own no longer matches the clone |
+| `hooks` | a hook from `hooks/manifest.json` is not registered in `settings.json` for one of its events | it is registered under another matcher than the manifest's |
+| `squad-turn` | the merge-queue command is not on PATH | it runs a `squad-turn.py` from another clone |
+| `herdr` | | herdr is not on PATH (the owner switches the session after a handoff) |
+| `project` | | there is no `.agenfk/project.json` from here up (pass `--project DIR` to look elsewhere) |
+| `thresholds` | | a numeric `SQUAD_*` variable holds something that is not a number |
+
+The `thresholds` lines list every `SQUAD_*` variable `hooks/squad-watch.py`
+reads, with the value your shell gives it and whether that is the default. The
+hooks run in Claude Code's environment, so a variable exported only in this
+shell does not reach them.
+
+The exit code is 0 when no check fails, 1 otherwise; a WARN alone keeps it at
+0. Pass `--config DIR` to check a config dir other than
+`${CLAUDE_CONFIG_DIR:-~/.claude}`.
+
 ## Check it
 
 Start a **new** Claude Code session (agents, skills and hooks are read at

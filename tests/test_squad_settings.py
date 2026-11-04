@@ -407,13 +407,19 @@ def test_a_top_level_matchers_that_is_not_an_object_is_a_bad_manifest():
 
 
 def test_uninstall_needs_only_the_script_names_from_the_manifest():
+    no_events = {k: v for k, v in WATCH.items() if k != "events"}
     broken = [
         manifest([WATCH, GRAPH], matchers="*"),                                     # top-level matchers
         manifest([WATCH, GRAPH, dict(GRAPH, matchers={"PreToolUse": "Edit"})]),     # a script twice
         manifest([WATCH, dict(GRAPH, matchers="Bash")]),                            # a hook's matchers
-        manifest([dict(WATCH, events="Stop"), GRAPH]),                              # a hook's events
     ]
-    for m in broken:
+    bad_events = [manifest([hook, GRAPH]) for hook in                              # a hook's events:
+                  (dict(WATCH, events="Stop"), no_events, dict(WATCH, events=None),    # a string, none, null
+                   dict(WATCH, events={"Stop": True}))]                              # and an object
+    for m in bad_events:
+        # only the well-formed hook's events count; reading "events" as it comes would add S, t, o, p or Stop
+        assert ss.manifest_names(m) == (["squad-watch.py", "squad-graph.py"], {"PreToolUse"}), m
+    for m in broken + bad_events:
         config = config_with("squad-watch.py", "squad-graph.py")
         assert ss.main(["install", "--config", config, "--manifest", manifest([WATCH, GRAPH])]) == 0
         assert ss.main(["install", "--config", config, "--manifest", m]) == 2

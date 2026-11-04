@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:journey-qa:resume-checkpoint:1",
+  "title": "Journey QA resume-checkpoint",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "saved_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "product_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_alias": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "actor_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "current_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_observation": {
+      "type": "string"
+    },
+    "completed_effects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "uncertain_operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_next": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "operation_id",
+          "action",
+          "status",
+          "verification_next"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      },
+      "minItems": 0
+    },
+    "remaining_budget": {
+      "type": "object",
+      "properties": {
+        "max_actions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "max_actions",
+        "max_minutes",
+        "max_retries"
+      ],
+      "additionalProperties": false
+    },
+    "next_allowed_action": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "saved_at",
+    "product_ref",
+    "session_alias",
+    "actor_id",
+    "current_url",
+    "last_observation",
+    "completed_effects",
+    "uncertain_operations",
+    "evidence_ids",
+    "remaining_budget",
+    "next_allowed_action",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

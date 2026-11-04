@@ -37,6 +37,12 @@ are taken as given: `SQUAD_MAX_REVIEWS=0` denies every reviewer.
 | `SQUAD_SWITCH` | on | `0` disables only the automatic session switch; handoffs are still ordered |
 | `SQUAD_TURN` | on | `0` disables only the merge queue |
 
+## Skill trials
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SKILL_TRIAL_OUT` | `~/.cache/skill-trial` | Folder under which `skills/skill-trial/scripts/trial.sh` writes one folder per run. `--out` overrides it. It is bound writable inside the trial's jail, so `trial.sh` refuses (exit 64, nothing created) a folder that is, holds or sits inside `~/.claude`, `~/.config`, `~/.local`, `~/.ssh` or `~/.aws`, or that is `$HOME` or holds it |
+
 ## Main session: when to hand off
 
 See [watcher.md](watcher.md#the-handoff-arithmetic) for the arithmetic.

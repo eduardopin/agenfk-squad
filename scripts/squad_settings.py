@@ -13,7 +13,10 @@ them. Standard library only. Used by get.sh, and safe to run by hand:
 the link that install.sh creates.
 
 Guarantees:
-  - every other key, and every hook that is not the squad's, stays as it was;
+  - every other key, and every hook that is not the squad's, stays as it was,
+    with one exception: when uninstall removed a squad entry from the file, it
+    also removes an empty list left on one of the manifest's events (an older
+    install could leave one there); an empty list on any other event stays;
   - running install twice changes nothing the second time (no write at all);
   - before any write, the current file is copied to settings.json.bak-<timestamp>;
   - a settings.json that is not valid JSON, or not shaped like Claude Code's
@@ -35,7 +38,24 @@ The manifest decides each squad hook's matcher: a hook's own "matchers"
 ({event: matcher}, where null means no matcher) wins over the top-level one.
 A squad entry found under any other matcher on that event (moved by hand, or
 left by an older manifest) is moved to the manifest's, so a narrow hook never
-stays registered on every tool call.
+stays registered on every tool call. A moved entry keeps the timeout it had;
+one with a null or 0 timeout gets the manifest's.
+No matcher, "" and "*" all match every tool in Claude Code, so they count as
+one matcher here: an entry under any of them is where a "*" (or no matcher)
+in the manifest wants it, and stays put. A manifest that lists one script
+twice on the same event is refused (install would move it back and forth on
+every run); uninstall reads only the script names and events, so a manifest
+that install refuses does not stop it. Copies of one squad hook under matchers
+Claude Code reads alike collapse to the first one.
+
+When copies of one squad hook on an event go (moved, collapsed, or removed
+because one is already under the right matcher), the entry that stays takes
+the user's timeout: a timeout that differs from the manifest's; with two of
+them, the first in document order; with none, the manifest's when any copy
+carries it. A null or 0 timeout is not one: a moved entry, or one already in
+place, left with null or 0 gets the manifest's. An entry already in place with
+no timeout at all, and no other copy to take one from, keeps Claude Code's
+default (a moved entry is written anew and gets the manifest's).
 """
 import contextlib
 import argparse
@@ -65,25 +85,54 @@ def default_config():
     return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
 
 
-def load_manifest(path):
+def read_manifest(path):
+    """The manifest and its script names, in order. Raises BadManifest when it
+    has no list of hooks that each name a script."""
     with open(path, encoding="utf-8") as fh:
         m = json.load(fh)
+    hooks = m.get("hooks") if isinstance(m, dict) else None
+    if not isinstance(hooks, list) or not all(isinstance(h, dict) and isinstance(h.get("script"), str)
+                                              for h in hooks):
+        raise BadManifest(f'{path}: "hooks" is not a list of objects that each name a "script"')
+    return m, [h["script"] for h in hooks]
+
+
+def manifest_names(path):
+    """The script names, and the events the manifest names: all uninstall needs,
+    so a manifest install refuses for its matchers or events does not stop it."""
+    m, scripts = read_manifest(path)
+    events = {e for h in m["hooks"] if isinstance(h.get("events"), list)
+              for e in h["events"] if isinstance(e, str)}
+    return scripts, events
+
+
+def load_manifest(path):
+    m, scripts = read_manifest(path)
     matchers = m.get("matchers", {})
+    if not isinstance(matchers, dict):
+        raise BadManifest(f'{path}: the top-level "matchers" is not an object')
     plan = {}                                # event -> [(script, timeout, matcher)], in manifest order
+    seen = set()
     for h in m["hooks"]:
+        events = h.get("events")             # a string would install one hook per character
+        if not isinstance(events, list) or not all(isinstance(e, str) for e in events):
+            raise BadManifest(f'{path}: "events" of {h["script"]} is not a list of event names')
         own = h.get("matchers", {})          # a hook's own matcher wins for its event
         if not isinstance(own, dict):
             raise BadManifest(f'{path}: "matchers" of {h["script"]} is not an object')
-        unknown = set(own) - set(h["events"])
+        unknown = set(own) - set(events)
         if unknown:                          # a typo here would fall back to the broad matcher
             raise BadManifest(f'{path}: {h["script"]} has matchers for events it does not list: '
                               f'{", ".join(sorted(unknown))}')
-        for event in h["events"]:
+        for event in events:
+            if (h["script"], event) in seen:     # install would move it between its two groups on every run
+                raise BadManifest(f'{path}: {h["script"]} is listed twice for {event}')
+            seen.add((h["script"], event))
             matcher = own.get(event, matchers.get(event))
             if matcher is not None and not isinstance(matcher, str):
                 raise BadManifest(f'{path}: the matcher of {h["script"]} on {event} is not a string: {matcher!r}')
             plan.setdefault(event, []).append((h["script"], h.get("timeout"), matcher))
-    return plan, [h["script"] for h in m["hooks"]]
+    return plan, scripts
 
 
 def load_settings(path):
@@ -214,6 +263,13 @@ def repair_stale(groups, config, script, windows=None):
     return fixed
 
 
+def same_matcher(a, b):
+    """Claude Code runs a group with no matcher, or "", on every tool, as it does "*"."""
+    def broad(m):
+        return m is None or m in ("", "*")
+    return a == b or (broad(a) and broad(b))
+
+
 def runs(group, script, config):
     return any(isinstance(h, dict) and squad_script(h.get("command"), config) == script
                for h in group.get("hooks", []))
@@ -221,11 +277,11 @@ def runs(group, script, config):
 
 def drop(settings, event, script, config, matcher):
     """Removes this script's entries from the event's groups under any matcher
-    but this one, and the groups that only held them. Every other entry keeps
-    its group and its place."""
+    but this one, the groups that only held them, and the event (then "hooks")
+    when nothing is left. Every other entry keeps its group and its place."""
     kept = []
     for g in settings["hooks"][event]:
-        if g.get("matcher") == matcher:
+        if same_matcher(g.get("matcher"), matcher):
             kept.append(g)
             continue
         entries = [h for h in g.get("hooks", [])
@@ -234,7 +290,69 @@ def drop(settings, event, script, config, matcher):
             kept.append(g)
         elif entries:
             kept.append(dict(g, hooks=entries))
-    settings["hooks"][event] = kept
+    if kept:
+        settings["hooks"][event] = kept
+        return
+    del settings["hooks"][event]             # an empty list would only be noise in the user's file
+    if not settings["hooks"]:
+        del settings["hooks"]
+
+
+def users_timeout(entries, manifest_timeout):
+    """The timeout to keep from these copies of one squad hook: the first one set
+    to something other than the manifest's (the user changed it), else the first
+    one set at all, else None. A null or 0 timeout counts as not set."""
+    given = [h["timeout"] for h in entries if h.get("timeout")]
+    return next((t for t in given if t != manifest_timeout), given[0] if given else None)
+
+
+def dedupe(settings, event, script, config, matcher):
+    """Keeps the first copy of this script among the event's groups under this
+    matcher, or one Claude Code reads the same, so it runs once per tool call.
+    Returns True when it removed a copy."""
+    def mine(h):
+        return isinstance(h, dict) and squad_script(h.get("command"), config) == script
+    groups = settings["hooks"][event]
+    copies = [h for g in groups if same_matcher(g.get("matcher"), matcher) for h in g.get("hooks", []) if mine(h)]
+    if len(copies) < 2:
+        return False
+    first, out = True, []
+    for g in groups:
+        if not same_matcher(g.get("matcher"), matcher):
+            out.append(g)
+            continue
+        entries = []
+        for h in g.get("hooks", []):
+            if mine(h):
+                if not first:
+                    continue
+                first = False
+            entries.append(h)
+        if entries == g.get("hooks", []):
+            out.append(g)
+        elif entries:
+            out.append(dict(g, hooks=entries))
+    settings["hooks"][event] = out
+    return True
+
+
+def retime(settings, event, script, config, matcher, keep, timeout):
+    """Gives the copy of this script under this matcher the timeout `keep` (the
+    one users_timeout chose from every copy on the event, before drop and dedupe
+    removed the others); when none was set, a null or 0 timeout there gets the
+    manifest's `timeout`, and no timeout at all stays (Claude Code's default).
+    Returns the timeout it set, or None when the copy already had it."""
+    for g in settings.get("hooks", {}).get(event, []):
+        if not same_matcher(g.get("matcher"), matcher):
+            continue
+        for h in g.get("hooks", []):
+            if isinstance(h, dict) and squad_script(h.get("command"), config) == script:
+                want = keep or (timeout if "timeout" in h else None)
+                if not want or want == h.get("timeout"):
+                    return None
+                h["timeout"] = want
+                return want
+    return None
 
 
 def install(settings, config, plan, report):
@@ -245,19 +363,34 @@ def install(settings, config, plan, report):
         missing = {}                         # matcher -> entries, one group per matcher
         for script, timeout, matcher in wanted:
             groups = settings.get("hooks", {}).get(event, [])
-            right = any(runs(g, script, config) and g.get("matcher") == matcher for g in groups)
-            stale = any(runs(g, script, config) and g.get("matcher") != matcher for g in groups)
+            right = any(runs(g, script, config) and same_matcher(g.get("matcher"), matcher) for g in groups)
+            stale = [h for g in groups if not same_matcher(g.get("matcher"), matcher)
+                     for h in g.get("hooks", [])
+                     if isinstance(h, dict) and squad_script(h.get("command"), config) == script]
             if right:
+                # chosen from every copy, in document order, before drop and dedupe remove all but one
+                keep = users_timeout([h for g in groups for h in g.get("hooks", [])
+                                      if isinstance(h, dict) and squad_script(h.get("command"), config) == script],
+                                     timeout)
                 if stale:                    # a second copy would still run on every tool call
                     drop(settings, event, script, config, matcher)
                     changed = True
                     report.append(f"on      {script:<16} {event} (copy under another matcher removed)")
+                twice = dedupe(settings, event, script, config, matcher)
+                if twice:
+                    changed = True
+                    report.append(f"on      {script:<16} {event} (second copy removed)")
+                retimed = retime(settings, event, script, config, matcher, keep, timeout)
+                if retimed:
+                    changed = True
+                    report.append(f"on      {script:<16} {event} (timeout set to {retimed})")
                 # the copy that stays is the one to repair: on Windows a `python3` entry runs the Store stub
-                kept = [g for g in settings.get("hooks", {}).get(event, []) if g.get("matcher") == matcher]
+                kept = [g for g in settings.get("hooks", {}).get(event, [])
+                        if same_matcher(g.get("matcher"), matcher)]
                 if repair_stale(kept, config, script):
                     changed = True
                     report.append(f"fixed   {script:<16} {event} (was `python3`, the Microsoft Store stub)")
-                elif not stale:
+                elif not stale and not twice and not retimed:
                     report.append(f"on      {script:<16} {event} (already registered)")
                 continue
             if not os.path.exists(os.path.join(config, "hooks", script)):
@@ -275,6 +408,7 @@ def install(settings, config, plan, report):
             else:
                 report.append(f"on      {script:<16} {event} (added)")
             entry = {"type": "command", "command": command_for(config, script)}
+            timeout = users_timeout(stale, timeout) or timeout      # the user's, if moved; null or 0 is not one
             if timeout:
                 entry["timeout"] = timeout
             missing.setdefault(matcher, []).append(entry)
@@ -286,9 +420,12 @@ def install(settings, config, plan, report):
     return changed
 
 
-def uninstall(settings, config, scripts, report):
+def uninstall(settings, config, scripts, report, events=()):
     """Removes every hook entry that runs one of the squad's scripts, then the
-    groups and events that only held those. Returns True when settings changed."""
+    groups and events that only held those. When it removed something, an empty
+    list on one of these `events` (the manifest's) goes too: an older install
+    could leave one there. An empty list elsewhere is the user's and stays, and
+    a file with nothing of the squad's is not written. Returns True when settings changed."""
     hooks = settings.get("hooks")
     if not hooks:
         return False
@@ -313,6 +450,10 @@ def uninstall(settings, config, scripts, report):
                 hooks[event] = kept_groups
             else:                            # it only held the squad's hooks
                 del hooks[event]
+    for event in sorted(events) if changed else ():
+        if hooks.get(event) == []:
+            del hooks[event]
+            report.append(f"off     {event}: an empty list")
     if changed and not hooks:
         del settings["hooks"]
     return changed
@@ -365,7 +506,10 @@ def main(argv=None):
     if a.action == "check":
         return 0
     try:
-        plan, scripts = load_manifest(a.manifest)
+        if a.action == "install":
+            plan, _ = load_manifest(a.manifest)
+        else:
+            scripts, events = manifest_names(a.manifest)
     except BadManifest as e:
         print(f"ERROR   {e}", file=sys.stderr)
         return 2
@@ -373,7 +517,7 @@ def main(argv=None):
     if a.action == "install":
         changed = install(settings, config, plan, report)
     else:
-        changed = uninstall(settings, config, set(scripts), report)
+        changed = uninstall(settings, config, set(scripts), report, events)
     for line in report:
         print(line)
     if changed:

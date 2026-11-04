@@ -64,7 +64,7 @@ never in a chart.
   integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
   crossorigin="anonymous"></script>
 <div class="chart" style="height:clamp(220px,38vh,340px)"><canvas id="c-revenue"
-  role="img" aria-label="Monthly revenue from March to June, from 5 to 45 thousand dollars"></canvas></div>
+  role="img" aria-label="Monthly revenue from March to June, from 9 to 31 thousand dollars"></canvas></div>
 <script>
 (function(){
   var css=getComputedStyle(document.documentElement), v=function(n){return css.getPropertyValue(n).trim();};
@@ -72,7 +72,7 @@ never in a chart.
   new Chart(document.getElementById("c-revenue"),{
     type:"line",
     data:{labels:["Mar","Apr","May","Jun"],
-      datasets:[{label:"Revenue ($ thousand)",data:[5,12,28,45],borderColor:v("--color-accent"),
+      datasets:[{label:"Revenue ($ thousand)",data:[9,14,22,31],borderColor:v("--color-accent"),
         backgroundColor:v("--color-accent"),borderWidth:3,pointRadius:4,tension:0}]},
     options:{animation:render?false:{duration:400},maintainAspectRatio:false,
       plugins:{legend:{display:false}},
@@ -106,6 +106,7 @@ never in a chart.
 
 ## Origin
 
-Outlines, layouts by kind of slide, copy formulas and the Chart.js pattern
-summarised from the claudekit `slides` skill (MIT), rewritten and bound to
-this skill's sourcing and register rules.
+The idea of outlines, layouts by kind of slide, copy formulas and a Chart.js
+pattern comes from the claudekit `slides` skill. It is restated in this skill's
+own words and bound to its sourcing and register rules; no file or passage is
+copied, so no licence is claimed.

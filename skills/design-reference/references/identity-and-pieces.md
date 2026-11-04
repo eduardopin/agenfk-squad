@@ -62,5 +62,6 @@ the primitive layer, never a loose hex on the screens.
 
 ## Origin
 
-Summary of the claudekit `brand` (visual part) and `banner-design` skills
-(MIT), rewritten.
+The idea of this checklist comes from the claudekit `brand` (visual part) and
+`banner-design` skills. It is restated in this skill's own words and no file or
+passage is copied, so no licence is claimed.

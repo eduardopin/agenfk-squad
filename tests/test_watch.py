@@ -870,6 +870,172 @@ def test_compaction_handoff_off_with_squad_watch_0():
     assert not os.path.exists(compact_handoff(h, sid))
 
 
+def test_stop_schedules_the_compaction_and_precompact_labels_the_one_it_ordered():
+    """Outside handoff, with a large context, the Stop schedules squad-compact for just
+    before the cache goes cold; the PreCompact handoff of that compaction says the
+    watcher ordered it, never that the session stopped without a handoff."""
+    h = home()
+    sid = "c0c0c0c0-0006"
+    tr = os.path.join(h, f"{sid}.jsonl")
+    with open(tr, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
+            "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
+                      "cache_creation": {"ephemeral_5m_input_tokens": 5000}}}}) + "\n")
+    env = {"HERDR_PANE_ID": "w1:p1"}
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": "deliver card ABC-2"}, env)
+    assert run(h, "Stop", sid, tr, env=env) == ""
+    jpath = os.path.join(h, ".claude", "squad", "compact", f"{sid}.json")
+    with open(jpath, encoding="utf-8") as fh:
+        job = json.load(fh)
+    assert job["ttl"] == 300 and 170 < job["due"] - time.time() <= 180 and job["req"] == "r-last", job
+    assert job["text"].startswith("/compact ") and "\n" not in job["text"], job["text"]
+    assert 'Owner\'s last request: "deliver card ABC-2".' in job["text"], job["text"]
+    job["req"] = "rescheduled"                     # the squad-compact launched for it leaves on its own
+    with open(jpath, "w", encoding="utf-8") as fh:
+        json.dump(job, fh)
+    # the /compact line reaching the session is not the owner's request
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": job["text"] + " pause, call it a day"}, env)
+    st = state(h, sid)
+    assert st["last_prompt"] == "deliver card ABC-2" and not st["asked_stop"], st
+    # the record squad-compact leaves before sending: fresh labels the handoff, stale does not
+    sent = os.path.join(h, ".claude", "squad", "compact", f"{sid}.sent")
+    for age, trigger, ordered in ((5, "manual", True), (3600, "manual", False), (5, "auto", False)):
+        with open(sent, "w", encoding="utf-8") as fh:
+            json.dump({"req": "r-last", "ts": time.time() - age, "ctx": 300_000, "ttl": 300}, fh)
+        r = run_proc(h, "PreCompact", sid, tr, {"trigger": trigger, "custom_instructions": None}, env)
+        assert r.returncode == 0 and r.stdout.strip() == "", r
+        with open(compact_handoff(h, sid), encoding="utf-8") as fh:
+            body = fh.read()
+        label = f"The watcher ordered this compaction (squad-compact, {trigger})"
+        assert (label in body) is ordered, (age, trigger, body)
+        assert ordered or f"about to be compacted ({trigger})" in body, (age, trigger, body)
+        assert ("300k of context" in body) is ordered, body
+        assert "stopped without writing" not in body, body
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-watch.md"))
+    assert not state(h, sid).get("switched")
+    # that request was compacted: another Stop on it schedules nothing (only the .sent record
+    # stops it here: the mark the /compact line above left is dropped)
+    st = state(h, sid)
+    assert st.pop("compact_as_text"), st
+    with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json"), "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    os.remove(jpath)
+    run(h, "Stop", sid, tr, env=env)
+    assert not os.path.exists(jpath)
+    # a handoff out of turn sends the work back: that Stop is not an idle session, nothing is scheduled
+    sid = "c0c0c0c0-0007"
+    tr2 = os.path.join(h, f"{sid}.jsonl")
+    shutil.copy(tr, tr2)
+    run(h, "UserPromptSubmit", sid, tr2, {"prompt": "deliver card ABC-3"}, env)
+    write_handoff(h, tr2)
+    assert kind(said(run(h, "Stop", sid, tr2, env=env))) == "Handoff out of turn"
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "compact", f"{sid}.json"))
+
+
+def watch_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("squad_watch_under_test", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def u16(s):
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def test_the_compact_text_fits_one_line_of_760_characters():
+    """Claude Code pastes every prompt longer than 800 characters, and a pasted
+    /compact does not run: it becomes an ordinary message. The text of the first
+    port had 900+ characters of instructions alone. The ceiling is 760, with margin
+    for an accent counted in bytes; the briefs path goes in whole and absolute (the
+    Read tool takes no ~) or not at all; the owner's request takes what is left."""
+    w = watch_module()
+    assert w.COMPACT_LIMIT == 760
+    accents = "ação já é não ótima revisão coração \U0001F600\U0001F680 " * 100
+    real = "/srv/someone/.claude/squad/handoffs/" + "c0c0c0c0-0010-4aaa-8aaa-aaaaaaaaaaaa-dispatches.md"
+    longest = "/srv/someone/.claude/squad/handoffs/" + "f" * 80 + "-dispatches.md"     # safe() keeps up to 80
+    too_long = "/" + "x" * 300 + "/.claude/squad/handoffs/" + "f" * 80 + "-dispatches.md"
+    for request, briefs in (("\U0001F600" * 3000, too_long), ("p" * 400, real), ("", ""), ("ok", ""),
+                            (accents, ""), (accents, real), ("é" * 3000, ""), ("a\nb\rc" * 300, longest)):
+        t = w.compact_text(request, briefs)
+        assert u16(t) <= 760 and "\n" not in t and "\r" not in t, (u16(t), t)
+        assert t.startswith(w.COMPACT_SIGNATURE) and w.compact_own(t), t
+        assert ("Denied dispatch briefs: " + briefs + "." in t) is (bool(briefs) and briefs != too_long), t
+        assert ("Denied dispatch briefs" in t) is (bool(briefs) and briefs != too_long), t
+        assert too_long not in t and "/" + "x" * 50 not in t, t                # a cut path never goes in
+    t = w.compact_text(accents, real)
+    assert 'Owner\'s last request: "ação já' in t and t.endswith('\u2026".'), t   # cut, with an ellipsis
+    assert u16(w.compact_text("p" * 5000, "")) >= 758                       # uses the room, does not overcut
+    for must in ("owner's current request", "branch, worktree", "DONE with evidence", "background tasks",
+                 "UNKNOWN", "check git status and the card"):
+        assert must in t, must
+    # through the Stop: the scheduled text, with the real (absolute) briefs path of this HOME
+    h = home()
+    sid = "c0c0c0c0-0010-4aaa-8aaa-aaaaaaaaaaaa"
+    tr = os.path.join(h, f"{sid}.jsonl")
+    with open(tr, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
+            "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
+                      "cache_creation": {"ephemeral_1h_input_tokens": 5000}}}}) + "\n")
+    briefs = os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-dispatches.md")
+    os.makedirs(os.path.dirname(briefs), exist_ok=True)
+    open(briefs, "w").close()
+    env = {"HERDR_PANE_ID": "w1:p1"}
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": ("deliver card ABC-2 \U0001F600 ação já\n" * 30)}, env)
+    run(h, "Stop", sid, tr, env=env)
+    jpath = os.path.join(h, ".claude", "squad", "compact", f"{sid}.json")
+    with open(jpath, encoding="utf-8") as fh:
+        job = json.load(fh)
+    job["req"] = "rescheduled"                     # the squad-compact launched for it leaves on its own
+    with open(jpath, "w", encoding="utf-8") as fh:
+        json.dump(job, fh)
+    text = job["text"]
+    assert u16(text) <= 760 and "\n" not in text and "\r" not in text, (u16(text), text)
+    # absolute path, never "~/": the Read tool does not expand it (a Windows temp path may hold "RUNNER~1")
+    assert f" Denied dispatch briefs: {briefs}." in text and " Denied dispatch briefs: ~" not in text, text
+    assert 'Owner\'s last request: "deliver card ABC-2' in text and "\u2026" in text, text
+
+
+def test_the_watchers_own_compact_pasted_is_not_the_owner_and_marks_the_failure():
+    """The form the hook really receives when Claude Code pasted the /compact: wrapped
+    in <pasted_content id=...>. It is not the owner's request, not a request to stop
+    (the briefs path says "handoffs"), and it marks the session: the /compact arrived
+    as a message, so squad-compact counts it as a failure and none is scheduled again."""
+    w = watch_module()
+    h = home()
+    sid = "c0c0c0c0-0011"
+    tr = os.path.join(h, f"{sid}.jsonl")
+    with open(tr, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
+            "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
+                      "cache_creation": {"ephemeral_1h_input_tokens": 5000}}}}) + "\n")
+    env = {"HERDR_PANE_ID": "w1:p1"}
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": "open the PR of card ABC-4"}, env)
+    ours = w.compact_text("open the PR of card ABC-4", f"/srv/x/.claude/squad/handoffs/{sid}-dispatches.md")
+    old = ("/compact Summary to carry the work on without this conversation. Keep the exact values, in this "
+           "order: (1) the owner's current request ... Briefs of denied dispatches (the pending plan): "
+           f"/srv/x/.claude/squad/handoffs/{sid}-dispatches.md.")
+    for text in (ours, old):
+        for form in (f'\n\n<pasted_content id="a795">\n{text}\n</pasted_content id="a795">\n', text):
+            st = state(h, sid)
+            st.pop("compact_as_text", None)
+            with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json"), "w", encoding="utf-8") as fh:
+                json.dump(st, fh)
+            before = time.time()
+            run(h, "UserPromptSubmit", sid, tr, {"prompt": form}, env)
+            st = state(h, sid)
+            assert st["last_prompt"] == "open the PR of card ABC-4" and st["asked_stop"] is False, (form, st)
+            assert st.get("compact_as_text", 0) >= before - 1, (form, st)
+    run(h, "Stop", sid, tr, env=env)                               # it does not insist in this session
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "compact", f"{sid}.json"))
+    # a paste from the owner that only quotes a /compact is still the owner
+    run(h, "UserPromptSubmit", "c0c0c0c0-0012", tr, {"prompt": '<pasted_content id="b1">\nlog: /compact failed\n'
+                                                              '</pasted_content id="b1">\nlook at this'}, env)
+    st = state(h, "c0c0c0c0-0012")
+    assert "look at this" in st["last_prompt"] and not st.get("compact_as_text"), st
+
+
 def repo_with_gh(h):
     """A real git repository and a fake gh that answers the PR state."""
     repo = os.path.join(h, "repo")

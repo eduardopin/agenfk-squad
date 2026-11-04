@@ -37,11 +37,24 @@ back).
                     handoff was written: the session is told to rewrite the
                     handoff with it, once, before the switch.
                     SQUAD_SWITCH=0 turns the switch off.
+                    Outside handoff, with context >= SQUAD_COMPACT_MIN (150000),
+                    schedules squad-compact.py: /compact, with instructions on
+                    what to keep, SQUAD_COMPACT_BEFORE (120) s before the cache of
+                    the last request goes cold (TTL read from the transcript: 1 h
+                    or 5 min; SQUAD_CACHE_TTL overrides it). It gives up if the
+                    session moved on, changed or went into a switch. The text is
+                    at most 760 characters on one line (margin over the measured
+                    800: above it Claude Code pastes the prompt and /compact does
+                    not run); if it reaches UserPromptSubmit, bare or wrapped in
+                    <pasted_content>, it is not the owner speaking: the session
+                    is marked as a failure and gets no other one.
+                    SQUAD_COMPACT=0 turns it off.
   PreCompact        main session only, manual or auto: before the conversation is
                     summarized, writes the same minimal handoff to
                     ~/.claude/squad/handoffs/<session>-compact.md. Prints
                     nothing, so it never blocks the compaction, and never
-                    switches the session.
+                    switches the session. A compaction squad-compact ordered is
+                    labelled as such in that handoff.
 
 The stop is always soft: the watcher warns first (DISPATCH NOTICE), only the new
 dispatch is denied, the task in progress finishes, and it is the watcher that
@@ -199,6 +212,8 @@ MAX_REV = env_int("SQUAD_MAX_REVIEWS", 6)
 ORCH_HERE = env_int("SQUAD_ORCH_HERE", 500_000)
 SWITCH_SHELL = env_int("SQUAD_SWITCH_WAIT", 600)            # s: the switch waits for a background shell/monitor
 SWITCH_AGENT = env_int("SQUAD_SWITCH_WAIT_AGENT", 2400)     # s: ...and for a sub-agent still running
+COMPACT_MIN = env_int("SQUAD_COMPACT_MIN", 150_000)         # below this, rebuilding a cold cache costs less
+COMPACT_BEFORE = env_int("SQUAD_COMPACT_BEFORE", 120)       # s before the cache goes cold
 DISPATCH = {"Agent", "Task"}
 REVIEWER = re.compile(r"verif|review|revis|segur|secur|audit|advers", re.I)
 CARD = re.compile(r"\b(?:[A-Z][A-Z0-9]{1,6}-\d+[a-z]?|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
@@ -445,6 +460,11 @@ def fold(path, tok, client="claude"):
         tok["out"] += u.get("output_tokens", 0)
         tok["ctx"] = (u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
                       + u.get("cache_read_input_tokens", 0))
+        cc = u.get("cache_creation") or {}
+        h1 = (cc.get("ephemeral_1h_input_tokens") or 0) if isinstance(cc, dict) else 0
+        m5 = (cc.get("ephemeral_5m_input_tokens") or 0) if isinstance(cc, dict) else 0
+        if h1 or m5:                      # the TTL this session's cache actually uses
+            tok["ttl"] = 300 if m5 > h1 else 3600
     return tok
 
 
@@ -1720,6 +1740,12 @@ def prompt(p):
         return                            # a task return or squad-wake: not the owner speaking
     path = state_path(p["session_id"], "")
     st = load(path)
+    if compact_own(text):
+        # the watcher's /compact reached the session as a message (pasted), so it did not
+        # run as a command: not the owner speaking; squad-compact reads the mark as a failure
+        st["compact_as_text"] = time.time()
+        save(path, st)
+        return
     st["prompt_ts"] = time.time()
     st["asked_stop"] = bool(ASKED_TO_STOP.search(text)) and not RESUME.search(text)
     st["last_prompt"] = text[:3000]
@@ -1736,7 +1762,7 @@ def git_out(cwd, *args):
         return "UNKNOWN"
 
 
-def watch_handoff(p, st, compact=None):
+def watch_handoff(p, st, compact=None, ordered=None):
     """The watcher writes the handoff the session did not: either the session was
     ordered to write it and stopped without it (<session>-watch.md), or the
     conversation is about to be compacted, `compact` being the trigger
@@ -1746,8 +1772,13 @@ def watch_handoff(p, st, compact=None):
     session, cwd = safe(p["session_id"]), str(p.get("cwd") or "")
     briefs = os.path.join(BASE, "handoffs", f"{session}-dispatches.md")
     if compact:
-        why = (f"The conversation is about to be compacted ({compact}): what was decided in it is\n"
-               "about to be summarized away.")
+        if ordered:
+            why = (f"The watcher ordered this compaction (squad-compact, {compact}): the session was idle with\n"
+                   f"{k(ordered['ctx'])} of context and its prompt cache about to go cold. Nothing was interrupted;\n"
+                   "what was decided in the conversation is about to be summarized away.")
+        else:
+            why = (f"The conversation is about to be compacted ({compact}): what was decided in it is\n"
+                   "about to be summarized away.")
         asked = " ".join(str(p.get("custom_instructions") or "").split())[:500]
         extra = f"- **Compact instructions:** {asked}\n" if asked else ""
     else:
@@ -1805,11 +1836,11 @@ Branch: {git_out(cwd, 'branch', '--show-current')}
 def early_handoff(p, path, st):
     """The session wrote a handoff and stopped without the watcher ordering it
     and without the owner asking: it was the agent's opinion, below the
-    threshold. Sends the work back, once per request."""
+    threshold. Sends the work back, once per request. True when it did."""
     if p.get("stop_hook_active") or st.get("early_block") or st.get("asked_stop") or not st.get("prompt_ts"):
-        return
+        return False
     if not own_handoff(str(p.get("transcript_path") or ""), st["prompt_ts"], harness(p)):
-        return
+        return False
     st["early_block"] = True
     save(path, st)
     print(json.dumps({"decision": "block", "reason": (
@@ -1817,6 +1848,7 @@ def early_handoff(p, path, st):
         "and neither the watcher nor the owner asked for a handoff. This session will NOT be cleared. Keep "
         "working from right here, following the Next step you have just written. Handoff only when "
         "PROACTIVE HANDOFF or DISPATCH DENIED arrives from the watcher, or when the owner asks.")}))
+    return True
 
 
 AGENT_TASKS = {"local_agent", "remote_agent", "in_process_teammate", "local_workflow"}
@@ -1897,7 +1929,7 @@ def switch_note(session, tasks):
 def stop(p):
     """The main session stopped. At handoff level, either it writes the handoff,
     or (already written) the session switch is launched: now, or scheduled when
-    a background task is still running."""
+    a background task is still running. Outside handoff, the compaction is scheduled."""
     if p.get("agent_id"):
         return
     session = p["session_id"]
@@ -1907,7 +1939,8 @@ def stop(p):
     st["last_stop"] = {"ts": time.time(), "bg": len(running(p))}
     save(path, st)
     if st.get("ctx_level", 0) < 2 and not st.get("switched"):
-        early_handoff(p, path, st)
+        if not early_handoff(p, path, st):
+            compact_schedule(p, path, st)
         return
     if p.get("squad_rearm"):              # squad-switch gave up before clearing: the next Stop decides again
         if st.pop("switched", None) or st.pop("switched_ts", None):
@@ -1974,6 +2007,107 @@ def stop(p):
     spawn(here("squad-switch.py"), pane, session, ho[0], ho[1], *([note] if note else []))
 
 
+# ------------------------------------------------------------- compaction
+COMPACT = os.path.join(BASE, "compact")
+# Claude Code turns every prompt longer than 800 characters into a paste
+# (<pasted_content>), and a pasted /compact does not run: it becomes an ordinary
+# message (measured in a herdr pane: 800 on one line runs as a command, 801 is
+# pasted). Hard ceiling, "/compact " included, counted in UTF-16 units (Claude
+# Code's string length), on one line. 760, not 800: the limit was measured with
+# ASCII only; if Claude Code or herdr counted bytes or code points instead, an
+# accent (2 bytes) or an emoji (2 units, 4 bytes) in the owner's last request
+# would push a text sitting exactly at 800 over it. squad-compact.py checks the
+# same LIMIT before sending (tests/test_compact.py keeps the two equal).
+COMPACT_LIMIT = 760
+COMPACT_REQUEST = (
+    "Summary to carry the work on without this conversation. Keep exact values: (1) the owner's current "
+    "request, verbatim, and decisions; (2) AgenFK cards (id, step), repo, branch, worktree, PRs, merge queue; "
+    "(3) decisions and why, what was discarded; (4) DONE with evidence, REMAINING, next step; (5) background "
+    "tasks and sub-agents (id, where results land), pending SLOT FREE or MERGE TURN; (6) errors and traps. "
+    "Drop file contents, tool output, diffs, logs, reasoning. Mark UNKNOWN the unverified. Then check git "
+    "status and the card before editing.")
+# the first sentence is the same as in the older, longer text: both are recognised
+COMPACT_SIGNATURE = "/compact Summary to carry the work on without this conversation."
+PASTED = re.compile(r"\s*<pasted_content\b[^>]*>(.*?)</pasted_content\b[^>]*>\s*", re.S)
+
+
+def u16(s):
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def compact_own(text):
+    """The text is the watcher's own /compact, bare or wrapped in a paste
+    (<pasted_content id=...>...</pasted_content ...>, the form the hook receives
+    when Claude Code pasted it)."""
+    m = PASTED.fullmatch(text)
+    return (m.group(1) if m else text).strip().startswith(COMPACT_SIGNATURE)
+
+
+def compact_text(request, briefs=""):
+    """"/compact " + the instructions, at most COMPACT_LIMIT and on one line. The
+    path of the denied-dispatch briefs goes in whole or not at all (a cut path is
+    useless); the owner's last request takes what is left, cut with an ellipsis
+    (it is also in the conversation, and item 1 says to keep it)."""
+    text = "/compact " + COMPACT_REQUEST
+    if briefs:
+        part = f" Denied dispatch briefs: {briefs}."
+        if "\n" not in part and "\r" not in part and u16(text + part) <= COMPACT_LIMIT:
+            text += part
+    request = " ".join(str(request or "").split())
+    label = ' Owner\'s last request: "{}".'
+    room = COMPACT_LIMIT - u16(text + label.format(""))
+    if request and room >= 20:
+        if u16(request) > room:
+            request = request[:room]
+            while request and u16(request) > room - 1:
+                request = request[:-1]
+            request = request.rstrip() + "\u2026"
+        text += label.format(request)
+    return text
+
+
+ORDERED_FRESH = 600    # s: a .sent record older than this did not order the compaction now starting
+
+
+def compact_schedule(p, path, st):
+    """An idle session with a large context: schedules /compact COMPACT_BEFORE
+    seconds before the cache of its last request goes cold. Compacting on a warm
+    cache reads the context at 0.1; letting it go cold makes the next message
+    write all of it again (1.25 to 2x). Every Stop reschedules; the old schedule
+    dies on its own."""
+    if (not os.environ.get("HERDR_PANE_ID") or os.environ.get("SQUAD_COMPACT") == "0"
+            or st.get("asked_stop") or harness(p) != "claude"):
+        return                            # the owner asked to stop or pause: compacting is not the watcher's call
+    if st.get("compact_as_text"):
+        return                            # a /compact already arrived here as a message: do not insist
+    session = safe(p["session_id"])
+    transcript = str(p.get("transcript_path") or "")
+    tok = fold(transcript, st.get("tok") or {})
+    st["tok"] = tok
+    ctx = tok.get("ctx", 0)
+    if not tok.get("req") or ctx < COMPACT_MIN or not tok.get("last"):
+        save(path, st)
+        return
+    st["ctx"] = ctx
+    ttl = env_int("SQUAD_CACHE_TTL", 0) or tok.get("ttl")
+    if not ttl or load(os.path.join(COMPACT, f"{session}.sent")).get("req") == tok["last"]:
+        save(path, st)                    # no cache_creation in the transcript: no telling when it goes cold;
+        return                            # or this request was already compacted
+    due = time.time() + max(ttl - COMPACT_BEFORE, 1)
+    request = ctx_lib().clean(st.get("last_prompt") or "", 400)
+    briefs = os.path.join(BASE, "handoffs", f"{session}-dispatches.md")   # absolute: the Read tool takes no ~
+    text = compact_text(request, briefs if os.path.exists(briefs) else "")
+    job = {"due": due, "req": tok["last"], "pane": os.environ["HERDR_PANE_ID"], "session": session,
+           "transcript": transcript, "ctx": ctx, "ttl": ttl, "text": text}
+    jpath = os.path.join(COMPACT, f"{session}.json")
+    try:
+        save(jpath, job)
+    except OSError:
+        return
+    save(path, st)
+    spawn(here("squad-compact.py"), jpath, tok["last"])
+
+
 def precompact(p):
     """A compaction (/compact or auto) is about to summarize the main session's
     conversation: the watcher first writes the same minimal handoff it writes for
@@ -1982,7 +2116,14 @@ def precompact(p):
     if p.get("agent_id"):
         return
     st = load(state_path(p["session_id"], ""))
-    watch_handoff(p, st, compact=safe(p.get("trigger")) or "UNKNOWN")
+    trigger = safe(p.get("trigger")) or "UNKNOWN"
+    sent = load(os.path.join(COMPACT, f"{safe(p['session_id'])}.sent")) if trigger == "manual" else {}
+    try:
+        fresh = 0 <= time.time() - float(sent.get("ts") or 0) <= ORDERED_FRESH
+        ordered = {"ctx": int(sent.get("ctx") or 0)} if fresh else None
+    except (TypeError, ValueError):
+        ordered = None
+    watch_handoff(p, st, compact=trigger, ordered=ordered)
 
 
 def main():

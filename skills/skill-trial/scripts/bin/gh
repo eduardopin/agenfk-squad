@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Stub gh for skill trials: never touches the network, logs every call.
+
+Answers come from $GH_STUB_RESPONSES, a JSON list of {"match": "<argv prefix>",
+"stdout": <string or JSON>, "exit": <int>}; the first prefix that matches the
+arguments wins. Anything unmatched fails, so a trial cannot reach GitHub by
+accident and the log shows what the session tried."""
+import json
+import os
+import sys
+import time
+
+args = " ".join(sys.argv[1:])
+with open(os.environ.get("GH_STUB_LOG", os.devnull), "a") as log:
+    log.write(f"{time.strftime('%H:%M:%S')}\t{os.getcwd()}\t{args}\n")
+rules = []
+path = os.environ.get("GH_STUB_RESPONSES")
+if path and os.path.exists(path):
+    with open(path) as f:
+        rules = json.load(f)
+for rule in rules:
+    if args.startswith(rule["match"]):
+        out = rule.get("stdout", "")
+        print(out if isinstance(out, str) else json.dumps(out))
+        sys.exit(rule.get("exit", 0))
+print(f"gh stub: not available in this environment: {args}", file=sys.stderr)
+sys.exit(1)

@@ -1,0 +1,4 @@
+[
+  {"match": "auth status", "stdout": "Logged in to github.com account tester"},
+  {"match": "repo view", "stdout": {"nameWithOwner": "example/demo", "defaultBranchRef": {"name": "main"}}}
+]

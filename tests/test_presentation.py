@@ -102,7 +102,7 @@ def export(*args, env=None):
     e = dict(os.environ)
     e.pop("CHROME", None)
     e.update(env or {})
-    return subprocess.run([BASH, SCRIPT, *args], capture_output=True, text=True, env=e, timeout=300)
+    return subprocess.run([BASH, SCRIPT, *args], capture_output=True, text=True, encoding="utf-8", errors="replace", env=e, timeout=300)
 
 
 def said(r):
@@ -503,7 +503,7 @@ def test_any_arrow_changes_slide_and_the_rails_agree():
         r = subprocess.run([chrome(), "--headless", "--disable-gpu", "--no-first-run",
                             f"--user-data-dir={tmp}/profile", "--window-size=1440,830",
                             "--virtual-time-budget=5000", "--dump-dom", pathlib.Path(deck).as_uri() + "#2"],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         m = re.search(r"<pre id=\"probe\">PROBE (.*?) END</pre>", r.stdout)
         assert m, "the probe did not run: " + r.stdout[-300:]
         n = len(slides(read(TEMPLATE)))

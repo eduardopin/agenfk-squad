@@ -2268,7 +2268,10 @@ def test_a_record_does_not_let_a_later_card_of_the_call_through_unchecked():
     move(h, CARD_A, "ADVERSARIAL")                                    # the record is for REVIEW, not this step
     assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)          # control: the stale record does not count
     cases = (("slow", tests[:1], "could not be asked"),               # agenfk broke on the first card
-             ("delay:2.4", tests[:2], "then failed for this one"))    # answered twice, then out of time on CARD_A
+             # answered twice, then out of time on CARD_A. Whether the third ask fails ("then failed for this
+             # one") or the 7 s are already spent ("ran out") depends on how long a process takes to start and
+             # be killed (Windows spends more of the budget), so the reason pinned is what both texts say.
+             ("delay:2.4", tests[:2], "answered for the cards before it"))
     for mode, before, why in cases:
         stub_mode(h, mode)
         t0 = time.time()

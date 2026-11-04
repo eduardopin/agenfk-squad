@@ -8,6 +8,7 @@ fake herdr, and never touches ~/.claude.
     python3 tests/test_watch.py
 """
 import atexit
+import datetime
 import json
 import os
 import shutil
@@ -28,8 +29,14 @@ M = 1_000_000
 _HOMES = []
 
 
-def home():
-    h = tempfile.mkdtemp(prefix="watch-")
+def home(short=False):
+    """A throwaway HOME. short: under a short directory whatever TMPDIR is, for a test whose budget
+    counts the length of a path under HOME (a TMPDIR over ~90 characters broke the compact text's)."""
+    root = None
+    if short and len(tempfile.gettempdir()) > 24:
+        root = next((d for d in ("/tmp", os.environ.get("SystemRoot", "C:\\Windows")[:3] + "Temp")
+                     if os.path.isdir(d) and os.access(d, os.W_OK)), None)
+    h = tempfile.mkdtemp(prefix="watch-", dir=root)
     _HOMES.append(h)
     return h
 
@@ -971,7 +978,7 @@ def test_the_compact_text_fits_one_line_of_760_characters():
                  "UNKNOWN", "check git status and the card"):
         assert must in t, must
     # through the Stop: the scheduled text, with the real (absolute) briefs path of this HOME
-    h = home()
+    h = home(short=True)
     sid = "c0c0c0c0-0010-4aaa-8aaa-aaaaaaaaaaaa"
     tr = os.path.join(h, f"{sid}.jsonl")
     with open(tr, "w") as fh:
@@ -1531,9 +1538,10 @@ CARD_B = "0b1c2d3e-1111-4222-8333-944455566677"
 
 def fake_agenfk(h, steps, mode="json"):
     """A stub `agenfk` first on PATH: `get <id> --json` answers with the step in
-    <h>/agenfk-steps.json. The mode in <h>/agenfk-mode breaks it on purpose: text,
-    garbage, fail, slow; delay:<s> answers after <s> seconds. The real agenfk is kept off PATH.
-    Returns (env, env without the stub)."""
+    <h>/agenfk-steps.json and a history whose last move into that step is the time in
+    <h>/agenfk-entered.json (see move(); 2000-01-01 when unset), as agenfk does. The mode in
+    <h>/agenfk-mode breaks it on purpose: text, garbage, fail, slow, nohistory; delay:<s>
+    answers after <s> seconds. The real agenfk is kept off PATH. Returns (env, env without the stub)."""
     folder = os.path.join(h, "bin")
     os.makedirs(folder, exist_ok=True)
     with open(os.path.join(h, "agenfk-steps.json"), "w") as fh:
@@ -1564,14 +1572,23 @@ if mode.startswith("delay:"):
     time.sleep(float(mode[6:]))
 if a[:1] != ["get"]:
     sys.exit(2)
-step = steps.get(a[1]) or next((s for c, s in steps.items() if c.lower().startswith(a[1].lower())), None)
-if step is None:
+card = a[1] if a[1] in steps else next((c for c in steps if c.lower().startswith(a[1].lower())), None)
+if card is None:
     print("No item found starting with " + a[1])
     sys.exit(1)
+step = steps[card]
+try:
+    entered = json.load(open(os.path.join(H, "agenfk-entered.json"))).get(card)
+except OSError:
+    entered = None
+history = [{{"fromStatus": "TODO", "toStatus": "TODO", "timestamp": "2000-01-01T00:00:00.000Z"}},
+           {{"fromStatus": "TODO", "toStatus": step, "timestamp": entered or "2000-01-01T00:00:00.000Z"}}]
 if mode == "text":
     print("[x] title\\n  Type:        STORY\\n  Status:      " + step)
-else:
+elif mode == "nohistory":
     print(json.dumps({{"id": a[1], "status": step}}, indent=2))
+else:
+    print(json.dumps({{"id": a[1], "status": step, "history": history}}, indent=2))
 """)
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
     if os.name == "nt":
@@ -1581,6 +1598,26 @@ else:
                              if d and not any(os.path.exists(os.path.join(d, "agenfk" + x))
                                               for x in ("", ".cmd", ".exe", ".ps1")))
     return {"PATH": folder + os.pathsep + system}, {"PATH": system}
+
+
+def move(h, card, step, ago=0.0):
+    """The card moves into `step` now (or `ago` seconds ago), as `agenfk verify` would record it."""
+    time.sleep(0.02)                      # a dispatch just before it is strictly older, at milliseconds
+    path = os.path.join(h, "agenfk-steps.json")
+    with open(path) as fh:
+        steps = json.load(fh)
+    steps[card] = step
+    with open(path, "w") as fh:
+        json.dump(steps, fh)
+    path = os.path.join(h, "agenfk-entered.json")
+    entered = {}
+    if os.path.exists(path):
+        with open(path) as fh:
+            entered = json.load(fh)
+    at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=ago)
+    entered[card] = at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    with open(path, "w") as fh:
+        json.dump(entered, fh)
 
 
 def stub_mode(h, mode):
@@ -1645,7 +1682,8 @@ def test_review_step_is_not_advanced_without_a_reviewer_from_any_session():
     calls = len(stub_calls(h))
     assert verify(h, sid, CARD_A, env) == "nothing"
     assert verify(h, "abcdef12-0103", CARD_A[:8], env) == "nothing"           # a third session, short id
-    assert len(stub_calls(h)) == calls                                         # no agenfk call once recorded
+    # agenfk is still asked once a dispatch is recorded: the record alone does not say which step it was for
+    assert len(stub_calls(h)) == calls + 2, stub_calls(h)
     recorded = os.path.join(h, ".claude", "squad", "reviews", f"{CARD_A}.json")
     with open(recorded) as fh:
         assert json.load(fh)["dispatches"][0]["session"] == "abcdef12-0102"
@@ -1766,10 +1804,14 @@ def test_an_id_agenfk_fails_on_does_not_open_the_gate_for_the_next_card():
     rows = gate_log(h)[-2:]
     assert (rows[0]["card"], rows[0]["decision"]) == (CARD_B, "allow"), rows
     assert (rows[1]["card"], rows[1]["decision"]) == (CARD_A, "deny"), rows
-    # what needs no agenfk still passes after it: a card with a reviewer, a word that is not an id
+    # what needs no agenfk still passes after it: a word that is not an id. A card with a reviewer record
+    # no longer does (8354de87 review): the record does not say which step it was for, so a later card
+    # needs agenfk like any other; as the first card of a call it still fails open on the record
     reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
-    assert verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_B} && agenfk verify {CARD_A} && agenfk verify "$X"') \
-        == "nothing"
+    assert verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_B} && agenfk verify "$X"') == "nothing"
+    out = verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_B} && agenfk verify {CARD_A} && agenfk verify "$X"')
+    assert "ONE CARD PER CALL" in out and CARD_A in out and "agenfk not found" in out, out
+    assert verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_A} && agenfk verify "$X"') == "nothing"
 
 
 def test_review_memory_expires_and_the_owner_lets_one_card_through_once():
@@ -1795,6 +1837,78 @@ def test_review_memory_expires_and_the_owner_lets_one_card_through_once():
     assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
     reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
     assert verify(h, sid, CARD_A, env) == "nothing"
+
+
+def test_a_reviewer_dispatch_unlocks_one_review_step_not_the_next_one():
+    """November 2026: one reviewer dispatch let REVIEW, ADVERSARIAL, HEAVY_REVIEW and every re-review
+    after FIX_FIRST through for 14 days. A dispatch now counts only when it is newer than the card's
+    entry into the step it is on, read from the history `agenfk get --json` returns."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "IN_PROGRESS", CARD_B: "IN_PROGRESS"})
+    sid = "abcdef12-0145"
+    move(h, CARD_A, "REVIEW")
+    reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
+    assert verify(h, sid, CARD_A, env) == "nothing"                 # the dispatch on this step unlocks it
+    # the next review step: the same dispatch no longer counts
+    move(h, CARD_A, "ADVERSARIAL")
+    out = verify(h, sid, CARD_A, env)
+    assert "REVIEW REQUIRED" in out and "on ADVERSARIAL since" in out and "came before that" in out, out
+    assert "each re-review after FIX_FIRST" in out and "`verifier`" in out, out
+    last = gate_log(h)[-1]
+    assert (last["card"], last["step"], last["decision"]) == (CARD_A, "ADVERSARIAL", "deny"), last
+    assert last["why"] == "no reviewer dispatch since the card entered the step", last
+    reviewer(h, sid, f"Adversarial review of card {CARD_A}, branch feat/a", env, agent_type="adversarial-verifier")
+    assert verify(h, sid, CARD_A, env) == "nothing"
+    move(h, CARD_A, "HEAVY_REVIEW")
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
+    # FIX_FIRST: the card goes back to the implementer and returns to REVIEW; the old dispatches do not count
+    move(h, CARD_A, "IN_PROGRESS")
+    assert verify(h, sid, CARD_A, env) == "nothing"                 # not a review step
+    move(h, CARD_A, "REVIEW")
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
+    reviewer(h, "abcdef12-0146", f"Re-review card {CARD_A[:8]} after the fix, branch feat/a", env)
+    assert verify(h, sid, CARD_A, env) == "nothing"                 # a new dispatch, from any session
+    # a reviewer dispatched before the card entered the review step does not count for it either
+    reviewer(h, sid, f"Review card {CARD_B}, branch feat/b", env)
+    move(h, CARD_B, "REVIEW")
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_B, env)
+
+
+def test_records_from_before_the_step_check_neither_lock_out_nor_unlock_every_step():
+    """The records #59 wrote carry no step: {"card", "dispatches": [{"ts", "session", "kind"}]}. They
+    are read as they are, and their time is compared with the card's entry into its step."""
+    h = home()
+    env, no_stub = fake_agenfk(h, {CARD_A: "IN_PROGRESS"})
+    sid = "abcdef12-0147"
+    folder = os.path.join(h, ".claude", "squad", "reviews")
+    os.makedirs(folder, exist_ok=True)
+    old = os.path.join(folder, f"{CARD_A}.json")
+    with open(old, "w") as fh:            # a dispatch an hour ago, in the format #59 wrote
+        json.dump({"card": CARD_A, "dispatches": [{"ts": time.time() - 3600, "session": "s59",
+                                                    "kind": "verifier"}]}, fh)
+    move(h, CARD_A, "REVIEW", ago=7200)   # the card has been on REVIEW for two hours: the dispatch was for it
+    assert verify(h, sid, CARD_A, env) == "nothing"
+    move(h, CARD_A, "ADVERSARIAL", ago=600)   # it moved on after the dispatch: that step needs its own
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
+    reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)   # not locked out: a new dispatch unlocks it
+    assert verify(h, sid, CARD_A, env) == "nothing"
+    with open(old) as fh:
+        assert [d["session"] for d in json.load(fh)["dispatches"]] == ["s59", sid]   # the same file, appended
+    # fail-open is unchanged: with agenfk missing or without a history, a recorded dispatch still counts
+    move(h, CARD_A, "HEAVY_REVIEW")
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)          # control: the step is gated
+    assert verify(h, sid, CARD_A, no_stub) == "nothing"
+    last = gate_log(h)[-1]
+    assert last["decision"] == "allow" and last["why"].startswith("agenfk not found"), last
+    stub_mode(h, "nohistory")
+    assert verify(h, sid, CARD_A, env) == "nothing"
+    last = gate_log(h)[-1]
+    assert (last["decision"], last["step"]) == ("allow", "HEAVY_REVIEW") and "no step history" in last["why"], last
+    # ...and without a history nor any record, the step is still gated
+    stub_mode(h, "json")
+    os.remove(old)
+    stub_mode(h, "nohistory")
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
 
 
 def test_stale_state_is_cleaned_with_a_folder_in_it():
@@ -1977,6 +2091,212 @@ def test_no_session_writes_the_review_records_with_a_tool():
                       ("Bash", {"command": f"echo x > {sh(os.path.join(h, 'reviews.json'))}"})):
         assert call(tool, inp) == "nothing", (tool, inp)
 
+
+
+def test_naming_the_review_records_in_text_is_not_a_write():
+    """f93d1785 review: a commit message or a card comment that only mentions the records' path was denied
+    as a write, and the message told the session to dispatch the verifier, which was not the way forward."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "TEST"})
+    sid = "abcdef12-0211"
+    rec = "~/.claude/squad/reviews"
+
+    def bash(cmd, cwd=None):
+        extra = {"tool_name": "Bash", "tool_input": {"command": cmd}}
+        if cwd:
+            extra["cwd"] = cwd
+        return said(run(h, "PreToolUse", sid, "", extra, env))
+    for cmd in (f'git commit -m "Keep {rec}/<card>.json out of reach of tools"',
+                f'git -C {sh(h)} commit -q -am "fix: {rec}"', f'git commit --message="{rec}" && git log -1 | tee log',
+                f"agenfk comment {CARD_A} 'The records live in {rec}/{CARD_A}.json'",
+                f'agenfk verify {CARD_A} --evidence "gate reads {rec}"',
+                f'gh pr create --title "Gate" --body "records in {rec}" --base beta'):
+        assert bash(cmd) == "nothing", cmd
+    # text elsewhere than those values still counts, and so does a write next to the text
+    for cmd in (f"python3 scripts/tidy.py {rec}", f'git commit -m "$(touch {rec}/x.json)"',
+                f'git commit -m "{rec}" > {rec}/x.json', f"git worktree add -d {rec}/x",
+                f'agenfk comment {CARD_A} "x"; touch {rec}/x.json', f"cd {rec} && git commit -m wip"):
+        out = bash(cmd)
+        assert "REVIEW RECORD" in out, (cmd, out)
+        assert "this command names the review records (" in out and "reading is fine, writing is the watcher's" in out, out
+        assert "Where the work continues: dispatch the verifier" not in out, out
+    out = bash(f"git commit -m {CARD_A}", cwd=os.path.join(h, ".claude", "squad", "reviews"))
+    assert "REVIEW RECORD" in out, out                               # the directory is the records: no text exemption
+    # a write with a tool says "call", not "command"
+    out = said(run(h, "PreToolUse", sid, "", {"tool_name": "Write", "tool_input": {
+        "file_path": os.path.join(h, ".claude", "squad", "reviews", "x.json"), "content": "{}"}}, env))
+    assert "this call names the review records" in out, out
+
+
+def test_a_megabyte_command_is_read_inside_the_hook_budget():
+    """f93d1785 review: verify_ids ran shlex over the whole command and shlex is superlinear: 1.1 MB
+    took 21.9 s, past the hook's 10 s. Only the first PARSE_MAX characters are parsed now; the rest is
+    searched for `agenfk verify <id>`, so padding does not hide one, and the cut is logged."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "REVIEW", CARD_B: "TEST"})
+    sid = "abcdef12-0221"
+    pad = "word " * 220_000                                           # 1.1 MB inside one quoted argument
+    for cmd in (f'agenfk verify {CARD_A} --evidence "{pad}"', f'true "{pad}"; agenfk verify {CARD_A}'):
+        t0 = time.time()
+        out = verify(h, sid, CARD_A, env, cmd)
+        took = time.time() - t0
+        assert "REVIEW REQUIRED" in out, out[:300]
+        assert took < 5, took
+        cut = [r for r in gate_log(h) if r["decision"] == "cut"]
+        assert cut and "1100" in cut[-1]["why"] and "65536" in cut[-1]["why"], gate_log(h)[-2:]
+    t0 = time.time()
+    assert verify(h, sid, CARD_B, env, f'agenfk verify {CARD_B} --evidence "{pad}"') == "nothing"
+    assert time.time() - t0 < 5
+    # the record guard too: a megabyte naming the records is decided in time (denied: it is too long to read)
+    t0 = time.time()
+    out = said(run(h, "PreToolUse", sid, "", {"tool_name": "Bash", "tool_input": {
+        "command": f'cat ~/.claude/squad/reviews/x.json "{pad}"'}}, env))
+    assert "REVIEW RECORD" in out and time.time() - t0 < 5, out[:200]
+    # the fallback for a command shlex cannot read (an open quote) is linear too: `\S*/` took 3 s on 64 KB
+    w = watch_module()
+    t0 = time.time()
+    assert w.verify_ids(";a" * 32_768 + "'") is None
+    assert time.time() - t0 < 1, time.time() - t0
+    assert w.verify_ids(f"x; /usr/bin/agenfk verify {CARD_A} '") == [CARD_A]   # a path before agenfk still reads
+
+
+def test_a_padded_verify_past_the_cap_is_not_let_through():
+    """8354de87 review: past the 64 KB cap the rest of a command was only searched for the plain
+    `agenfk verify <id>`, so an option or a quote before the id, a continuation, a quote cut open at the
+    cap or a run of blanks across it let a verify through unchecked (beta denied every one). Each
+    `agenfk ... verify` in the whole command must now be matched by a card id that was read."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "REVIEW", CARD_B: "TEST"})
+    sid = "abcdef12-0231"
+    w = watch_module()
+    pad = "word " * 16_000                                            # 80 KB inside one quoted argument
+    lead = "true " + "a" * (w.PARSE_MAX - 400) + "; agenfk"           # agenfk well before the cap...
+    for cmd in (f'true "{pad}"; agenfk verify --evidence ok {CARD_A}',
+                f'true "{pad}"; agenfk verify "{CARD_A}"',
+                f'true "{pad}"; agenfk verify \\\n{CARD_A}',
+                f'agenfk verify --evidence "{pad}" {CARD_A}',
+                lead + " " * 500 + f"verify {CARD_A}",                # ...and its verify past it
+                # a card that was read does not cover one that was not
+                f'agenfk verify {CARD_B}; true "{pad}"; agenfk verify --evidence ok {CARD_A}'):
+        assert len(cmd) > w.PARSE_MAX
+        calls = len(stub_calls(h))
+        t0 = time.time()
+        out = verify(h, sid, CARD_A, env, cmd)
+        assert time.time() - t0 < 5
+        assert "VERIFY NOT READ" in out and "run `agenfk verify <id>` on its own" in out, (cmd[-80:], out[:300])
+        assert len(stub_calls(h)) == calls                            # decided without asking agenfk
+        last = gate_log(h)[-1]
+        assert last["decision"] == "deny" and "card ids read" in last["why"], last
+    # what was let through before still is: a verify whose id is read, past the cap or before it
+    assert verify(h, sid, CARD_B, env, f'agenfk verify {CARD_B} --evidence "{pad}"') == "nothing"
+    assert verify(h, sid, CARD_B, env, f'true "{pad}"; agenfk verify {CARD_B} --evidence ok') == "nothing"
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env, f'true "{pad}"; agenfk verify {CARD_A}')
+    assert verify(h, sid, CARD_B, env, f'true "{pad}"; agenfk get {CARD_B} | grep verify') == "nothing"
+    assert w.verify_mentions(f"agenfk get x; verify; agenfk  \\\n --x verify y | agenfk\nverify") == 1
+
+
+def test_newline_and_separator_runs_are_read_in_linear_time():
+    r"""8354de87 review: VERIFY_LOOSE took `\s*` after a separator, so every newline of a run scanned the
+    rest of it (24,000 newlines in a heredoc shlex cannot read: 10.3 s). TURN_CLI had the `\S*/` the
+    verify fallback lost earlier: 100 KB of `;a` took 9.6 s in turn_kind, before either guard ran."""
+    w = watch_module()
+    cmd = "cat <<'EOF' >x\ndon't" + "\n" * 24_000 + f"EOF\nagenfk verify {CARD_A}"
+    t0 = time.time()
+    assert w.verify_ids(cmd) == [CARD_A]                              # the fallback: shlex fails on don't
+    assert time.time() - t0 < 2, time.time() - t0
+    t0 = time.time()
+    assert w.turn_kind({"tool_name": "Bash", "tool_input": {"command": ";a" * 50_000}}) is None
+    assert time.time() - t0 < 2, time.time() - t0
+    t0 = time.time()
+    assert w.turn_kind({"tool_name": "Bash", "tool_input": {"command": "\n" * 50_000 + "x"}}) is None
+    assert time.time() - t0 < 2, time.time() - t0
+    for cmd, verb in (("x; ~/.claude/bin/squad-turn request 12", "request"), ("\n\n  squad-turn.py status", "status"),
+                      ("cd x && /opt/s/squad-turn release", "release")):
+        assert w.turn_kind({"tool_name": "Bash", "tool_input": {"command": cmd}})[:2] == ("cli", verb), cmd
+    assert w.verify_ids(f"x\n\n\t /usr/bin/agenfk verify {CARD_A} '") == [CARD_A]
+
+
+def test_a_comment_line_does_not_hide_a_verify_or_a_write():
+    """8354de87 review (on beta too): the lines were joined with " ; " before shlex read them, and
+    shlex drops everything after a `#`, so a comment line hid every line after it from the review gate
+    and from the record guard."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "REVIEW"})
+    sid = "abcdef12-0241"
+    rec = "~/.claude/squad/reviews"
+
+    def bash(cmd):
+        return said(run(h, "PreToolUse", sid, "", {"tool_name": "Bash", "tool_input": {"command": cmd}}, env))
+    for cmd in (f"# note\nagenfk verify {CARD_A}", f"echo hi # note\nagenfk verify {CARD_A} --evidence ok"):
+        out = bash(cmd)
+        assert "REVIEW REQUIRED" in out and CARD_A in out, (cmd, out)
+    for cmd in (f"# x\ncp x {rec}/F.json", f"cat {rec}/F.json # x\ntouch {rec}/F.json"):
+        out = bash(cmd)
+        assert "REVIEW RECORD" in out, (cmd, out)
+    # a comment that only comments still reads as nothing to stop
+    assert bash(f"# agenfk verify {CARD_A}") == "nothing"
+    assert bash(f"cat {rec}/F.json # just reading") == "nothing"
+
+
+def test_only_the_bare_git_gh_and_agenfk_have_text_values():
+    """8354de87 review: the text exemption keyed on the basename, so `./agenfk comment <id> "<records>"`
+    or `/tmp/x/git commit -m <records>` (any program under that name) wrote the records unchecked."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "TEST"})
+    sid = "abcdef12-0251"
+    rec = "~/.claude/squad/reviews"
+
+    def bash(cmd):
+        return said(run(h, "PreToolUse", sid, "", {"tool_name": "Bash", "tool_input": {"command": cmd}}, env))
+    for cmd in (f'./agenfk comment {CARD_A} "{rec}/{CARD_A}.json"', f'/tmp/x/git commit -m "{rec}/F.json"',
+                f'bin/gh pr create --body "{rec}/F.json"', f'/tmp/agenfk verify {CARD_A} --evidence "{rec}/F.json"'):
+        out = bash(cmd)
+        assert "REVIEW RECORD" in out, (cmd, out)
+    for cmd in (f'agenfk comment {CARD_A} "{rec}/{CARD_A}.json"', f'git commit -m "{rec}/F.json"'):
+        assert bash(cmd) == "nothing", cmd
+
+
+def test_a_record_does_not_let_a_later_card_of_the_call_through_unchecked():
+    """8354de87 review: once the hook's 7 s were spent, or agenfk broke on a card after the first, a
+    later card with any reviewer record passed without its step being read, so a dispatch made for an
+    earlier step unlocked the next one. Only the first card of a call may fail open."""
+    h = home()
+    tests = [f"33333333-0000-4000-8000-00000000000{i}" for i in range(1, 4)]
+    env, _ = fake_agenfk(h, dict({c: "TEST" for c in tests}, **{CARD_A: "REVIEW"}))
+    sid = "abcdef12-0261"
+    reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
+    move(h, CARD_A, "ADVERSARIAL")                                    # the record is for REVIEW, not this step
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)          # control: the stale record does not count
+    cases = (("slow", tests[:1], "could not be asked"),               # agenfk broke on the first card
+             # answered twice, then out of time on CARD_A. Whether the third ask fails ("then failed for this
+             # one") or the 7 s are already spent ("ran out") depends on how long a process takes to start and
+             # be killed (Windows spends more of the budget), so the reason pinned is what both texts say.
+             ("delay:2.4", tests[:2], "answered for the cards before it"))
+    for mode, before, why in cases:
+        stub_mode(h, mode)
+        t0 = time.time()
+        out = verify(h, sid, CARD_A, env, " && ".join(f"agenfk verify {c}" for c in before + [CARD_A]),
+                     {"cwd": ROOT})
+        assert time.time() - t0 < 9.5
+        assert "ONE CARD PER CALL" in out and CARD_A in out and why in out, (mode, out)
+        last = gate_log(h)[-1]
+        assert (last["card"], last["decision"]) == (CARD_A, "deny") and "one card per call" in last["why"], last
+    stub_mode(h, "slow")
+    assert verify(h, sid, CARD_A, env, extra={"cwd": ROOT}) == "nothing"   # the first card still fails open
+    # no time left for a later card (`wait` under 0.5 s): unchecked, record or not. Called directly: through
+    # the hook this needs agenfk to answer three cards within 0.5 s of the 7 s budget, too tight to time
+    saved = os.environ.get("HOME"), os.environ.get("USERPROFILE")
+    os.environ["HOME"] = os.environ["USERPROFILE"] = h
+    try:
+        w = watch_module()
+    finally:
+        for key, value in zip(("HOME", "USERPROFILE"), saved):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    assert w.review_files(CARD_A), w.REVIEWS                         # the record is there
+    assert w.review_check({"session_id": sid, "cwd": ROOT}, CARD_A, 0.2, True) == ("", "unchecked", "")
 
 if __name__ == "__main__":
     # every test runs, so one failure does not hide the others; the exit code is 1 when any failed

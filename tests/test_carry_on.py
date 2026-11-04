@@ -339,6 +339,119 @@ def test_the_cap_per_goal_releases_even_with_progress():
     assert s.stop() == "nothing"
 
 
+# --- review round 1 and the owner's example of 2026-11-04 ---------------------------------------
+
+def test_an_offer_to_open_the_next_front_does_not_stop_the_session():
+    s = Session()
+    s.owner("quais frentes ainda estão em andamento?")
+    s.reply("Nenhuma. Esperando você: #69 falta o merge.\n\n"
+            "Ainda não começou: o follow-up do #74.\n\nPosso abrir essa frente agora, se você quiser.")
+    out = s.stop()
+    assert carried(out), out
+    assert "merge" in out and "only the owner" in out, "the order separates owner gates from the session's work"
+
+
+def test_english_offers_are_caught():
+    for text in ("Want me to start the webhook card now?", "Shall I open the PR?",
+                 "I can open the follow-up front if you want."):
+        s = Session()
+        s.owner("status?")
+        s.reply(text)
+        assert carried(s.stop()), text
+
+
+def test_an_implicit_hold_ends_when_the_reply_no_longer_names_a_next_step():
+    s = Session()
+    s.owner("Explain the deploy flow.")
+    s.reply("The next step in the docs is the release tag.")
+    assert carried(s.stop())
+    s.reply("To be clear: there is nothing for me to do here, that was an explanation.")
+    assert s.stop() == "nothing"
+
+
+def test_an_implicit_hold_without_work_lets_go_sooner_than_an_explicit_one():
+    s = Session()
+    s.owner("Explain the deploy flow.")
+    holds = 0
+    for _ in range(4):
+        s.reply("Next step in the docs: the release tag.")
+        if carried(s.stop()):
+            holds += 1
+    assert holds == 2, holds              # the first hold is not counted as progress
+
+
+def test_restating_the_goal_does_not_reset_the_guard():
+    s = Session()
+    s.owner("Build the plan and run it.")
+    s.reply("[squad] GOAL: deliver the plan\n\nStarting.")
+    s.edit()
+    s.reply("Wrote wave 1.")
+    assert carried(s.stop())
+    outs = []
+    for _ in range(3):
+        s.look()
+        s.reply("[squad] GOAL: deliver the plan\n\nChecking again.")
+        outs.append(s.stop())
+    assert outs[-1] == "nothing", outs     # 3 stops without progress, restated goal or not
+
+
+def test_a_session_goal_does_not_lift_the_owners_blocked():
+    s = Session()
+    s.owner("[squad] GOAL: ship the checkout feature")
+    s.edit()
+    s.reply("[squad] BLOCKED: the owner approves the card on the board")
+    assert s.stop() == "nothing"
+    s.reply("[squad] GOAL: ship the checkout feature\n\nStill waiting.")
+    assert s.stop() == "nothing"
+
+
+def test_an_explicit_goal_without_progress_for_a_day_expires():
+    s = Session()
+    s.owner("[squad] GOAL: ship the checkout feature")
+    s.edit()
+    s.reply("Working.")
+    assert carried(s.stop())
+    st = s.state()
+    st["goal"]["progress_ts"] = st["goal"]["ts"] = st["goal"]["ts"] - 13 * 3600
+    s.set_state(goal=st["goal"])
+    s.owner("unrelated: what time is it?")
+    s.reply("15:00.")
+    assert s.stop() == "nothing"
+    assert not s.state().get("goal"), s.state()
+
+
+def test_two_releases_in_a_row_close_an_explicit_goal():
+    s = Session()
+    s.owner("[squad] GOAL: ship the checkout feature")
+    s.edit()
+    s.reply("Working.")
+    s.stop()
+    for _ in range(2):                     # the owner keeps chatting, the session never works
+        for _ in range(3):
+            s.look()
+            s.reply("ok.")
+            s.stop()
+        s.owner("another unrelated question")
+    assert not s.state().get("goal"), s.state()
+
+
+def test_done_check_stays_inside_the_hook_timeout():
+    import time as _t
+    cards = [f"{i:08x}-2222-3333-4444-555555555555" for i in range(8)]
+    s = Session(statuses={c: "DONE" for c in cards})
+    slow = os.path.join(s.h, "slow.py")
+    with open(slow, "w") as fh:
+        fh.write("import time, json, sys\ntime.sleep(2)\nprint(json.dumps({'status': 'IN_PROGRESS'}))\n")
+    s.env["SQUAD_AGENFK"] = f"{sys.executable} {slow}"
+    s.owner("[squad] GOAL: close " + " ".join(cards))
+    s.edit()
+    s.reply("[squad] DONE: all closed")
+    t0 = _t.time()
+    out = s.stop()
+    assert _t.time() - t0 < 9, _t.time() - t0
+    assert "DONE refused" in out, out      # lookups run in parallel and still answer
+
+
 def test_squad_carry_zero_turns_it_off():
     s = Session(env={"SQUAD_CARRY": "0"})
     s.owner("[squad] GOAL: ship the checkout feature")

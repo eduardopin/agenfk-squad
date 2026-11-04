@@ -74,7 +74,14 @@ INVISIBLE = {0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x2800, 0x3164, 0xFFA0}
 def unsafe_char(char):
     return (
         unicodedata.category(char) in UNSAFE_CATEGORIES and ord(char) not in ALLOWED_FORMAT
-    ) or ord(char) in INVISIBLE
+    ) or ord(char) in INVISIBLE or reserved_ignorable(char)
+
+
+def reserved_ignorable(char):
+    """Unassigned code points that Unicode reserves as default-ignorable (invisible once assigned): U+2065,
+    U+FFF0-FFF8 and the rest of plane 14 outside the variation selectors, tags included."""
+    code = ord(char)
+    return code == 0x2065 or 0xFFF0 <= code <= 0xFFF8 or (0xE0000 <= code <= 0xE0FFF and not variation_selector(char))
 
 
 def variation_selector(char):

@@ -78,8 +78,8 @@ def unsafe_char(char):
 
 
 def reserved_ignorable(char):
-    """Unassigned code points that Unicode reserves as default-ignorable (invisible once assigned): U+2065,
-    U+FFF0-FFF8 and the rest of plane 14 outside the variation selectors, tags included."""
+    """Code points that Unicode reserves as default-ignorable (invisible once assigned): U+2065, U+FFF0-FFF8
+    and U+E0000-E0FFF outside the variation selectors (the assigned tags there are Cf and refused anyway)."""
     code = ord(char)
     return code == 0x2065 or 0xFFF0 <= code <= 0xFFF8 or (0xE0000 <= code <= 0xE0FFF and not variation_selector(char))
 

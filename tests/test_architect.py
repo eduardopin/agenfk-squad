@@ -232,7 +232,7 @@ class PlannerBehavior(unittest.TestCase):
     def test_invisible_letters_and_symbols_are_refused_in_titles(self):
         # Outside Cf, some letters, marks and symbols still draw nothing: the Hangul fillers, the blank
         # braille pattern, the combining grapheme joiner, the Khmer inherent vowels.
-        # Unassigned default-ignorable code points (the rest of the tag block, plane 14, U+2065, U+FFF0-FFF8)
+        # Unassigned default-ignorable code points (U+E0000-E0FFF outside the variation selectors, U+2065, U+FFF0-FFF8)
         # are refused too: they become invisible characters once Unicode assigns them.
         for character in ["\u3164", "\u115f", "\u1160", "\uffa0", "\u2800", "\u034f", "\u17b4", "\u17b5",
                           "\u2065", "\ufff0", "\ufff8", "\U000e0000", "\U000e0002", "\U000e001f", "\U000e0080",

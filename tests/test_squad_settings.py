@@ -292,6 +292,47 @@ def test_uninstall_clears_an_empty_event_list_an_older_install_left():
     assert changed
 
 
+def test_the_same_script_twice_on_one_event_is_refused():
+    config = config_with("squad-graph.py")
+    twice = manifest([GRAPH, dict(GRAPH, matchers={"PreToolUse": "Edit"})])
+    try:
+        ss.load_manifest(twice)
+    except ss.BadManifest as e:
+        assert "squad-graph.py" in str(e) and "PreToolUse" in str(e), e
+    else:
+        raise AssertionError("the same script twice on PreToolUse was accepted")
+    assert ss.main(["install", "--config", config, "--manifest", twice]) == 2
+    assert not os.path.exists(os.path.join(config, "settings.json"))
+    # the same script on events that do not overlap is fine (the real manifest does it for PreCompact)
+    plan, _ = ss.load_manifest(manifest([WATCH, dict(WATCH, events=["PreCompact"], timeout=20)]))
+    assert plan["PreCompact"] == [("squad-watch.py", 20, None)], plan
+
+
+def test_a_top_level_matchers_that_is_not_an_object_is_a_bad_manifest():
+    for bad in ("*", ["PreToolUse"], 5):
+        try:
+            ss.load_manifest(manifest([WATCH], matchers=bad))
+        except ss.BadManifest:
+            pass
+        else:
+            raise AssertionError(f"top-level matchers {bad!r} was accepted")
+
+
+def test_uninstall_needs_only_the_script_names_from_the_manifest():
+    broken = [
+        manifest([WATCH, GRAPH], matchers="*"),                                     # top-level matchers
+        manifest([WATCH, GRAPH, dict(GRAPH, matchers={"PreToolUse": "Edit"})]),     # a script twice
+        manifest([WATCH, dict(GRAPH, matchers="Bash")]),                            # a hook's matchers
+    ]
+    for m in broken:
+        config = config_with("squad-watch.py", "squad-graph.py")
+        assert ss.main(["install", "--config", config, "--manifest", manifest([WATCH, GRAPH])]) == 0
+        assert ss.main(["install", "--config", config, "--manifest", m]) == 2
+        assert ss.main(["uninstall", "--config", config, "--manifest", m]) == 0, m
+        with open(os.path.join(config, "settings.json")) as fh:
+            assert json.load(fh) == {}, m
+
+
 if __name__ == "__main__":
     try:
         for name, fn in sorted(globals().items()):

@@ -38,7 +38,10 @@ left by an older manifest) is moved to the manifest's, so a narrow hook never
 stays registered on every tool call. A moved entry keeps the timeout it had.
 No matcher, "" and "*" all match every tool in Claude Code, so they count as
 one matcher here: an entry under any of them is where a "*" (or no matcher)
-in the manifest wants it, and stays put.
+in the manifest wants it, and stays put. A manifest that lists one script
+twice on the same event is refused (install would move it back and forth on
+every run); uninstall reads only the script names, so a manifest that install
+refuses does not stop it.
 """
 import contextlib
 import argparse
@@ -68,11 +71,31 @@ def default_config():
     return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
 
 
-def load_manifest(path):
+def read_manifest(path):
+    """The manifest and its script names, in order. Raises BadManifest when it
+    has no list of hooks that each name a script."""
     with open(path, encoding="utf-8") as fh:
         m = json.load(fh)
+    hooks = m.get("hooks") if isinstance(m, dict) else None
+    if not isinstance(hooks, list) or not all(isinstance(h, dict) and isinstance(h.get("script"), str)
+                                              for h in hooks):
+        raise BadManifest(f'{path}: "hooks" is not a list of objects that each name a "script"')
+    return m, [h["script"] for h in hooks]
+
+
+def manifest_scripts(path):
+    """Only the script names: all uninstall needs, so a manifest install refuses
+    for its matchers or events does not stop an uninstall."""
+    return read_manifest(path)[1]
+
+
+def load_manifest(path):
+    m, scripts = read_manifest(path)
     matchers = m.get("matchers", {})
+    if not isinstance(matchers, dict):
+        raise BadManifest(f'{path}: the top-level "matchers" is not an object')
     plan = {}                                # event -> [(script, timeout, matcher)], in manifest order
+    seen = set()
     for h in m["hooks"]:
         own = h.get("matchers", {})          # a hook's own matcher wins for its event
         if not isinstance(own, dict):
@@ -82,11 +105,14 @@ def load_manifest(path):
             raise BadManifest(f'{path}: {h["script"]} has matchers for events it does not list: '
                               f'{", ".join(sorted(unknown))}')
         for event in h["events"]:
+            if (h["script"], event) in seen:     # install would move it between its two groups on every run
+                raise BadManifest(f'{path}: {h["script"]} is listed twice for {event}')
+            seen.add((h["script"], event))
             matcher = own.get(event, matchers.get(event))
             if matcher is not None and not isinstance(matcher, str):
                 raise BadManifest(f'{path}: the matcher of {h["script"]} on {event} is not a string: {matcher!r}')
             plan.setdefault(event, []).append((h["script"], h.get("timeout"), matcher))
-    return plan, [h["script"] for h in m["hooks"]]
+    return plan, scripts
 
 
 def load_settings(path):
@@ -387,7 +413,10 @@ def main(argv=None):
     if a.action == "check":
         return 0
     try:
-        plan, scripts = load_manifest(a.manifest)
+        if a.action == "install":
+            plan, _ = load_manifest(a.manifest)
+        else:
+            scripts = manifest_scripts(a.manifest)
     except BadManifest as e:
         print(f"ERROR   {e}", file=sys.stderr)
         return 2

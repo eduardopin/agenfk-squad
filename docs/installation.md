@@ -191,7 +191,7 @@ It reads and never writes, not even a `__pycache__`. It checks, in this order:
 | `python` | this interpreter is older than 3.10 | |
 | `agenfk` | | `agenfk` is not on PATH, or `agenfk health` does not answer or prints a `FAILED` / "potential issue" line (server down: it still exits 0) |
 | `links` | an agent, skill, `CLAUDE.md` or manifest hook is missing from `${CLAUDE_CONFIG_DIR:-~/.claude}`, is a real file, or links somewhere other than this clone | a copy `install.ps1` marked as its own no longer matches the clone |
-| `hooks` | a hook from `hooks/manifest.json` is not registered in `settings.json` for one of its events, is registered with a matcher that is not a string, or `settings.json` cannot be read (not JSON, a dangling link, a symlink loop) | it is registered under another matcher than the manifest's |
+| `hooks` | a hook from `hooks/manifest.json` is not registered in `settings.json` for one of its events, is registered with a matcher that is not a string, or `settings.json` cannot be read (not JSON, a dangling link, a symlink loop) | it is registered under another matcher than the manifest's (no matcher, `""` and `"*"` count as the same one) |
 | `squad-turn` | the merge-queue command is not on PATH, or `~/.local/bin/squad-turn` is a dangling link | it runs a `squad-turn.py` from another clone |
 | `herdr` | | herdr is not on PATH (the owner switches the session after a handoff) |
 | `project` | | there is no `.agenfk/project.json` from here up (pass `--project DIR` to look elsewhere), or it has no `projectId` |

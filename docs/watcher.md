@@ -205,6 +205,149 @@ A `DISPATCH DENIED` always says where the work continues. There are four exits:
 The session must not work around a denial with another tool or another agent
 type, and must not repeat the dispatch.
 
+### The review gate: no self-approval
+
+The reviewer cap limits how often a card is reviewed. The review gate makes
+sure it is reviewed at all. Before this gate, "whoever writes does not
+approve" lived only in the prompt, and nothing stopped a main session from
+running `agenfk verify <id>` on a review step without ever dispatching the
+verifier.
+
+On every `PreToolUse` of the **main session**, a Bash call that runs
+`agenfk verify <id>`, or a call to one of the MCP tools that advance a card
+(`validate_progress`, and the deprecated `review_changes` and `test_changes`),
+is checked:
+
+1. The watcher reads the card's step, and when the card last moved into it
+   (the `history` of moves), with `agenfk get <id> --json`, in the call's
+   directory, with a 3-second timeout per card and 7 seconds for every card in
+   the call. Only something shaped like an id (a letter or digit, then
+   letters, digits, `_` and `-`) is handed to `agenfk`. Anything else, such as
+   `$ID` or `--`, passes and is logged.
+2. If the step is one of `SQUAD_REVIEW_STEPS` (default
+   `REVIEW,ADVERSARIAL,HEAVY_REVIEW`) and no reviewer dispatch for that card
+   has been recorded **since the card entered that step** (and within the
+   last `SQUAD_REVIEW_MEMORY_DAYS`, 14), the call is denied with
+   `REVIEW REQUIRED`. One dispatch unlocks one review step: the next review
+   step, and the same step again after FIX_FIRST sent the card back and it
+   returned, each need a dispatch of their own. A reviewer dispatched before
+   the card entered the step does not count for it either.
+3. The way forward is in the message: dispatch the verifier (the project's own
+   reviewer agent if it has one) in a clean context, with the card id and the
+   branch in the brief, never the implementer's narrative. When it returns
+   SHIP, run `agenfk verify` again with its verdict as the evidence.
+
+The command is read the way the shell reads it. Any spacing, flags before or
+after the id, a `cd` or `VAR=value` before it, and `bash -c "..."` are
+recognised. So are the shell keywords that leave a command in command position
+(`if`, `then`, `elif`, `else`, `while`, `until`, `do`, `{`, `!`) and the
+wrappers `env`, `sudo`, `timeout`, `nice`, `xargs`, `npx`, `exec`, `command`,
+`time` and `nohup`, with their options. `agenfk verify <id> --plan`, and the
+MCP `validate_progress` with `plan` set, are dry runs and pass. So does text
+that only mentions the command, such as a commit message or an `echo`. Every
+command that holds both `agenfk` and `verify` but yields no card id is logged
+as a pass. Sub-sessions are not checked, because only the main session
+advances cards.
+
+**One card per call.** When a call advances several cards and `agenfk`
+answers for the first ones but the 7 seconds run out before the last, or
+`agenfk` breaks on a later card, the card left unchecked is not let through.
+The same holds after `agenfk` could not be run at all for the first card: the
+cards after it are not asked and not let through. The call is denied with
+`ONE CARD PER CALL`, and the way forward is to advance that card on its own.
+
+**What counts as a reviewer dispatch.** It is the same dispatch the reviewer
+cap counts: an `Agent` or `Task` call whose agent type matches review, verify,
+security, audit or adversarial. The card is the id `review_key()` finds in the
+brief (a full AgenFK id or a key like `ABC-12`). When there is none, the first
+8-character id prefix in the brief is used. A dispatch with no card id unlocks
+no card, and a dispatch for card A does not unlock card B. Ids match by
+prefix, so `f93d1785` and the full id are the same card, but a key like
+`ABC-1` never matches `ABC-12`.
+
+**Across sessions.** A handoff opens a new session, and a review done before
+it still counts. The record is kept per card, outside any one session's
+state, in `~/.claude/squad/reviews/<card>.json`. It is not under `watch/`,
+because everything that reads that folder takes its entries for sessions.
+Records older than `SQUAD_REVIEW_MEMORY_DAYS` are ignored, and their files are
+removed the next time a reviewer is dispatched. Each dispatch is kept with its
+time, and the gate compares that time with the card's entry into its step, so
+`agenfk` is asked even when the card has a record. A record holds no step: the
+records written before the step was checked are read as they are, and a
+dispatch in one of them counts for the step the card was on when it was made,
+not for the steps after it. Nothing is migrated and nobody is locked out: a new
+dispatch always unlocks the step. Only the watcher writes there: a
+`Write`, `Edit` or `MultiEdit` into that folder, or a Bash command that names
+it and does more than read it (`cat`, `ls`, `jq`, `grep` and the like), is
+denied with `REVIEW RECORD`, in any session or sub-session. Commands that can
+also write a file (`sort -o`, `uniq`, `tree -o`, `less`, `more`) do not count
+as reading, and neither do `find` with a writing action nor a redirection into
+a file (`>`, `>&`, `&>`), while `2>&1` and `>/dev/null` do. Naming the folder
+only as text is not a write: the message of `git commit` (`-m`, `--message`),
+the body or title of `gh pr` and `gh issue`, the content of
+`agenfk comment <id> ...` and the `--evidence`, `--check-note`,
+`--description` and `--title` of `agenfk`, called by those bare names
+(`./agenfk` or `/tmp/x/git` can be any program). That holds only on a line the
+watcher reads word by word: a substitution, a heredoc, a subshell or a
+redirection into a file anywhere on it makes every mention count, and so does
+working inside the folder. A command over 64 KB that names the folder outside
+such text is denied, because it cannot be read in the hook's time.
+
+**It fails open, on purpose.** If `agenfk` is missing, cannot start, takes
+longer than 3 seconds, exits with an error for the card, or prints something
+the watcher cannot read (JSON first, then a `Status:` line), that card passes.
+An error or unreadable output is about that one id, so the watcher still asks
+about every other card in the call; an id that does not exist does not open
+the gate for the card after it. When `agenfk` itself cannot be run, only the
+first card the call asks about passes; the ones after it are denied with
+`ONE CARD PER CALL`, and so are the ones the 7 seconds run out on and the
+ones `agenfk` stops answering for after it answered for an earlier card, with
+or without a recorded reviewer dispatch. The reason is logged to
+`~/.claude/squad/review-gate.jsonl`. When the first card of a call has a
+recorded reviewer dispatch and `agenfk` cannot say when it entered its step
+(it is missing, broken, or prints no history), that dispatch counts, as every
+record did before the entry time was read, and the pass is logged. A
+slow `agenfk` is killed together with its children (on Windows with
+`%SystemRoot%\System32\taskkill.exe`, by its full path, so a `taskkill.exe`
+in the repository is never the one run). The 7 seconds include the up to 2
+seconds that kill takes, so the hook stays well inside its 10-second budget.
+Only the first 64 KB of a command are parsed (the parser slows down faster
+than the command grows: 1.1 MB took 22 seconds); past that, the rest is only
+searched for the plain `agenfk verify <id>`, and the cut is a row in the log.
+Padding can still hide the id from both readings (an option or a quote before
+it, a continuation, a quote the cut leaves open), so in a command over 64 KB
+every `agenfk ... verify` (the two words with no `;`, `&`, `|` or newline
+between them) must be matched by a card id that was read. When fewer ids were
+read than verifies named, the call is denied with `VERIFY NOT READ`, without
+asking `agenfk`: run `agenfk verify <id>` on its own, with a short
+`--evidence`. Text that only names a verify counts too, so a huge command
+that mentions one is denied as well. A `#` comment line does not hide the
+lines after it from the gate or from the record guard. The
+reasoning is the same as for the rest of the watcher: a broken board must not
+freeze every session that advances a card. The cost is that the gate does not
+hold while `agenfk` is broken, and the log is where that shows up.
+
+**What it guards against.** Like the merge queue, the gate catches a
+session's mistakes and shortcuts: the plain `agenfk verify` on a review step,
+in the forms above. It is not a defence against a determined bypass. `eval`,
+aliases, shell functions, scripts, variables holding the command and other
+indirection are not parsed, and they pass (logged, when the command still
+holds `agenfk` and `verify`). The record folder is guarded the same way: the
+obvious writes are denied, a write hidden behind indirection is not caught.
+The record guard is a textual check of the command, so a path to the folder
+that is only built at run time (a variable, a glob, a script) is not seen.
+
+**The owner's way out.** When the owner decides a card ships without review,
+the owner sets `SQUAD_SELF_REVIEW_OK=<card id>` in the environment Claude Code
+runs in. A prefix inside a command does not reach the hook. That card then
+passes the gate **once**, and the pass is logged. A second advance of the
+same card is denied again and the message says so. A session cannot set
+this variable for the hook from a command, but the gate does not stop a
+session that edits its own environment or settings on purpose; see what it
+guards against, above.
+
+An empty `SQUAD_REVIEW_STEPS` turns the gate off.
+
 ## The soft stop
 
 Nothing is interrupted mid-task.
@@ -564,6 +707,14 @@ reread share, duration, and how it ended. Read them with:
 ```bash
 python3 skills/session-context/scripts/session_context.py --tasks
 ```
+
+The review gate logs to its own file, `~/.claude/squad/review-gate.jsonl`.
+It writes one line per denial, per pass it let through without a reviewer
+(fail-open, with the reason), per owner override, and per command cut at
+64 KB for parsing (`"decision": "cut"`). It stops growing at
+200 KB: past that, new rows are dropped, so delete or rotate it to keep
+logging. It is kept out of `metrics.jsonl`, which the report reads as one row
+per sub-session.
 
 These numbers are how the thresholds in this file were chosen. If yours
 suggest different ones, that is exactly the issue we want to read.

@@ -36,6 +36,11 @@ FIX_FIRST with that as the reason (under Return).
 
 ## Steps
 
+Before working, read `squad-decisions index` (the project's settled decisions)
+and follow them; a decision you made that the next session should keep goes in
+your return under a `Decisions` heading (title, what, why), for the main session
+to record.
+
 ### The project rules
 
 Read `CLAUDE.md` / `AGENTS.md`, the card and the step it is in:
@@ -107,6 +112,7 @@ warnings          [real, but not blocking]
 suite_reproduced  [the exact final line that YOU observed, branch and base]
 criteria          [each acceptance criterion -> its evidence]
 integration       [what you merged against, and the result]
+Decisions         [each decision the next session should keep: title, what, why; or "none"]
 ```
 
 `agenfk comment <id> "VERIFIER: <verdict> — <one-line summary>"`.

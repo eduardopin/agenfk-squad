@@ -1,0 +1,734 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:journey-qa:run-report:3",
+  "title": "Journey QA run-report",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": [
+        "0.2",
+        "0.3"
+      ]
+    },
+    "skill_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "product_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "profile_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "journey_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_snapshot": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reference_kind": {
+            "type": "string",
+            "enum": [
+              "commit",
+              "file_hash",
+              "tree_hash",
+              "document",
+              "url",
+              "unknown"
+            ]
+          },
+          "revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "locator",
+          "reference_kind",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "human_ui",
+        "instrumented",
+        "deterministic_regression",
+        "static_review",
+        "synthetic"
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "local",
+            "sandbox",
+            "staging",
+            "production",
+            "unknown"
+          ]
+        },
+        "build_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "sandbox",
+                  "mock",
+                  "replay",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "mode"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "name",
+        "base_url",
+        "kind",
+        "build_ref",
+        "dependencies"
+      ],
+      "additionalProperties": false
+    },
+    "isolation": {
+      "type": "object",
+      "properties": {
+        "model_context": {
+          "type": "string",
+          "enum": [
+            "isolated",
+            "shared",
+            "single_actor",
+            "unknown"
+          ]
+        },
+        "browser_sessions": {
+          "type": "string",
+          "enum": [
+            "isolated",
+            "shared",
+            "single_actor",
+            "unknown"
+          ]
+        },
+        "checked": {
+          "type": "boolean"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "model_context",
+        "browser_sessions",
+        "checked",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "objective": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mandatory_rule_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "minItems": 0
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "objective",
+        "mandatory_rule_ids",
+        "exclusions"
+      ],
+      "additionalProperties": false
+    },
+    "run_status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "partial",
+        "blocked",
+        "aborted",
+        "error"
+      ]
+    },
+    "stop_reason": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "code",
+        "summary"
+      ],
+      "additionalProperties": false
+    },
+    "actor_outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "achieved",
+              "not_achieved",
+              "abandoned",
+              "undetermined"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "actor_id",
+          "role",
+          "outcome",
+          "reason",
+          "evidence_ids"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    },
+    "qa_verdict": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "inconclusive",
+        "not_evaluated"
+      ]
+    },
+    "rule_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "inconclusive",
+              "not_applicable"
+            ]
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+            },
+            "minItems": 0
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "oracle_type": {
+            "type": "string",
+            "enum": [
+              "ui",
+              "api",
+              "log",
+              "database",
+              "file",
+              "fixture",
+              "human",
+              "source",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "rule_id",
+          "description",
+          "required",
+          "status",
+          "expected",
+          "observed",
+          "source_ref",
+          "evidence_ids",
+          "reason",
+          "oracle_type"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "evidence_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "screenshot",
+              "dom",
+              "tool_result",
+              "network",
+              "log",
+              "file",
+              "video",
+              "transcript",
+              "source",
+              "fixture",
+              "note"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "provided",
+              "synthetic"
+            ]
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "redaction": {
+            "type": "string",
+            "enum": [
+              "none_needed",
+              "redacted",
+              "pending"
+            ]
+          },
+          "integrity_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "captured_by": {
+            "type": "string",
+            "enum": [
+              "driver",
+              "tool",
+              "agent",
+              "user",
+              "fixture"
+            ]
+          },
+          "actor_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ledger_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          }
+        },
+        "required": [
+          "evidence_id",
+          "captured_at",
+          "kind",
+          "origin",
+          "locator",
+          "summary",
+          "redaction",
+          "integrity_sha256"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "confirmed_defect",
+              "ux_friction",
+              "requirement_conflict",
+              "agent_limitation",
+              "environment_issue",
+              "hypothesis"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "info"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+            },
+            "minItems": 0
+          },
+          "minimal_steps": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "reproduction": {
+            "type": "string",
+            "enum": [
+              "observed_once",
+              "reproduced",
+              "intermittent",
+              "not_attempted"
+            ]
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          },
+          "observed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "probable",
+              "uncertain"
+            ]
+          }
+        },
+        "required": [
+          "finding_id",
+          "kind",
+          "severity",
+          "description",
+          "rule_id",
+          "evidence_ids",
+          "minimal_steps",
+          "reproduction",
+          "impact",
+          "expected",
+          "observed",
+          "confidence"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "interventions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "step": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "effect": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "actor_id",
+          "step",
+          "description",
+          "effect"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "trace_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "host": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "jqa_driver",
+            "host_tools",
+            "none",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "model",
+        "adapter"
+      ],
+      "additionalProperties": false
+    },
+    "ledger": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "head_hash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "entries",
+        "head_hash",
+        "verified"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "skill_version",
+    "run_id",
+    "product_id",
+    "profile_version",
+    "journey_id",
+    "title",
+    "source_snapshot",
+    "execution_mode",
+    "environment",
+    "isolation",
+    "scope",
+    "run_status",
+    "stop_reason",
+    "actor_outcomes",
+    "qa_verdict",
+    "rule_checks",
+    "evidence",
+    "findings",
+    "interventions",
+    "trace_file",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

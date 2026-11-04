@@ -1,0 +1,150 @@
+{
+  "capability_report_version": "1.1",
+  "adapter": "none",
+  "host": {
+    "name": "A identificar",
+    "version": null,
+    "model": null
+  },
+  "browser": {
+    "name": "Chrome",
+    "version": null,
+    "connection_mode": "unknown",
+    "session_alias": "A confirmar",
+    "allowed_origins": []
+  },
+  "capabilities": [
+    {
+      "capability": "observe_dom",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "observe_screenshot",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "navigate",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "click",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "type_text",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "keyboard",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "wait",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "capture_evidence",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "isolate_browser_sessions",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "isolate_model_context",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "upload",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "download",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "console",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "network",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "continuous_input",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    },
+    {
+      "capability": "audio",
+      "status": "unknown",
+      "tool_name": null,
+      "proof_ref": null,
+      "notes": ""
+    }
+  ],
+  "required_capabilities": [
+    "navigate",
+    "click",
+    "type_text",
+    "keyboard",
+    "wait",
+    "capture_evidence"
+  ],
+  "observation_alternatives": [
+    "observe_dom",
+    "observe_screenshot"
+  ],
+  "isolation": {
+    "model_context": "unknown",
+    "browser_sessions": "unknown",
+    "proof_refs": []
+  },
+  "limitations": [
+    "Declaration not yet verified in the session."
+  ]
+}

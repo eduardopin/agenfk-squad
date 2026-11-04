@@ -221,6 +221,7 @@ Then open a project that has an AgenFK board and ask for something:
 | `ci-cost` | Fewer CI minutes without loosening a gate: measure (billing API, per-job ceil, cancelled minutes), then cut in order of gain; PR mutation over the changed lines (`scripts/changed-ranges.mjs`, `scripts/mutation-since.sh`, Stryker) |
 | `board-heartbeat` | A scheduled, read-only look at the board between sessions (`scripts/heartbeat.py`): stalled cards, PRs with no review, a merge turn held too long, idle worktrees, old handoffs; one line each with who acts, silent when nothing is stuck |
 | `design-reference` | One design method: direction before code, a verifiable quality floor, the patterns that give away AI-generated UI, motion with rules |
+| `journey-qa` | Agentic QA of a running product: personas drive the web app through Playwright, an observer checks business rules with independent oracles, every observation lands in a hash-chained evidence ledger; also reviews ADRs, Terraform plans and Kubernetes manifests (`scripts/jqa.mjs`, Node 20+) |
 | `skill-trial` | Blind headless trials of a skill or hook change: N fresh `claude -p` sessions in a bubblewrap jail with a stub `gh`, no user hooks and no MCP, a check per trial, one PASS/FAIL/N/A table with cost and wall time (`scripts/trial.sh`, `scenarios/smoke`) |
 | `vendor/canvas-design`, `vendor/algorithmic-art` | Third-party skills by Anthropic, Apache-2.0, redistributed unmodified (see [NOTICE](NOTICE)) |
 
@@ -229,7 +230,9 @@ Evidence-tool adoption decisions, exclusions and limits:
 implementations, not a copy of private tooling or its history, except
 `architect`, which is a port of the owner's own skill; its origin and what the
 port changed are in [skills/architect/PROVENANCE.md](skills/architect/PROVENANCE.md).
-Scripts use only Python's standard library and write stdout; each supports `--help`. The existing
+Scripts use only Python's standard library and write stdout, except `journey-qa`,
+whose scripts are dependency-free Node (Playwright is installed on demand by
+`jqa setup`); each supports `--help`. The existing
 installer discovers the new skill directories without a settings change.
 
 ```sh

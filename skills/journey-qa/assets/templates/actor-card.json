@@ -1,0 +1,17 @@
+{
+  "actor_id": "actor-01",
+  "name": "Pessoa de teste",
+  "role": "usuario",
+  "goal": "Define the journey goal with the user.",
+  "background": "",
+  "prior_knowledge": [],
+  "constraints": [],
+  "preferences": [],
+  "locale": "pt-BR",
+  "time_budget_minutes": 20,
+  "stop_conditions": [],
+  "return_conditions": [],
+  "session_alias": "actor-01",
+  "allowed_origins": [],
+  "allowed_actions": []
+}

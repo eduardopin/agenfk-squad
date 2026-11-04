@@ -1,0 +1,44 @@
+{
+  "review_version": "1.0",
+  "review_id": "arch-review-01",
+  "title": "Review to fill in",
+  "status": "draft",
+  "reviewed_at": "2026-10-23T00:00:00Z",
+  "reviewer": {
+    "name": "Journey QA",
+    "model": null
+  },
+  "architect": {
+    "name": null,
+    "channel": null
+  },
+  "sources": [
+    {
+      "source_id": "SRC-1",
+      "kind": "adr",
+      "locator": "docs/adr/0001-exemplo.md",
+      "revision": null,
+      "status": "unknown"
+    }
+  ],
+  "context": {
+    "problem": "Problema a extrair da fonte.",
+    "scope": "Escopo a confirmar.",
+    "non_goals": []
+  },
+  "decisions": [],
+  "quality_attributes": [],
+  "assumptions": [],
+  "items": [],
+  "traceability": [],
+  "conformance": [],
+  "summary": {
+    "verdict": "not_assessed",
+    "rationale": "Review not started.",
+    "top_risks": [],
+    "conditions": []
+  },
+  "limitations": [
+    "Template: no review performed."
+  ]
+}

@@ -552,6 +552,43 @@ def test_a_closed_goal_is_not_reopened_by_the_session_alone():
     assert s.stop() == "nothing", "the same goal does not come back until the owner speaks"
 
 
+# --- review round 4: the lines the session is told to write must be lines the watcher reads -------
+
+def _load(name, file):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, os.path.join(ROOT, "hooks", file))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _shown_lines(text):
+    """The `[squad] KEY: text` lines an instruction shows in backticks, as a session would copy them."""
+    import re
+    return re.findall(r"`(\[squad\] (?:GOAL|DONE|BLOCKED|END): [^`]+)`", text)
+
+
+def _shown_everywhere(watch, wake):
+    sources = {"CARRY_EXITS": watch.CARRY_EXITS, "wake text": wake.text(5)}
+    for rel in ("CLAUDE.md", os.path.join("skills", "architect", "SKILL.md"), os.path.join("docs", "watcher.md")):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+            sources[rel] = fh.read()
+    s = Session(statuses={CARD: "IN_PROGRESS"})
+    s.owner(f"[squad] GOAL: close card {CARD}")
+    s.edit()
+    s.reply("[squad] DONE: card closed")
+    sources["DONE refusal"] = s.stop()
+    return [(name, line) for name, text in sources.items() for line in _shown_lines(text)]
+
+
+def test_every_goal_line_the_instructions_show_is_one_the_watcher_reads():
+    watch, wake = _load("sw_goal", "squad-watch.py"), _load("sq_goal", "squad-wake.py")
+    shown = [(n, l) for n, l in _shown_everywhere(watch, wake) if l.startswith("[squad] GOAL")]
+    assert len(shown) >= 2, shown
+    for name, line in shown:
+        assert watch.GOAL.search(line), f"{name} tells the session to write a goal the watcher does not read: {line}"
+
+
 def test_a_blocked_goal_expires_after_a_week():
     s = Session()
     s.owner("[squad] GOAL: ship the checkout feature")

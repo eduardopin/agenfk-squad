@@ -376,10 +376,11 @@ ON`.
 
 A delivery is open when either holds:
 
-- **an explicit goal**: a line `[squad] GOAL: <what is delivered>` in the
+- **an explicit goal**: a line such as `[squad] GOAL: docs/architect/plan.json - 51d1c739-d0d2-400a-8037-f46b00d1668b` (what is delivered, then the card ids) in the
   owner's message or in one of the session's replies. The `architect` skill
   writes it when a plan goes to execution. AgEnFK card ids on that line are the
-  goal's cards. An explicit goal survives the owner's side questions: the
+  goal's cards. A line whose text starts with `<` is read as a quoted template
+  and opens no goal, so write the real text. An explicit goal survives the owner's side questions: the
   session answers and goes back to work. Writing the same line again changes
   nothing, a session's line never replaces the owner's goal, and a new session
   goal keeps the guard's counters.

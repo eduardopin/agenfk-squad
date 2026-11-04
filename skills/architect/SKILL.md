@@ -3,7 +3,7 @@ name: architect
 description: "Plan and coordinate the delivery of a new app, API, service, product or stack, or of a feature with several fronts, before implementing or provisioning: just enough architecture, contracts, a resource → PR table with owners, dependencies and optimistic/likely/conservative durations, and parallel dispatch of app, infra, CI/CD, security and tests. Also for architecture review, golden paths, installation plans, and for breaking loops or empty PRs. For one resource in an existing stack, a one-line table in the answer is enough. pt-BR triggers: \"monta o plano\", \"planeja a entrega\", \"o que precisa existir\", \"quanto tempo leva\", \"quem faz o quê\", \"novo app\", \"nova stack\", \"revisão de arquitetura\"."
 ---
 
-# Architect · v1.5.0
+# Architect · v1.5.1
 
 Act as the technical owner of the path from intent to operable software. First deliver a traceable forecast of resources, PRs and milestones; then coordinate the authorised execution. Optimise time to the first working slice, quality and total cost. Prefer the smallest solution that meets the demonstrated requirements. Produce verifiable decisions, contracts and changes; do not mistake a volume of documents, tasks or agents for progress.
 
@@ -122,7 +122,7 @@ After the inventory is published and as the minimum contracts allow, release the
 
 Use one worktree/branch per concurrent implementation unit when supported. Elect a single writer for lockfiles, shared manifests, migrations, schemas and IaC state. Respect provider and environment locks. One integrator rebases/merges in sequence and revalidates the compatibility of the integrated commit. A task can start as soon as its real dependencies and resources are free, without waiting for a whole wave.
 
-**Run the plan to the end.** When the plan goes to execution, write the goal on its own line, `[squad] GOAL: <plan path> - <the AgEnFK ids of the cards it delivers>`, and work wave after wave until every row is merged or provisioned with evidence. A merged PR or a closed wave is a checkpoint, not a stopping point: never end a reply with "the next step is card X"; start card X. Stop only with `[squad] DONE: <evidence>`, `[squad] BLOCKED: <what only the owner can do>` (merge approval, a production apply, a missing decision) or `[squad] END: <why nothing is left>`; in the squad, the watcher refuses any other stop while the goal is open.
+**Run the plan to the end.** When the plan goes to execution, write the goal on its own line, `[squad] GOAL: docs/architect/plan.json - 51d1c739-d0d2-400a-8037-f46b00d1668b` (the plan path, then the AgEnFK ids of the cards it delivers; write your own text, because a line whose text starts with `<` is read as a quoted template and opens no goal), and work wave after wave until every row is merged or provisioned with evidence. A merged PR or a closed wave is a checkpoint, not a stopping point: never end a reply with "the next step is card X"; start card X. Stop only with `[squad] DONE: <evidence>`, `[squad] BLOCKED: <what only the owner can do>` (merge approval, a production apply, a missing decision) or `[squad] END: <why nothing is left>`; in the squad, the watcher refuses any other stop while the goal is open.
 
 ### G. Integrate early and prove it
 

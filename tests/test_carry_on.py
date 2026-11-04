@@ -452,6 +452,71 @@ def test_done_check_stays_inside_the_hook_timeout():
     assert "DONE refused" in out, out      # lookups run in parallel and still answer
 
 
+# --- review round 2 ------------------------------------------------------------------------------
+
+def test_a_conceptual_answer_ending_in_an_offer_is_not_held():
+    for text in ("X works by polling the queue every 5 s. Want me to go deeper?",
+                 "That is the whole mechanism. Shall I show an example?",
+                 "Ficou claro? Quer que eu explique melhor a parte do cache?"):
+        s = Session()
+        s.owner("how does X work?")
+        s.reply(text)
+        assert s.stop() == "nothing", text
+
+
+def test_an_offer_after_work_in_the_turn_is_held_even_without_a_delivery_word():
+    s = Session()
+    s.owner("refactor the parser")
+    s.edit()
+    s.reply("Refactored the tokenizer. Want me to go on with the rest?")
+    assert carried(s.stop())
+
+
+def test_an_offer_inside_a_code_block_or_a_quote_is_not_read():
+    s = Session()
+    s.owner("show me the prompt you use")
+    s.reply("Here it is:\n```\nPosso abrir essa frente agora, se você quiser.\n```\n> want me to open the PR?\n")
+    assert s.stop() == "nothing"
+
+
+def test_a_blocked_goal_survives_a_night_and_re_arms_when_the_owner_answers():
+    s = Session()
+    s.owner("[squad] GOAL: ship the checkout feature")
+    s.edit()
+    s.reply("[squad] BLOCKED: merge approval on PR #12 is the owner's")
+    assert s.stop() == "nothing"
+    st = s.state()
+    st["goal"]["ts"] -= 13 * 3600
+    st["goal"]["progress_ts"] = st["goal"].get("progress_ts", st["goal"]["ts"]) - 13 * 3600
+    s.set_state(goal=st["goal"])
+    s.owner("merged, carry on")
+    s.edit()
+    s.reply("Rebased the next branch.")
+    assert carried(s.stop()), s.state()
+
+
+def test_the_merge_is_the_sessions_only_where_the_project_lets_it_merge():
+    s = Session()
+    s.owner("[squad] GOAL: ship the checkout feature")
+    s.edit()
+    s.reply("Next step: the webhook.")
+    out = s.stop()
+    assert "merge where the project's rules let the session merge" in out, out
+    assert "merge approval the project reserves for the owner" in out, out
+
+
+def test_reaching_the_cap_closes_the_goal():
+    s = Session(env={"SQUAD_CARRY_CAP": "1"})
+    s.owner("[squad] GOAL: ship the checkout feature")
+    s.edit()
+    s.reply("Working.")
+    assert carried(s.stop())
+    s.edit()
+    s.reply("Working more.")
+    assert s.stop() == "nothing"
+    assert not s.state().get("goal"), s.state()
+
+
 def test_squad_carry_zero_turns_it_off():
     s = Session(env={"SQUAD_CARRY": "0"})
     s.owner("[squad] GOAL: ship the checkout feature")

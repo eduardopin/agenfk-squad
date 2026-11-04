@@ -115,11 +115,15 @@ on a review step with no reviewer dispatch recorded for that card is denied (REV
 REQUIRED); the way forward is to dispatch the verifier with the card id and the branch.
   SQUAD_REVIEW_STEPS  (REVIEW,ADVERSARIAL,HEAVY_REVIEW)  steps that need a reviewer; empty = off
   SQUAD_REVIEW_MEMORY_DAYS (14)  how long a reviewer dispatch is remembered, across
-                                 sessions (~/.claude/squad/watch/reviews/<card>.json)
+                                 sessions (~/.claude/squad/reviews/<card>.json); no
+                                 session writes there with a tool, only the watcher
   SQUAD_SELF_REVIEW_OK=<card id> the owner lets that card through once; logged
-  The step comes from `agenfk get <id> --json` (3 s). It fails OPEN: agenfk missing,
-  slow, failing or unreadable lets the call through, and the reason goes to
-  ~/.claude/squad/review-gate.jsonl.
+  The step comes from `agenfk get <id> --json` (3 s per card, 7 s per call). It fails
+  OPEN: agenfk missing, slow, failing or unreadable, or an id that is not one, lets
+  the call through, and the reason goes to ~/.claude/squad/review-gate.jsonl (capped
+  at 200 KB). A card left unasked because earlier cards used the 7 s is denied
+  instead: advance one card per call. It guards against mistakes and shortcuts, not
+  a determined bypass: eval, aliases and other indirection are not parsed.
 
 Merge turn (one per repository, ~/.claude/squad/turn/): the turn covers only the
 merge call itself (`gh pr merge`, direct push to the trunk, merge_pull_request), not
@@ -235,14 +239,32 @@ ORCH_LIVE = 600        # seconds: a sub-session with activity within this interv
 REVIEW_STEPS = {s.strip().upper() for s in os.environ.get(
     "SQUAD_REVIEW_STEPS", "REVIEW,ADVERSARIAL,HEAVY_REVIEW").split(",") if s.strip()}
 REVIEW_DAYS = max(env_int("SQUAD_REVIEW_MEMORY_DAYS", 14), 1)
-REVIEWS = os.path.join(STATE, "reviews")      # a folder: a file straight in STATE would count as a session
+# Outside STATE: every reader of STATE (here, squad-wake, squad-compact, squad-switch) takes its entries for sessions
+REVIEWS = os.path.join(BASE, "reviews")
 REVIEW_LOG = os.path.join(BASE, "review-gate.jsonl")   # not metrics.jsonl: `--tasks` reads every row there as a sub-session
-AGENFK_WAIT = 3        # s for `agenfk get` (measured at 0.7 s); the hook's whole budget is 10 s
+AGENFK_WAIT = 3        # s for one `agenfk get` (measured at 0.7 s)
+AGENFK_TOTAL = 7       # s for every card in one call; the hook's whole budget is 10 s
+CARD_ID = re.compile(r"[A-Za-z0-9][\w-]*")    # what may reach `agenfk get`: no option, no expansion
 SHORT_ID = re.compile(r"\b[0-9a-f]{8}\b")     # the 8-character prefix of an AgenFK id
 HEX_ID = re.compile(r"[0-9a-f]{8}[0-9a-f-]*")
 VERIFY_VALUED = {"--evidence", "--wait-minutes", "--check", "--check-note"}
 VERIFY_DRY = {"--plan", "-h", "--help"}
-WRAPPER = {"npx", "env", "command", "exec", "time", "nohup", "sudo"}
+# Words that leave the next one in command position. A wrapper's options are skipped; the valued ones take
+# the next word with them, and `timeout` takes its duration.
+WRAPPER = {"npx", "env", "command", "exec", "time", "nohup", "sudo", "timeout", "nice", "xargs"}
+WRAPPER_VALUED = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from",
+             "-D", "--chdir", "-r", "--role", "-t", "--type", "-U", "--other-user", "-T", "--command-timeout"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "nice": {"-n", "--adjustment"},
+    "xargs": {"-I", "-n", "--max-args", "-P", "--max-procs", "-L", "--max-lines",
+              "-d", "--delimiter", "-E", "-s", "--max-chars", "-a", "--arg-file"},
+    "npx": {"-p", "--package", "-c", "--call"},
+    "exec": {"-a"},
+}
+WRAPPER_ARGS = {"timeout": 1}
+KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "{", "!"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
 ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 VERIFY_LOOSE = re.compile(r"(?:^|[;&|(\n])\s*(?:\S*/)?agenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")
@@ -906,16 +928,24 @@ def verify_ids(cmd, depth=0):
         toks = list(lx)
     except ValueError:
         return [m.group(1) for m in VERIFY_LOOSE.finditer(cmd)] or None
-    ids, at, i = [], True, 0
+    ids, at, wrap, need, i = [], True, "", 0, 0
     sep = lambda t: bool(t) and all(c in ";&|()" for c in t)   # noqa: E731
     while i < len(toks):
         t = toks[i]
+        name = re.sub(r"(?<=.)@[^/]*$", "", os.path.basename(t))    # npx agenfk@latest
         if sep(t):
-            at = True
-        elif at and (ASSIGN.match(t) or os.path.basename(t) in WRAPPER):
-            pass                          # `VAR=x agenfk ...`, `npx agenfk ...`: still the command position
+            at, wrap, need = True, "", 0
+        elif at and wrap and t.startswith("-") and len(t) > 1:
+            if t in WRAPPER_VALUED.get(wrap, ()):
+                i += 1                    # `sudo -u root`, `timeout -s KILL`: the value goes with the option
+        elif at and wrap and need:
+            need -= 1                     # `timeout 30 agenfk ...`: the duration
+        elif at and (ASSIGN.match(t) or t in KEYWORDS):
+            pass                          # `VAR=x agenfk ...`, `if agenfk ...`: still the command position
+        elif at and name in WRAPPER:
+            wrap, need = name, WRAPPER_ARGS.get(name, 0)
         elif at:
-            at, name = False, os.path.basename(t)
+            at, wrap = False, ""
             if name in SHELLS and depth < 2:          # bash -c "agenfk verify ..."
                 j = i + 1
                 while j < len(toks) and not sep(toks[j]):
@@ -949,16 +979,25 @@ def verify_ids(cmd, depth=0):
     return ids
 
 
-def review_check(p, card, wait=AGENFK_WAIT):
-    """The denial for advancing this card, or "" when it may advance."""
+def review_check(p, card, wait=AGENFK_WAIT, cut=False):
+    """(denial or "", how agenfk did): "" when it was not asked, "answered", "failed" with
+    the reason already logged, or "budget" when `cut` (the wait was shortened by the
+    call's budget after agenfk answered for other cards) left the card unchecked."""
+    if not CARD_ID.fullmatch(card):
+        review_log(p, card, "", "allow", "not a card id")   # `$ID`, `--`: never handed to agenfk
+        return "", ""
     if any(d["dispatches"] for _, d in review_files(card)):
-        return ""                         # a reviewer was dispatched: no need to ask agenfk
+        return "", ""                     # a reviewer was dispatched: no need to ask agenfk
+    if cut and wait < 0.5:
+        return "", "budget"
     step, why = card_step(card, str(p.get("cwd") or ""), wait)
+    if step is None and cut and why.startswith("agenfk get took more than"):
+        return "", "budget"
     if step is None:
         review_log(p, card, "", "allow", why)       # fail open: a broken agenfk must not hold the flow
-        return ""
+        return "", "failed"
     if step not in REVIEW_STEPS:
-        return ""
+        return "", "answered"
     owner = os.environ.get("SQUAD_SELF_REVIEW_OK", "").strip()
     used = ""
     if owner and same_card(owner, card):
@@ -972,7 +1011,7 @@ def review_check(p, card, wait=AGENFK_WAIT):
             d["override"] = time.time()
             save(path, d)
             review_log(p, card, step, "allow", "SQUAD_SELF_REVIEW_OK")
-            return ""
+            return "", "answered"
         used = (" SQUAD_SELF_REVIEW_OK for this card was already used once, at "
                 f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(max(spent)))}.")
     review_log(p, card, step, "deny", "no reviewer recorded")
@@ -983,7 +1022,64 @@ def review_check(p, card, wait=AGENFK_WAIT):
             f"`verifier`) in a clean context, with the card id {card} and the branch in the brief, never the "
             "implementer's narrative. When it returns SHIP, run `agenfk verify` again with its verdict as the "
             "evidence; FIX_FIRST or REJECT goes back to whoever implemented. Do not work around this with "
-            "another tool.")
+            "another tool."), "answered"
+
+
+# Commands that only read: with one of these at every command position and no redirection into a file,
+# a command naming the review records passes.
+READERS = {"cat", "ls", "head", "tail", "less", "more", "jq", "grep", "rg", "wc", "stat", "file", "find", "cd",
+           "echo", "printf", "diff", "sort", "uniq", "du", "tree", "realpath", "readlink", "test", "["}
+REVIEWS_NAMED = re.compile(r"\.claude[\\/]+squad[\\/]+reviews(?![\w.-])")
+
+
+def inside_reviews(path):
+    try:
+        real, root = os.path.realpath(os.path.expanduser(path)), os.path.realpath(REVIEWS)
+        return os.path.normcase(real) == os.path.normcase(root) or os.path.normcase(real).startswith(
+            os.path.normcase(root) + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
+def writes_reviews(p):
+    """True when this call writes into the review records with a tool. Reading them passes."""
+    tool, inp = p.get("tool_name") or "", p.get("tool_input") or {}
+    if not isinstance(inp, dict):
+        return False
+    if tool in MUTATING:
+        return any(inside_reviews(str(v)) for v in (inp.get("file_path"), inp.get("path"), inp.get("notebook_path"))
+                   if v)
+    if tool != "Bash":
+        return False
+    cmd = str(inp.get("command") or "")
+    cwd = str(p.get("cwd") or "")
+    if not (REVIEWS_NAMED.search(cmd) or REVIEWS in cmd or REVIEWS.replace("\\", "/") in cmd
+            or (cwd and inside_reviews(cwd)) or (cwd and inside_reviews(os.path.join(cwd, "reviews"))
+                                                  and re.search(r"(?<![\w.-])reviews(?![\w.-])", cmd))):
+        return False
+    try:
+        lx = shlex.shlex(cmd.replace("\\\n", " ").replace("\n", " ; "), posix=True, punctuation_chars=True)
+        lx.whitespace_split = True
+        toks = list(lx)
+    except ValueError:
+        return True                       # a command naming the records that cannot be read does not pass
+    at = True
+    for i, t in enumerate(toks):
+        if t and all(c in ";&|()" for c in t):
+            at = True
+        elif t and all(c in "<>&|" for c in t) and ">" in t:
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            if not (t.endswith("&") or nxt == "/dev/null"):   # 2>&1 and >/dev/null write no file
+                return True
+        elif at and ASSIGN.match(t):
+            continue
+        elif at:
+            at = False
+            if os.path.basename(t) not in READERS:
+                return True
+        elif t in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"):
+            return True                   # find that writes
+    return False
 
 
 def review_gate(p):
@@ -999,17 +1095,37 @@ def review_gate(p):
         if cards is None:
             review_log(p, "", "", "allow", "command not readable")
             return False
-    elif tool.endswith("validate_progress"):
+        if not cards:                     # a dry run, a mention, or a form the parser does not read
+            review_log(p, "", "", "allow", "agenfk and verify in the command, no card id read")
+            return False
+    elif re.search(r"(?:^|__)(?:validate_progress|review_changes|test_changes)$", tool):
+        if tool.endswith("validate_progress") and inp.get("plan"):
+            return False                  # the MCP form of --plan: a dry run
         card = str(inp.get("itemId") or inp.get("item_id") or inp.get("id") or "").strip()
         cards = [card] if card else []
     else:
         return False
-    start = time.time()
-    for card in dict.fromkeys(cards):     # several cards in one call share the 3 s, not 3 s each
-        why = review_check(p, card, AGENFK_WAIT - (time.time() - start))
+    start, answered, failed = time.time(), False, False
+    for card in dict.fromkeys(cards):     # 3 s per card, 7 s for them all
+        if failed:                        # agenfk already failed in this call: the rest fail open, unasked
+            if CARD_ID.fullmatch(card) and not any(d["dispatches"] for _, d in review_files(card)):
+                review_log(p, card, "", "allow", "agenfk failed for an earlier card in this call")
+            continue
+        wait = min(AGENFK_WAIT, AGENFK_TOTAL - (time.time() - start))
+        why, how = review_check(p, card, wait, cut=answered and wait < AGENFK_WAIT)
+        if how == "budget":
+            # agenfk answers; the call just carries more cards than the hook has time for, and
+            # letting this one through unasked would be the cheapest way past the gate
+            review_log(p, card, "", "deny", "out of time: advance one card per call")
+            why = (f"[squad-watch] ONE CARD PER CALL: this call advances {len(dict.fromkeys(cards))} cards, and "
+                   f"card {card} was left unchecked when the hook's {AGENFK_TOTAL} s for asking agenfk ran out "
+                   "(agenfk answered for the cards before it). Where the work continues: advance one card per "
+                   f"call, `agenfk verify {card} ...` on its own.")
         if why:
             deny(why)
             return True
+        failed = how == "failed"
+        answered = answered or how == "answered"
     return False
 
 
@@ -1682,6 +1798,15 @@ def pre_tool(p):
                  "repeat the merge; if it keeps failing, the decision is the owner's.")
             return
         raise
+    try:
+        if writes_reviews(p):
+            deny(f"[squad-watch] REVIEW RECORD: {REVIEWS} is the watcher's record of reviewer dispatches, "
+                 "and no session writes there with a tool, this one included. A record appears when the "
+                 "verifier is dispatched for the card; reading it (the Read tool, cat, ls, jq) is allowed. Where the work continues: "
+                 "dispatch the verifier with the card id and the branch.")
+            return
+    except Exception:                     # a broken guard does not cost the rest of the hook
+        pass
     if not agent:
         if p.get("tool_name") in DISPATCH:
             pre_dispatch(p)
@@ -1888,13 +2013,20 @@ def subagent_stop(p):
         save(mpath, main)
     try:
         os.remove(spath)
-        cutoff = time.time() - 2 * 86400
-        for name in os.listdir(STATE):
-            f = os.path.join(STATE, name)
-            if os.path.getmtime(f) < cutoff:
-                os.remove(f)
     except OSError:
         pass
+    cutoff = time.time() - 2 * 86400
+    try:
+        names = os.listdir(STATE)
+    except OSError:
+        names = []
+    for name in names:                    # one entry that cannot go (a folder, a file in use) keeps none of the others
+        f = os.path.join(STATE, name)
+        try:
+            if os.path.isfile(f) and os.path.getmtime(f) < cutoff:
+                os.remove(f)
+        except OSError:
+            pass
 
 
 HANDOFF_PATH = re.compile(r"[A-Za-z0-9_./-]+/handoffs/[A-Za-z0-9_.-]+\.md")

@@ -37,6 +37,13 @@ back).
                     handoff was written: the session is told to rewrite the
                     handoff with it, once, before the switch.
                     SQUAD_SWITCH=0 turns the switch off.
+                    Outside handoff, carry on: while a defined delivery is open (a
+                    `[squad] GOAL:` line from the owner or the session, or a last
+                    reply that names a next step or card) the stop is refused until
+                    the session ends with `[squad] DONE:` (refused while a goal card
+                    is open in AgEnFK), `BLOCKED:` or `END:`. The owner asking to
+                    stop wins; SQUAD_CARRY_MAX stops in a row without progress, or
+                    SQUAD_CARRY_CAP holds per goal, let go and leave a note.
                     Outside handoff, with context >= SQUAD_COMPACT_MIN (150000),
                     schedules squad-compact.py: /compact, with instructions on
                     what to keep, SQUAD_COMPACT_BEFORE (120) s before the cache of
@@ -96,6 +103,9 @@ Thresholds, by environment variable:
                                 in the session itself; from here up, handoff with
                                 the plan and a new session
   SQUAD_MAX_REVIEWS   (6)       reviewer dispatches for the same card
+  SQUAD_CARRY_MAX     (3)       stops in a row without progress before carry on lets go
+  SQUAD_CARRY_CAP     (200)     carry-on holds per goal
+  SQUAD_CARRY=0                 turns carry on off
   SQUAD_WATCH=0                 turns it off
 
 A denied dispatch is never just a "no": the message says where the work continues.
@@ -1750,6 +1760,7 @@ def prompt(p):
     st["asked_stop"] = bool(ASKED_TO_STOP.search(text)) and not RESUME.search(text)
     st["last_prompt"] = text[:3000]
     st.pop("early_block", None)
+    carry_prompt(st, text)
     save(path, st)
 
 
@@ -1926,6 +1937,218 @@ def switch_note(session, tasks):
     return path
 
 
+# Carry on: a session with a defined delivery works it to the end. Sessions stopped at
+# every milestone with "the next step is card X" and waited for a person who was not
+# reading the pane (2026-11-04). The Stop is refused while the delivery is open, the
+# way jthack/claude-goal holds an active /goal and levi-openclaw/taskmaster re-checks
+# the transcript (both MIT; the idea, not their code).
+CARRY = os.environ.get("SQUAD_CARRY") != "0"
+CARRY_MAX = env_int("SQUAD_CARRY_MAX", 3)      # stops in a row without progress before the hold lets go
+CARRY_CAP = env_int("SQUAD_CARRY_CAP", 200)    # holds per goal, progress or not
+AGENFK = os.environ.get("SQUAD_AGENFK") or "agenfk"
+# only at the start of a line and with real content: quoting the template ("<what ...>") does not count
+GOAL = re.compile(r"(?m)^[\s>*`-]*\[squad\]\s*GOAL\s*:\s*([^<\s`][^\n]{0,400})$", re.I)
+# A reply that announces the next piece of a delivery. Bilingual: sessions answer in the owner's language.
+NEXT_STEP = re.compile(
+    r"\bpr[óo]xim[oa]s?\s+(?:passos?|etapas?|cards?|cart(?:ão|ões|ao|oes)|tarefas?|fases?|ondas?|itens|item"
+    r"|milestones?|marcos?|entregas?)\b"
+    r"|\bnext\s+(?:steps?|cards?|tasks?|phases?|waves?|items?|milestones?|up)\b", re.I)
+AGENFK_ID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+CLOSED_CARD = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
+CARRY_EXITS = ("Stop only by ending a reply with one of these lines: `[squad] DONE: <evidence: PRs merged, "
+               "cards DONE>` when everything the delivery defines is done, `[squad] BLOCKED: <what only the "
+               "owner can do>` for a human gate (merge approval, a production apply, an answer only the owner "
+               "has), or `[squad] END: <why nothing is left that you can do>`.")
+
+
+def wake_lib():
+    """squad-wake's reading of a transcript: the same MARK and the same notion of progress."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("squad_wake", here("squad-wake.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def new_goal(text, source):
+    return {"text": text.strip()[:400], "source": source, "cards": AGENFK_ID.findall(text)[:10],
+            "holds": 0, "idle": 0, "ts": time.time()}
+
+
+def carry_prompt(st, text):
+    """The owner spoke: an explicit goal is opened or kept, re-armed after BLOCKED or
+    after the guard let go; an implicit one (a reply that named a next step) ends here,
+    because the owner's new request decides what comes next."""
+    m = GOAL.search(text)
+    if m:
+        st["goal"] = new_goal(m.group(1), "owner")
+        return
+    g = st.get("goal")
+    if not isinstance(g, dict):
+        return
+    if g.get("source") == "implicit":
+        st.pop("goal", None)
+        return
+    for key in ("blocked", "released"):
+        g.pop(key, None)
+    g["idle"] = 0
+
+
+def replies_since(path, offset):
+    """(texts of the main thread's replies after `offset`, size of the transcript)."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(offset if offset <= size else 0, size - 20_000_000))
+            data = fh.read()
+    except OSError:
+        return [], 0
+    texts = []
+    for raw in data.split(b"\n"):
+        if b'"assistant"' not in raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if rec.get("type") != "assistant" or rec.get("isSidechain"):
+            continue
+        content = (rec.get("message") or {}).get("content") or []
+        parts = [b.get("text") or "" for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        if parts:
+            texts.append("\n".join(parts))
+    return texts, size
+
+
+def open_cards(cards):
+    """[(card, status)] for the goal's AgEnFK cards not closed. Any doubt (CLI missing,
+    server down, unknown card) counts as closed: the hook never holds on a guess."""
+    out = []
+    for card in cards:
+        try:
+            r = subprocess.run([*shlex.split(AGENFK), "get", card, "--json"], capture_output=True, text=True,
+                               timeout=8, stdin=subprocess.DEVNULL)
+            status = str(json.loads(r.stdout).get("status") or "") if r.returncode == 0 else ""
+        except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):
+            status = ""
+        if status and status.upper() not in CLOSED_CARD:
+            out.append((card, status))
+    return out
+
+
+def carry_note(session, st, why):
+    """The hold let go: the session hears it at the next request, the owner in carry.log and herdr."""
+    note = (f"[squad-watch] CARRY ON released: {why}. The delivery is not done; the owner decides "
+            "what comes next.")
+    st.setdefault("pending", []).append(note)
+    try:
+        os.makedirs(BASE, exist_ok=True)
+        with open(os.path.join(BASE, "carry.log"), "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {safe(session)} released: {why}\n")
+    except OSError:
+        pass
+    if can_switch():
+        try:
+            subprocess.run([os.environ.get("HERDR_BIN_PATH") or "herdr", "notification", "show",
+                            "squad: session stopped before delivering", "--body", why[:300]],
+                           capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def carry_on(p, path, st):
+    """Refuses the main session's stop while a defined delivery has work left: an open
+    `[squad] GOAL:` (the owner's or the session's own), or a last reply that names a
+    next step or card. True when it held the session.
+
+    Lets go on `[squad] DONE:` (refused while a goal card is open in AgEnFK),
+    `[squad] BLOCKED:` (until the owner speaks) and `[squad] END:`; when the owner
+    asked to stop; after CARRY_MAX stops in a row without progress (squad-wake's
+    notion: edits, dispatches, commits, PRs, agenfk moves) or CARRY_MAX refused DONEs,
+    and after CARRY_CAP holds per goal. Handoff level never reaches here."""
+    if not CARRY or st.get("asked_stop") or harness(p) != "claude":
+        return False
+    transcript = str(p.get("transcript_path") or "")
+    texts, size = replies_since(transcript, st.get("carry_scan", 0))
+    if not size:
+        return False
+    st["carry_scan"] = size
+    goal = st.get("goal") if isinstance(st.get("goal"), dict) else None
+    for t in texts:
+        m = GOAL.search(t)
+        if m:
+            goal = new_goal(m.group(1), "session")
+    last = texts[-1] if texts else ""
+    wake = wake_lib()
+    end = None
+    for m in wake.MARK.finditer(last):
+        end = m.group(1).upper()
+    session = p["session_id"]
+
+    def keep(g):
+        if g is None:
+            st.pop("goal", None)
+        else:
+            st["goal"] = g
+        save(path, st)
+
+    if end in ("END", "DONE"):
+        if end == "DONE" and goal:
+            still = open_cards(goal.get("cards") or [])
+            if still and goal.get("refused", 0) < CARRY_MAX:
+                goal["refused"] = goal.get("refused", 0) + 1
+                keep(goal)
+                card, status = still[0]
+                print(json.dumps({"decision": "block", "reason": (
+                    f"[squad-watch] DONE refused: card {card} is in {safe(status)} in AgEnFK, not DONE. "
+                    "Finish it through its flow (`agenfk verify`), or, if a person has to act, end with "
+                    "`[squad] BLOCKED: <what only the owner can do>`.")}))
+                return True
+        keep(None)
+        return False
+    if end == "BLOCKED":
+        if goal:
+            goal["blocked"] = True
+        keep(goal)
+        return False
+    if goal and goal.get("blocked"):
+        keep(goal)
+        return False
+    if goal is None:
+        if not NEXT_STEP.search(last):
+            keep(None)
+            return False
+        goal = new_goal("", "implicit")
+    progress = "offset" not in goal or wake.progress_since(transcript, goal["offset"])
+    goal["offset"] = size
+    if goal.get("released"):
+        if not progress:
+            keep(goal)
+            return False
+        goal.pop("released", None)
+    goal["idle"] = 0 if progress else goal.get("idle", 0) + 1
+    if goal["idle"] >= CARRY_MAX or goal.get("holds", 0) >= CARRY_CAP:
+        why = (f"{goal['idle']} stops in a row without progress" if goal["idle"] >= CARRY_MAX
+               else f"{goal['holds']} holds on this goal (SQUAD_CARRY_CAP)")
+        goal["released"] = True
+        keep(goal)
+        carry_note(session, st, why)
+        save(path, st)
+        return False
+    goal["holds"] = goal.get("holds", 0) + 1
+    keep(goal)
+    what = (f"The goal: “{goal['text']}”. " if goal.get("text") else
+            "Your last reply names a next step: that step is part of the delivery. ")
+    print(json.dumps({"decision": "block", "reason": (
+        "[squad-watch] CARRY ON: the delivery is not finished. " + what +
+        "Do the next step now instead of stopping: nobody reads this pane between milestones. Take the "
+        "next card through its flow, and dispatch parallel fronts where the files are disjoint. " +
+        CARRY_EXITS + f" (hold {goal['holds']} of {CARRY_CAP}; {CARRY_MAX} stops in a row without "
+        "progress release it.)")}))
+    return True
+
+
 def stop(p):
     """The main session stopped. At handoff level, either it writes the handoff,
     or (already written) the session switch is launched: now, or scheduled when
@@ -1939,7 +2162,7 @@ def stop(p):
     st["last_stop"] = {"ts": time.time(), "bg": len(running(p))}
     save(path, st)
     if st.get("ctx_level", 0) < 2 and not st.get("switched"):
-        if not early_handoff(p, path, st):
+        if not early_handoff(p, path, st) and not carry_on(p, path, st):
             compact_schedule(p, path, st)
         return
     if p.get("squad_rearm"):              # squad-switch gave up before clearing: the next Stop decides again

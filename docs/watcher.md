@@ -29,7 +29,7 @@ measured. `SQUAD_WATCH=0` turns it off.
 | `PostToolUseFailure` | A tool call failed: if it was the merge that held the merge turn, gives the turn back at once instead of waiting for `SQUAD_TURN_HOLD` to expire. |
 | `SubagentStop` | Writes the sub-session's metrics to `metrics.jsonl` and leaves a note for the parent when the sub-session ended badly. |
 | `UserPromptSubmit` | Delivers pending notes to the main session. |
-| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). Main session outside handoff, with a large context: schedules a `/compact` just before the prompt cache goes cold (see [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)). |
+| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). Main session outside handoff with a delivery still open: refuses the stop (see [Carrying a delivery to the end](#carrying-a-delivery-to-the-end)). Otherwise, with a large context: schedules a `/compact` just before the prompt cache goes cold (see [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)). |
 | `PreCompact` | Main session, `/compact` or auto-compact: before the conversation is summarized, writes the same minimal handoff to `~/.claude/squad/handoffs/<session>-compact.md`. It prints nothing, so it never blocks the compaction, and it never switches the session. A compaction the watcher ordered is labelled as such in that handoff. |
 
 Reading the transcript is incremental: the watcher keeps a byte offset per
@@ -365,6 +365,55 @@ timer not enabled). `systemctl --user disable --now
 squad-wake.timer` stops it. Without a systemd user manager for your `HOME`
 (macOS, a container) the installer prints the line to run every 2 minutes from
 cron or launchd. Windows is not covered yet.
+
+## Carrying a delivery to the end
+
+Sessions delivering a large piece of work used to stop at each milestone with
+"the next step is card X" and wait for a person who was not reading the pane.
+The `Stop` of a main session outside handoff level now refuses that stop while
+a defined delivery is open, and sends the session back with `[squad-watch] CARRY
+ON`.
+
+A delivery is open when either holds:
+
+- **an explicit goal**: a line `[squad] GOAL: <what is delivered>` in the
+  owner's message or in one of the session's replies. The `architect` skill
+  writes it when a plan goes to execution. AgEnFK card ids on that line are the
+  goal's cards. An explicit goal survives the owner's side questions: the
+  session answers and goes back to work.
+- **an implicit one**: the last reply names a next step or card ("o próximo
+  passo é o card X", "next card", "next step"). It ends at the owner's next
+  message, which decides what comes next.
+
+The session stops by ending a reply with one line:
+
+| Line | Effect |
+|---|---|
+| `[squad] DONE: <evidence>` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`); a CLI or server that does not answer counts as done. |
+| `[squad] BLOCKED: <what only the owner can do>` | Lets go until the owner speaks again: merge approval, a production apply, an answer only the owner has. |
+| `[squad] END: <why nothing is left>` | Closes the goal. |
+
+These are the same lines `squad-wake.py` reads, so a session that stopped for a
+reason the hook cannot see (an API error, a reboot) is still woken by the timer.
+
+The hold never wins against the owner or the watcher:
+
+- the owner asking to stop or pause (the same reading as the soft stop) lets go;
+- handoff level keeps its own order, and the pickup carries the goal in the
+  handoff's Next step;
+- a sub-session's stop is never held;
+- `SQUAD_CARRY_MAX` (3) stops in a row without progress let go and leave a note
+  for the session and a line in `~/.claude/squad/carry.log` (and a herdr
+  notification in a pane). Progress is what squad-wake counts: an edit, a
+  dispatch, a commit, push or merge, a PR, an `agenfk verify/update/create`.
+  Checking alone is not progress. Progress, or the owner speaking, re-arms it;
+- `SQUAD_CARRY_CAP` (200) holds per goal let go even with progress;
+- `SQUAD_CARRY=0` turns it off.
+
+The idea follows two public Stop hooks: [claude-goal](https://github.com/jthack/claude-goal)
+(an active `/goal` holds the stop, with a cap per goal) and
+[taskmaster](https://github.com/levi-openclaw/taskmaster) (the transcript is
+re-read for unfinished work). Both are MIT; no code was taken from them.
 
 ## Compacting before the cache goes cold
 

@@ -40,7 +40,7 @@ jqa browser actor add qa --role observer        # optional: the observer's own a
 jqa browser handshake --actor comprador --url https://staging.example.com/
 ```
 
-- **Allowlist:** main-page navigation outside the authorized origins is aborted and recorded. `data:` and `blob:` URLs (and `about:blank`) carry no origin to check and are let through, so a page the product builds that way is not blocked. Include the journey's legitimate origins (external login, hosted checkout). Third-party subresources and iframes are not blocked.
+- **Allowlist:** navigation outside the authorized origins is aborted and recorded, for the page and for its iframes. What reaches another origin without a request the driver can stop (a server redirect, a page restored by `back`/`forward`) is caught where it lands: a tab is taken to `about:blank` and the action returns `origin_blocked`; an iframe is taken to `about:blank` with a notice. Refs, element screenshots and actions in a frame left on a blocked origin are refused with `origin_blocked`. The redirected request itself still reaches the other origin, and its page can run until the driver moves it. `data:` and `blob:` URLs (and `about:blank`/`about:srcdoc`) carry no origin to check and are let through, so a page the product builds that way is not blocked. Include the journey's legitimate origins (external login, hosted checkout, an embedded payment or captcha frame). Third-party subresources (scripts, images, API calls) are not blocked.
 - **Context per actor:** each `actor add` creates its own BrowserContext (separate cookies, storage and cache). The second actor generates isolation evidence automatically.
 - **Handshake:** exercises observation (DOM and screenshot), click, typing, keyboard, wait, held key and evidence capture on a self-test page of the driver itself; with `--url`, it opens the target. Writes `session-binding.json` with `status: verified` and `proof_ref` for each proven capability. `jqa validate session-binding.json` checks the contract.
 - **User's Chrome:** `--cdp http://127.0.0.1:9222` connects to a Chrome that the user started with remote debugging. Never enable debugging, install an extension or open a port on your own. New contexts via CDP remain isolated from the personal profile.
@@ -102,7 +102,7 @@ Isolation with host tools: tabs of the same profile share a session. Without pro
 
 | Surface | Procedure |
 | --- | --- |
-| Iframe | `snapshot --frames` lists accessible frames with refs `f1e3`. Inaccessible cross-origin content becomes a limitation, not an assumption. |
+| Iframe | `snapshot --frames` lists accessible frames with refs `f1e3`. A frame on an origin outside the allowlist is listed as blocked, with no refs. Inaccessible cross-origin content becomes a limitation, not an assumption. |
 | Shadow DOM | The snapshot walks open shadow roots; closed ones are left out. |
 | Popup / new tab / external login | The driver selects the new tab and warns; confirm the domain and identity; go back with `tab N`. |
 | Upload | Only an authorized test file. Selection does not prove processing: verify the effect. |

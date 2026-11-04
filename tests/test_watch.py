@@ -986,7 +986,8 @@ def test_the_compact_text_fits_one_line_of_760_characters():
         json.dump(job, fh)
     text = job["text"]
     assert u16(text) <= 760 and "\n" not in text and "\r" not in text, (u16(text), text)
-    assert f" Denied dispatch briefs: {briefs}." in text and "~" not in text, text
+    # absolute path, never "~/": the Read tool does not expand it (a Windows temp path may hold "RUNNER~1")
+    assert f" Denied dispatch briefs: {briefs}." in text and " Denied dispatch briefs: ~" not in text, text
     assert 'Owner\'s last request: "deliver card ABC-2' in text and "\u2026" in text, text
 
 

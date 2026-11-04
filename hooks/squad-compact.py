@@ -122,7 +122,7 @@ def herdr(*args, timeout=20):
         r = subprocess.run([HERDR, *args], capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL)
         return r.returncode, r.stdout
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, subprocess.TimeoutExpired):   # ValueError: text the OS cannot encode
         return 1, ""
 
 
@@ -215,7 +215,7 @@ def job_path_ok(path):
 
 def text_ok(text):
     return (text.startswith("/compact ") and u16(text) <= LIMIT
-            and not any(ord(c) < 32 or ord(c) == 127 for c in text))
+            and not any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in text))
 
 
 def drop(path):

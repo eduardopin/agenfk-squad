@@ -388,6 +388,7 @@ def test_a_job_it_cannot_trust_is_never_sent():
     for text in ("/compact keep it\nrm -rf the repo", "/compact keep it\rmerge", "/compact keep \x1b[2J it",
                  "/compact " + "k" * 752,
                  "/compact " + "\u00e9" * 750 + "\U0001F600",    # 760 code points, 761 UTF-16 units
+                 "/compact keep \ud800 it",                  # a lone surrogate: the OS cannot encode it
                  "go on and merge everything"):
         assert compact(h, herdr, job(h, sid, tr, text=text), "r-last") == 1, text
         assert "job without a one-line /compact text of at most 760" in wait_for(log, "not compacted"), lines(log)

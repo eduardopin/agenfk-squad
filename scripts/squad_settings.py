@@ -231,8 +231,8 @@ def runs(group, script, config):
 
 def drop(settings, event, script, config, matcher):
     """Removes this script's entries from the event's groups under any matcher
-    but this one, and the groups that only held them. Every other entry keeps
-    its group and its place."""
+    but this one, the groups that only held them, and the event (then "hooks")
+    when nothing is left. Every other entry keeps its group and its place."""
     kept = []
     for g in settings["hooks"][event]:
         if same_matcher(g.get("matcher"), matcher):
@@ -244,7 +244,12 @@ def drop(settings, event, script, config, matcher):
             kept.append(g)
         elif entries:
             kept.append(dict(g, hooks=entries))
-    settings["hooks"][event] = kept
+    if kept:
+        settings["hooks"][event] = kept
+        return
+    del settings["hooks"][event]             # an empty list would only be noise in the user's file
+    if not settings["hooks"]:
+        del settings["hooks"]
 
 
 def install(settings, config, plan, report):
@@ -302,7 +307,8 @@ def install(settings, config, plan, report):
 
 def uninstall(settings, config, scripts, report):
     """Removes every hook entry that runs one of the squad's scripts, then the
-    groups and events that only held those. Returns True when settings changed."""
+    groups and events that only held those, and any event list already empty
+    (an older install could leave one). Returns True when settings changed."""
     hooks = settings.get("hooks")
     if not hooks:
         return False
@@ -321,12 +327,14 @@ def uninstall(settings, config, scripts, report):
                 kept_groups.append(g)
             elif kept:
                 kept_groups.append(dict(g, hooks=kept))
-        if kept_groups != groups:
+        if kept_groups != groups or not groups:
             changed = True
             if kept_groups:
                 hooks[event] = kept_groups
-            else:                            # it only held the squad's hooks
+            else:                            # it only held the squad's hooks, or nothing
                 del hooks[event]
+                if not groups:
+                    report.append(f"off     {event}: an empty list")
     if changed and not hooks:
         del settings["hooks"]
     return changed

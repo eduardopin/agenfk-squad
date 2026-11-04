@@ -270,6 +270,28 @@ def test_an_empty_or_missing_matcher_is_the_same_as_star():
             assert all("already registered" in line for line in report), report
 
 
+def test_install_leaves_no_empty_event_list_behind():
+    config = config_with()                                  # install.sh left no link
+    old = {"type": "command", "command": ss.command_for(config, "squad-graph.py")}
+    settings = {"model": "opus", "hooks": {"PreToolUse": [{"matcher": "*", "hooks": [old]}]}}
+    changed, report = run("install", settings, config, manifest([GRAPH]))
+    assert changed, report
+    assert settings == {"model": "opus"}, settings
+
+
+def test_uninstall_clears_an_empty_event_list_an_older_install_left():
+    config = config_with("squad-watch.py")
+    m = manifest([WATCH])
+    settings = {"model": "opus"}
+    run("install", settings, config, m)
+    settings["hooks"]["PostToolUse"] = []
+    changed, report = run("uninstall", settings, config, m)
+    assert changed, report
+    assert settings == {"model": "opus"}, settings
+    changed, _ = run("uninstall", {"hooks": {"PreToolUse": []}}, config, m)
+    assert changed
+
+
 if __name__ == "__main__":
     try:
         for name, fn in sorted(globals().items()):

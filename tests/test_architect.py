@@ -24,7 +24,7 @@ sys.dont_write_bytecode = True
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"  # subprocesses inherit it
 
 from plan import build_plan, path_overlap, render_text, utf8_stdout  # noqa: E402
-from delivery_map import build_delivery_map, render_markdown  # noqa: E402
+from delivery_map import TEXT, build_delivery_map, render_markdown  # noqa: E402
 from handoff import build_handoff  # noqa: E402
 
 
@@ -530,17 +530,12 @@ class DeliveryMapBehavior(unittest.TestCase):
             self.assertEqual(cp1252.returncode, 0, cp1252.stderr)
             self.assertIn("Resources → PRs", cp1252.stdout.decode("utf-8"))
 
-    def test_pt_br_renders_the_portuguese_map(self):
+    def test_the_map_is_rendered_in_english(self):
         data, ledger = fixture()
-        result = build_delivery_map(data, ledger)
-        markdown = render_markdown(result, "pt-BR")
-        self.assertTrue(markdown.startswith("# Mapa de entrega\n"), markdown[:40])
-        for text in ("| Recurso / tipo |", "## Recursos → PRs → tarefas", "Pronta para merge O/P/C", "ainda sem PR real"):
-            self.assertIn(text, markdown)
-        self.assertNotIn("Delivery map", markdown)
-        self.assertIn("não previsto", render_markdown(build_delivery_map(*self.blocked()), "pt-BR"))
+        markdown = render_markdown(build_delivery_map(data, ledger))
+        self.assertTrue(markdown.startswith("# Delivery map\n"), markdown[:40])
         self.assertIn("not forecast", render_markdown(build_delivery_map(*self.blocked())))
-        self.assertEqual(render_markdown(result), render_markdown(result, "en"))
+        self.assertEqual(set(TEXT), {"en"})
 
     @staticmethod
     def blocked():
@@ -548,7 +543,7 @@ class DeliveryMapBehavior(unittest.TestCase):
         data["tasks"][2]["status"] = "blocked"
         return data, ledger
 
-    def test_cli_rejects_an_unknown_lang_and_keeps_json_language_neutral(self):
+    def test_cli_has_no_lang_option_and_json_stays_valid(self):
         data, ledger = fixture()
         script = str(SCRIPTS / "delivery_map.py")
         with tempfile.TemporaryDirectory() as directory:
@@ -557,15 +552,14 @@ class DeliveryMapBehavior(unittest.TestCase):
             plan_path.write_text(json.dumps(data), encoding="utf-8")
             ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
             paths = [str(plan_path), str(ledger_path)]
-            rejected = subprocess.run([sys.executable, "-I", "-B", script, *paths, "--lang", "pt"],
+            rejected = subprocess.run([sys.executable, "-I", "-B", script, *paths, "--lang", "pt-BR"],
                                       capture_output=True, text=True, encoding="utf-8", check=False)
             self.assertEqual(rejected.returncode, 2)
             self.assertEqual(rejected.stderr, "")
-            self.assertIn("invalid choice: 'pt'", rejected.stdout)
-            outputs = [subprocess.run([sys.executable, "-I", "-B", script, *paths, "--json", *lang], capture_output=True,
-                                      text=True, encoding="utf-8", check=False).stdout for lang in ([], ["--lang", "pt-BR"])]
-            self.assertTrue(json.loads(outputs[0])["valid"])
-            self.assertEqual(outputs[0], outputs[1])
+            self.assertIn("unrecognized arguments: --lang", rejected.stdout)
+            output = subprocess.run([sys.executable, "-I", "-B", script, *paths, "--json"], capture_output=True,
+                                    text=True, encoding="utf-8", check=False).stdout
+            self.assertTrue(json.loads(output)["valid"])
 
 
 class HandoffBehavior(unittest.TestCase):

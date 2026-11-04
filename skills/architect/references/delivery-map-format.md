@@ -9,7 +9,7 @@ python3 scripts/delivery_map.py plan.json resource-plan.json
 python3 scripts/delivery_map.py plan.json resource-plan.json --json
 ```
 
-Requires Python 3.9+ and `plan.py` in the same directory. Standard output contains Markdown or JSON. The Markdown map is in English by default; add `--lang pt-BR` to render it in Portuguese. The `--json` output does not change with `--lang`. Exit code `0` means valid input, including partial forecasts; `2` means an error. To require a complete forecast, check `forecast.scenarios.likely.complete`.
+Requires Python 3.9+ and `plan.py` in the same directory. Standard output contains Markdown or JSON. The Markdown map is in English. Exit code `0` means valid input, including partial forecasts; `2` means an error. To require a complete forecast, check `forecast.scenarios.likely.complete`.
 
 ## Companion schema
 

@@ -394,7 +394,7 @@ def cell(value):
     return html.escape(str(value), quote=False).replace("\\", "\\\\").replace("|", "\\|")
 
 
-# Rendered text by language. Only the Markdown changes; --json keys and enum values stay language-neutral.
+# Rendered text of the Markdown map, in English (CONTRIBUTING: English for everything a reader sees).
 TEXT = {
     "en": {
         "title": "# Delivery map", "project": "Project: ", "invalid_input": "invalid input", "errors": "## Errors",
@@ -419,31 +419,7 @@ TEXT = {
         "assumptions": "## Assumptions and limitations", "warnings": "## Coordination warnings",
         "not_forecast": "not forecast",
     },
-    "pt-BR": {
-        "title": "# Mapa de entrega", "project": "Projeto: ", "invalid_input": "entrada inválida", "errors": "## Erros",
-        "conditional": "condicionada aos gates futuros declarados", "unconditional": "baseada nos estados declarados atuais",
-        "intro": "Previsão {condition}. Tempos relativos T+; cenários otimista / provável / conservador. Nenhuma data ou autorização é inferida.",
-        "capacity": "## Capacidade, esforço e prazo",
-        "capacity_columns": ["Cenário", "Esforço restante único", "Limite por dependências", "Prazo integral", "Agenda completa"],
-        "resources": "## Recursos → PRs → tarefas",
-        "resource_columns": ["Recurso / tipo", "Ação / ambiente / qtd.", "PRs", "Tarefas", "Responsável", "Dependências de recurso", "Provisionado O/P/C", "Verificado O/P/C", "Estado declarado"],
-        "prs": "## PRs planejadas e existentes",
-        "pr_columns": ["PR / repositório", "Título", "Owner / reviewer", "Tarefas até prontidão", "Pronta para merge O/P/C", "Estado / URL real"],
-        "no_real_pr": "ainda sem PR real",
-        "tasks": "## Tarefas e estimativas",
-        "task_columns": ["Task", "Owner", "Estado", "Dependências", "Esforço O/P/C (min)", "Início provável", "Fim provável", "Locks"],
-        "milestones": "## Marcos",
-        "milestone_columns": ["Marco", "Tarefas", "Previsão O/P/C", "Concluído declarado"],
-        "dispatch": "## Despacho real neste momento", "ready_now": "- Elegíveis individualmente: ", "start_now": "- Conjunto compatível para início: ",
-        "future_condition": "- Condição futura {contract}: {condition}; tasks {tasks}.",
-        "blocking": "- Bloqueio da previsão completa: ", "unscheduled": "- Sem agenda {id}: {reasons}",
-        "evidence": "## Evidência prevista e observada",
-        "evidence_columns": ["Recurso", "Justificativa", "Evidência esperada", "Evidência observada"],
-        "assumptions": "## Premissas e limitações", "warnings": "## Avisos de coordenação",
-        "not_forecast": "não previsto",
-    },
 }
-LANGUAGES = tuple(TEXT)
 
 
 def relative(value, text):
@@ -510,19 +486,16 @@ def main(argv=None):
     parser.add_argument("plan", help="task plan JSON, schema v1")
     parser.add_argument("ledger", help="resource/PR companion JSON, schema v1")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of Markdown")
-    parser.add_argument("--lang", choices=LANGUAGES, default="en", help="language of the Markdown map; JSON is language-neutral")
     json_output = False
-    lang = "en"
     try:
         arguments = parser.parse_args(argv)
         json_output = arguments.json
-        lang = arguments.lang
         result = build_delivery_map(load_plan(arguments.plan), load_plan(arguments.ledger))
     except (OSError, UnicodeError, ValueError, RecursionError) as exc:
         result = empty_result()
         result["errors"].append(f"Cannot build delivery map: {exc}")
     utf8_stdout()
-    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) if json_output else render_markdown(result, lang))
+    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) if json_output else render_markdown(result))
     return 0 if result["valid"] else 2
 
 

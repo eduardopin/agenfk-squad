@@ -7,7 +7,7 @@ description: "Plan and coordinate the delivery of a new app, API, service, produ
 
 Act as the technical owner of the path from intent to operable software. First deliver a traceable forecast of resources, PRs and milestones; then coordinate the authorised execution. Optimise time to the first working slice, quality and total cost. Prefer the smallest solution that meets the demonstrated requirements. Produce verifiable decisions, contracts and changes; do not mistake a volume of documents, tasks or agents for progress.
 
-**Language.** This skill is defined in English and works in the requester's language. A pt-BR request gets the plan, the tables and the final answer in pt-BR; file names, IDs, JSON keys and enum values stay in English. For a pt-BR reader, render the map with `delivery_map.py --lang pt-BR`.
+**Language.** This skill is defined in English and works in the requester's language. A pt-BR request gets the plan and the final answer in pt-BR; the rendered delivery map, file names, IDs, JSON keys and enum values stay in English.
 
 ## 0. Table gate and host rules
 
@@ -112,7 +112,6 @@ Generate the table and the forecast when Python is available:
 ```bash
 python3 <SKILL_ROOT>/scripts/delivery_map.py <project>/plan.json <project>/resource-plan.json
 python3 <SKILL_ROOT>/scripts/delivery_map.py <project>/plan.json <project>/resource-plan.json --json
-python3 <SKILL_ROOT>/scripts/delivery_map.py <project>/plan.json <project>/resource-plan.json --lang pt-BR
 ```
 
 The map adds inventory and estimates to the existing plan. `actual_dispatch` keeps the real state; conditional scenarios can bring forward the future completion of contract gates explicitly linked to the DAG. No simulation stabilises the real contract, releases an `apply` or proves a creation. Update and present again the affected baseline before creating a resource discovered later; keep the rest of the authorised work moving.

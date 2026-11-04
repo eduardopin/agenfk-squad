@@ -42,14 +42,17 @@ test("blockedFrames reports a blocked main frame for the whole tab, and blocked 
 
 // ---------- driver against a fake Playwright ----------
 // The fake site: `redirect` is a 3xx the route never sees, `frame` an iframe the page embeds, `go` where the page's
-// one button navigates its own frame. Every click, key and element screenshot is appended to HITS, so a test can
-// prove that nothing reached a blocked origin. A frame on STICKY cannot be navigated away (its goto times out).
+// one button navigates its own frame, `dialog` an alert the page raises as it loads. Every click, key, read, screenshot
+// and dialog answer is appended to HITS, so a test can prove that nothing reached a blocked origin. A frame on STICKY
+// cannot be navigated away (its goto times out). As in Chrome, a tab with an open dialog cannot be navigated: the goto
+// times out, the dialog is then detached (answering it fails) and title() never answers.
 const fakeDir = mkdtempSync(join(tmpdir(), "jqa-fake-pw-origin-"));
 const HITS = join(fakeDir, "hits.log");
 const FAKE_PLAYWRIGHT = `"use strict";
 const { appendFileSync } = require("node:fs");
 const HITS = ${JSON.stringify(HITS)};
 const APP = "https://app.example.test", EVIL = "https://evil.example.net", STICKY = "https://sticky.example.net";
+const ALERT = "https://alert.example.net";
 const SITE = {
   [APP + "/home"]: { title: "Home", go: APP + "/redirect" },
   [APP + "/direct"]: { title: "Direct", go: EVIL + "/landing" },
@@ -63,18 +66,28 @@ const SITE = {
   [APP + "/inner"]: { title: "Inner", go: APP + "/to-sticky" },
   [APP + "/to-sticky"]: { redirect: STICKY + "/widget" },
   [STICKY + "/widget"]: { title: "Sticky widget", go: STICKY + "/next" },
+  [APP + "/alert-home"]: { title: "Alert home", go: APP + "/to-alert" },
+  [APP + "/to-alert"]: { redirect: ALERT + "/alert" },
+  [ALERT + "/alert"]: { title: "Alert", dialog: "hello from the blocked origin" },
+  [APP + "/to-sticky-tab"]: { redirect: STICKY + "/landing" },
 };
 const hit = (line) => appendFileSync(HITS, line + "\\n");
+const never = new Promise(() => {});
 function makePage(ctx) {
   const listeners = {};
-  const page = { children: [], history: ["about:blank"], idx: 0 };
+  const page = { children: [], history: ["about:blank"], idx: 0, closed: false, dialog: null, wedged: false };
   const emit = (ev, arg) => { for (const fn of listeners[ev] ?? []) fn(arg); };
   const makeFrame = (parent) => {
     const f = {
       _url: "about:blank",
       url: () => f._url,
       parentFrame: () => parent,
-      goto: async (u) => { if (f._url.startsWith(STICKY)) throw new Error("frame.goto: Timeout 10000ms exceeded."); return navigate(f, u); },
+      goto: async (u) => {
+        if (f._url.startsWith(STICKY)) throw new Error("frame.goto: Timeout 10000ms exceeded.");
+        await new Promise((r) => setTimeout(r, 100));
+        if (page.dialog) { page.wedged = true; throw new Error("frame.goto: Timeout 10000ms exceeded."); }
+        return navigate(f, u);
+      },
       evaluate: async (src) => {
         const doc = SITE[f._url];
         const prefix = (/"prefix":"(f\\d*)"/.exec(String(src)) ?? [])[1] ?? "";
@@ -116,6 +129,15 @@ function makePage(ctx) {
     while (SITE[final]?.redirect) final = SITE[final].redirect;
     commit(frame, final);
     const doc = SITE[final];
+    if (doc?.dialog) {
+      const answer = (how) => async () => {
+        if (page.wedged) throw new Error("dialog." + how + ": Protocol error (Page.handleJavaScriptDialog): Not attached to an active page");
+        page.dialog = null;
+        hit("dialog " + how + " " + final);
+      };
+      page.dialog = { type: () => "alert", message: () => doc.dialog, defaultValue: () => "", accept: answer("accept"), dismiss: answer("dismiss") };
+      emit("dialog", page.dialog);
+    }
     if (frame === main && doc?.frame) {
       const child = makeFrame(main);
       page.children = [child];
@@ -132,10 +154,13 @@ function makePage(ctx) {
   };
   Object.assign(page, {
     on: (ev, fn) => { (listeners[ev] ??= []).push(fn); },
-    url: () => main._url, mainFrame: () => main, frames: () => [main, ...page.children], isClosed: () => false,
+    url: () => main._url, mainFrame: () => main, frames: () => [main, ...page.children], isClosed: () => page.closed,
     goto: (u) => navigate(main, u), goBack: () => travel(-1), goForward: () => travel(1), reload: () => navigate(main, main._url),
-    waitForLoadState: async () => {}, screenshot: async () => Buffer.from("fake jpeg"), viewportSize: () => ({ width: 1280, height: 800 }),
-    close: async () => {}, title: async () => SITE[main._url]?.title ?? "",
+    waitForLoadState: async () => {}, viewportSize: () => ({ width: 1280, height: 800 }),
+    screenshot: async () => { hit("pageshot " + page.frames().map((f) => f._url).join(" ")); return Buffer.from("fake jpeg"); },
+    evaluate: async () => { hit("read " + page.frames().map((f) => f._url).join(" ")); return ""; },
+    close: async () => { if (page.closed) return; page.closed = true; page.dialog = null; emit("close", page); },
+    title: async () => (page.dialog || page.wedged ? never : SITE[main._url]?.title ?? ""),
     keyboard: { press: async (k) => hit("key " + k + " " + main._url), type: async () => {}, down: async () => {}, up: async () => {} },
     mouse: { wheel: async () => {} },
   });
@@ -250,4 +275,56 @@ test("a frame stuck on a blocked origin refuses its refs, element screenshots an
   const snap2 = await call("snapshot", [], { frames: true });
   assert.match(snap2.text, /# frame f1: blocked, outside the allowlist \(https:\/\/sticky\.example\.net\/widget\); no refs/);
   assert.equal((await call("open", [`${APP}/home`])).ok, true, "open still takes the tab elsewhere");
+});
+
+test("a blocked page that raises a dialog as it loads is still left: the dialog is answered and the actor stays usable", async () => {
+  assert.equal((await call("open", [`${APP}/alert-home`])).ok, true);
+  assert.equal((await call("snapshot")).ok, true);
+  const res = await call("click", ["e1"]);
+  assert.equal(res.code, "origin_blocked", res.text);
+  assert.equal(await tabUrl(), "about:blank", "the tab really left the blocked origin");
+  assert.match(res.text, /The tab was taken to about:blank\./);
+  assert.match(res.text, /alert dialog raised while the tab was on an origin outside the allowlist: dismissed by the driver/);
+  assert.equal(JSON.parse((await send(RUN, { cmd: "status" })).text).actors[0].dialog, null, "no dialog left for the actor");
+  assert.ok(hits().includes("dialog dismiss https://alert.example.net/alert"));
+  const tabs = await send(RUN, { cmd: "tabs", actor: "ana", args: [], flags: {} }, 5000);
+  assert.equal(tabs.ok, true, tabs.text);
+  assert.equal((await call("open", [`${APP}/home`])).ok, true, "the actor's queue is not held");
+});
+
+test("a tab the driver cannot take off a blocked origin is closed, and the message says so", async () => {
+  const res = await call("open", [`${APP}/to-sticky-tab`]);
+  assert.equal(res.code, "origin_blocked", res.text);
+  assert.match(res.text, /The driver could not take the tab off it and closed the tab\./);
+  assert.doesNotMatch(res.text, /taken to about:blank/);
+  assert.match(res.text, /page reached an origin outside the allowlist \(https:\/\/sticky\.example\.net\/landing\): the driver could not move the tab and closed it/);
+  const url = await tabUrl();
+  assert.ok(!String(url).startsWith("https://sticky.example.net"), url);
+  assert.equal((await call("open", [`${APP}/home`])).ok, true);
+});
+
+test("text, eval, storage and a page screenshot are refused while a frame of the tab is stuck on a blocked origin", async () => {
+  assert.equal((await call("open", [`${APP}/framed-inner`])).ok, true);
+  assert.match((await call("snapshot", [], { frames: true })).text, /button "Go" \[f1e1\]/);
+  assert.equal((await call("click", ["f1e1"], { "no-snapshot": true })).ok, true);
+  const reads = () => hits().filter((h) => /^(read|pageshot) /.test(h));
+  const before = reads().length;
+  for (const [cmd, args, as] of [["text", [], "actor"], ["eval", ["document.title"], "observer"], ["storage", [], "observer"], ["screenshot", [], "actor"]]) {
+    const r = await send(RUN, { cmd, actor: "ana", args, flags: { as } });
+    assert.equal(r.code, "origin_blocked", `${cmd}: ${r.text}`);
+    assert.match(r.text, /sticky\.example\.net\/widget/);
+  }
+  assert.deepEqual(reads().slice(before), [], "nothing was read from the tab");
+  assert.ok(traceEntries().some((e) => e.cmd === "storage" && e.error?.code === "origin_blocked"), "the refusal is in the trace");
+  assert.equal((await call("open", [`${APP}/home`])).ok, true);
+});
+
+test("the notice of a blocked frame says how the coordinator lets its origin in", async () => {
+  const hint = "if the product needs it, the coordinator allows it with `jqa browser allow https://evil.example.net`";
+  const res = await call("open", [`${APP}/framed`]);
+  assert.ok(res.text.includes(`frame navigation blocked (outside the allowlist): https://evil.example.net/widget; ${hint}`), res.text);
+  const red = await call("open", [`${APP}/framed-redirect`]);
+  assert.match(red.text, /frame reached an origin outside the allowlist \(https:\/\/evil\.example\.net\/widget\): taken to about:blank/);
+  assert.ok(red.text.includes(hint), red.text);
+  assert.equal((await call("open", ["https://evil.example.net/landing"])).text.includes("jqa browser allow"), false, "only frames get the hint");
 });

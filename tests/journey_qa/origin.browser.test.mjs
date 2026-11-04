@@ -26,14 +26,16 @@ if (ON) {
   other = await listen((req, res) => {
     otherHits.push(req.url);
     if (req.url === "/clicked") return res.writeHead(204).end();
+    if (req.url === "/alert") return res.writeHead(200, { "content-type": "text/html" }).end(page(`<h1>Other</h1><script>alert("hello from the other origin")</script>`));
     res.writeHead(200, { "content-type": "text/html" }).end(page(`<h1>Other</h1><button type="button" onclick="fetch('/clicked')">Press</button>`));
   });
   const OTHER = `http://127.0.0.1:${other.address().port}`;
   app = await listen((req, res) => {
-    const to = { "/redirect": `${OTHER}/landing`, "/to-other": `${OTHER}/widget` }[req.url];
+    const to = { "/redirect": `${OTHER}/landing`, "/to-other": `${OTHER}/widget`, "/to-alert": `${OTHER}/alert` }[req.url];
     if (to) return res.writeHead(302, { location: to }).end();
     const body = {
       "/home": `<a href="/redirect">Go</a>`,
+      "/alert-home": `<a href="/to-alert">Go</a>`,
       "/framed": `<iframe src="${OTHER}/widget" title="widget"></iframe>`,
       "/framed-redirect": `<iframe src="/to-other" title="widget"></iframe>`,
     }[req.url] ?? "<h1>App</h1>";
@@ -85,4 +87,21 @@ test("real browser: an iframe redirected to another origin is taken off it and i
   assert.doesNotMatch(snap.text, /button "Press"/, snap.text);
   assert.notEqual((await call("click", ["f1e1"])).ok, true);
   assert.ok(!otherHits.includes("/clicked"));
+});
+
+test("real browser: a redirected page that raises an alert as it loads is still left, and the actor stays usable", { skip }, async () => {
+  assert.equal((await call("open", [`${APP()}/alert-home`])).ok, true);
+  const snap = await call("snapshot");
+  const ref = /link "Go" \[(e\d+)\]/.exec(snap.text)?.[1];
+  assert.ok(ref, snap.text);
+  const res = await call("click", [ref]);
+  assert.equal(res.code, "origin_blocked", res.text);
+  assert.equal(await tabUrl(), "about:blank", res.text);
+  assert.match(res.text, /The tab was taken to about:blank\./);
+  assert.equal(JSON.parse((await send(RUN, { cmd: "status" })).text).actors[0].dialog, null, "no dialog left for the actor");
+  const tabs = await send(RUN, { cmd: "tabs", actor: "ana", args: [], flags: {} }, 5000);
+  assert.equal(tabs.ok, true, tabs.text);
+  assert.doesNotMatch(tabs.text, /127\.0\.0\.1:\d+\/alert/);
+  const back = await send(RUN, { cmd: "open", actor: "ana", args: [`${APP()}/home`], flags: { "no-shot": true } }, 15000);
+  assert.equal(back.ok, true, back.text);
 });

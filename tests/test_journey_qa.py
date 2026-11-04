@@ -44,7 +44,7 @@ NODE_REASON = "node >= 20 not found on PATH"
 # means one was lost. A test may skip itself where the system cannot do what it needs (symlinks on Windows without
 # Developer Mode, POSIX modes on Windows, a real browser unless JQA_BROWSER_TESTS=1), so passed and skipped count
 # together.
-NODE_TESTS_FLOOR = 60
+NODE_TESTS_FLOOR = 65
 
 
 def read(path):

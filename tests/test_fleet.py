@@ -377,6 +377,55 @@ def test_a_corrupt_denied_time_does_not_cost_the_fan_out():
     assert "CARRY ON" in reason and "FAN OUT" in reason, reason
 
 
+def counting_agenfk(h):
+    """The fake agenfk, logging each `list` (the call only fleet.py makes) to <h>/list-calls."""
+    ag = fake_agenfk(h)
+    log = os.path.join(h, "list-calls")
+    wrapper = os.path.join(h, "count.py")
+    open(wrapper, "w").write(
+        "import subprocess, sys\n"
+        f"if sys.argv[1:2] == ['list']: open({log!r}, 'a').write('x\\n')\n"
+        f"sys.exit(subprocess.call({ag.split()!r} + sys.argv[1:]))\n")
+    return f"{sys.executable} {wrapper}", lambda: len(W.lines(h, "list-calls"))
+
+
+def test_a_negative_fan_out_check_is_remembered_for_a_few_minutes():
+    h = W.home()
+    agenfk, calls = counting_agenfk(h)
+    s = Session(h, agenfk)
+    path = open_goal_without_order(h, s)                 # the first check is due at a hold, not at the prompt
+    st = json.load(open(path))
+    st["goal"]["cards"] = [LONE]
+    json.dump(st, open(path, "w"))
+    s.work("Half done.")
+    assert "FAN OUT" not in s.stop()
+    assert calls() == 1, calls()
+    s.work("More.")
+    assert "FAN OUT" not in s.stop()
+    assert calls() == 1, "a hold asked AgEnFK again inside the window"
+    st = json.load(open(path))
+    assert time.time() - st["goal"]["fan_checked"] < 60, st["goal"]
+    st["goal"]["fan_checked"] = time.time() - 3600       # long ago: ask again
+    json.dump(st, open(path, "w"))
+    s.work("Even more.")
+    s.stop()
+    assert calls() == 2, calls()
+
+
+def test_an_agenfk_that_does_not_answer_is_not_asked_again_on_every_hold():
+    h = W.home()
+    dead = f"{sys.executable} -c 'import sys; sys.exit(1)'"
+    s = Session(h, dead)
+    path = os.path.join(h, ".claude", "squad", "watch", f"{SID}.main.json")
+    open_goal_without_order(h, s)
+    st = json.load(open(path))
+    st["goal"]["cards"] = [LONE]
+    json.dump(st, open(path, "w"))
+    s.work("Half done.")
+    s.stop()
+    assert json.load(open(path))["goal"].get("fan_checked"), "the doubt was not recorded"
+
+
 def log_fanout(h, card, ago=0):
     folder = os.path.join(h, ".claude", "squad")
     os.makedirs(folder, exist_ok=True)

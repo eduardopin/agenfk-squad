@@ -2626,7 +2626,7 @@ CARRY_EXITS = ("Before you call anything the owner's, do every part you can do y
                "approval the project reserves for the owner, approval on the board, a decision or an answer "
                "only the owner has, a production apply), or `[squad] END: no card is left that I can take`. "
                "These are examples: write your own text after the colon, never a <placeholder>.")
-GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts", "fanned")
+GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts", "fanned", "fan_checked")
 
 
 def wake_lib():
@@ -2653,6 +2653,7 @@ def fleet_lib():
 
 
 DENIED_QUIET = 300     # seconds after a denied dispatch in which no FAN OUT is ordered
+FAN_CHECK = 300        # seconds a verdict other than FAN OUT stands: AgEnFK is not asked on every event
 
 
 def fan_out(goal, session, st=None):
@@ -2669,6 +2670,12 @@ def fan_out(goal, session, st=None):
     if time.time() - denied < DENIED_QUIET:
         return ""
     try:
+        checked = float(goal.get("fan_checked") or 0)
+    except (TypeError, ValueError):
+        checked = 0
+    if 0 <= time.time() - checked < FAN_CHECK:
+        return ""                # a dead AgEnFK costs 5 s an event; the hook has 10
+    try:
         fleet = fleet_lib()
         if fleet is None:
             return ""
@@ -2676,6 +2683,7 @@ def fan_out(goal, session, st=None):
         leaves = fleet.unfanned(leaves)
         subs = fleet.live_subs(session, STATE)
         if fleet.verdict(goal, leaves, subs) != "FAN OUT":
+            goal["fan_checked"] = time.time()
             return ""
         order = fleet.fan_out_order(goal, leaves, read, total)
         if read >= total:
@@ -2961,8 +2969,7 @@ def carry_on(p, path, st):
             "Your last reply hands the delivery back (a next step, an offer, or waiting for the owner): "
             "that work is yours. ")
     order = fan_out(goal, session, st)
-    if order:
-        save(path, st)                    # goal["fanned"]: keep() above saved the goal before the order
+    save(path, st)                        # goal["fanned"], goal["fan_checked"]: keep() saved the goal before them
     print(json.dumps({"decision": "block", "reason": (
         "[squad-watch] CARRY ON" + (" + FAN OUT" if order else "") + ": the delivery is not finished. " +
         (order + " " if order else "") + what +

@@ -327,7 +327,7 @@ foreach ($d in $skillDirs) {
   if (-not (Link $d.FullName (Join-Path (Join-Path $Claude 'skills') $d.Name))) { $rc = 1 }
 }
 if (-not (Link (Join-Path $Squad 'CLAUDE.md') (Join-Path $Claude 'CLAUDE.md'))) { $rc = 1 }
-foreach ($h in @('squad-router.py', 'squad-watch.py', 'squad-switch.py', 'squad-turn.py')) {
+foreach ($h in @('squad-router.py', 'squad-watch.py', 'squad-switch.py', 'squad-turn.py', 'squad-allow.py')) {
   if (-not (Link (Join-Path (Join-Path $Squad 'hooks') $h) (Join-Path (Join-Path $Claude 'hooks') $h))) { $rc = 1 }
 }
 # squad-decisions.py: the SessionStart hook of hooks/manifest.json (docs/decisions.md)

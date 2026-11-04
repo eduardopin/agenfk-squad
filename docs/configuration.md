@@ -36,6 +36,24 @@ are taken as given: `SQUAD_MAX_REVIEWS=0` denies every reviewer.
 | `SQUAD_WATCH` | on | `0` disables the watcher entirely (all seven events) |
 | `SQUAD_SWITCH` | on | `0` disables only the automatic session switch; handoffs are still ordered |
 | `SQUAD_TURN` | on | `0` disables only the merge queue |
+| `SQUAD_ALLOW` | on | `0` disables only the file-prompt answers (`hooks/squad-allow.py`) |
+
+## File prompts nobody answers
+
+A session that writes its handoff stops on Claude Code's "Do you want to create
+<file>?" dialog, and the answer is always yes. `hooks/squad-allow.py` runs on the
+`PermissionRequest` event for Write, Edit, MultiEdit and NotebookEdit and answers
+yes in two cases: Write creating a file that does not exist yet, and any of the
+four tools inside the squad's own folders (`.claude/handoffs/`, `~/.claude/squad/`,
+`docs/architect/`).
+
+It stays silent, so the dialog appears, for paths that steer the agent or hold
+secrets, new or not: `settings*.json`, anything under `hooks/`, `CLAUDE.md`,
+`AGENTS.md`, `.claude/agents|skills|commands|plugins`, `~/.claude/*.json`, `.git/`,
+`.env*`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`, `credentials*`, `.aws/`,
+`.ssh/` and `.mcp.json`. Symlinks and `..` are resolved before the match. It never
+answers deny, and on any doubt or error it prints nothing. Each allow is one line
+(time, session, tool, path) in `~/.claude/squad/allow.log`.
 
 ## Skill trials
 

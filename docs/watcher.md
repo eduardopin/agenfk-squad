@@ -205,6 +205,71 @@ A `DISPATCH DENIED` always says where the work continues. There are four exits:
 The session must not work around a denial with another tool or another agent
 type, and must not repeat the dispatch.
 
+### The review gate: no self-approval
+
+The reviewer cap limits how often a card is reviewed. The review gate makes
+sure it is reviewed at all. Before this gate, "whoever writes does not
+approve" lived only in the prompt, and nothing stopped a main session from
+running `agenfk verify <id>` on a review step without ever dispatching the
+verifier.
+
+On every `PreToolUse` of the **main session**, a Bash call that runs
+`agenfk verify <id>`, or a call to the MCP `validate_progress` tool, is
+checked:
+
+1. The watcher reads the card's step with `agenfk get <id> --json`, in the
+   call's directory, with a 3-second timeout.
+2. If the step is one of `SQUAD_REVIEW_STEPS` (default
+   `REVIEW,ADVERSARIAL,HEAVY_REVIEW`) and no reviewer dispatch for that card
+   has been recorded in the last `SQUAD_REVIEW_MEMORY_DAYS` (14), the call is
+   denied with `REVIEW REQUIRED`.
+3. The way forward is in the message: dispatch the verifier (the project's own
+   reviewer agent if it has one) in a clean context, with the card id and the
+   branch in the brief, never the implementer's narrative. When it returns
+   SHIP, run `agenfk verify` again with its verdict as the evidence.
+
+The command is read the way the shell reads it. Any spacing, flags before or
+after the id, a `cd` or `VAR=value` before it, `npx`, and `bash -c "..."` are
+recognised. `agenfk verify <id> --plan` is a dry run and passes. So does text
+that only mentions the command, such as a commit message or an `echo`.
+Sub-sessions are not checked, because only the main session advances cards.
+
+**What counts as a reviewer dispatch.** It is the same dispatch the reviewer
+cap counts: an `Agent` or `Task` call whose agent type matches review, verify,
+security, audit or adversarial. The card is the id `review_key()` finds in the
+brief (a full AgenFK id or a key like `ABC-12`). When there is none, the first
+8-character id prefix in the brief is used. A dispatch with no card id unlocks
+no card, and a dispatch for card A does not unlock card B. Ids match by
+prefix, so `f93d1785` and the full id are the same card, but a key like
+`ABC-1` never matches `ABC-12`.
+
+**Across sessions.** A handoff opens a new session, and a review done before
+it still counts. The record is kept per card, outside any one session's
+state, in `~/.claude/squad/watch/reviews/<card>.json`. Records older than
+`SQUAD_REVIEW_MEMORY_DAYS` are ignored, and their files are removed the next
+time a reviewer is dispatched. Once a card has a record, the watcher does not
+call `agenfk` for it at all.
+
+**It fails open, on purpose.** If `agenfk` is missing, fails, takes longer
+than 3 seconds, or prints something the watcher cannot read (JSON first, then
+a `Status:` line), the call passes. The reason is logged to
+`~/.claude/squad/review-gate.jsonl`. A slow `agenfk` is killed together with
+its children, so the hook stays well inside its 10-second budget. The
+reasoning is the same as for the rest of the watcher: a broken board must not
+freeze every session that advances a card. The cost is that the gate does not
+hold while `agenfk` is broken, and the log is where that shows up. Like the
+merge queue, this guards against an agent's mistake, not against someone set
+on getting around it.
+
+**The owner's way out.** When the owner decides a card ships without review,
+the owner sets `SQUAD_SELF_REVIEW_OK=<card id>` in the environment Claude Code
+runs in. A prefix inside a command does not reach the hook. That card then
+passes the gate **once**, and the pass is logged. A second advance of the
+same card is denied again and the message says so. The session cannot grant
+this to itself.
+
+An empty `SQUAD_REVIEW_STEPS` turns the gate off.
+
 ## The soft stop
 
 Nothing is interrupted mid-task.
@@ -486,6 +551,11 @@ reread share, duration, and how it ended. Read them with:
 ```bash
 python3 skills/session-context/scripts/session_context.py --tasks
 ```
+
+The review gate logs to its own file, `~/.claude/squad/review-gate.jsonl`.
+It writes one line per denial, per pass it let through without a reviewer
+(fail-open, with the reason) and per owner override. It is kept out of
+`metrics.jsonl`, which the report reads as one row per sub-session.
 
 These numbers are how the thresholds in this file were chosen. If yours
 suggest different ones, that is exactly the issue we want to read.

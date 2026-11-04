@@ -110,6 +110,17 @@ A denied dispatch is never just a "no": the message says where the work continue
                                      there is a slot
   7th reviewer on the same card      the owner's decision, with what keeps failing
 
+Review gate (main session only): `agenfk verify <id>` (or the MCP validate_progress)
+on a review step with no reviewer dispatch recorded for that card is denied (REVIEW
+REQUIRED); the way forward is to dispatch the verifier with the card id and the branch.
+  SQUAD_REVIEW_STEPS  (REVIEW,ADVERSARIAL,HEAVY_REVIEW)  steps that need a reviewer; empty = off
+  SQUAD_REVIEW_MEMORY_DAYS (14)  how long a reviewer dispatch is remembered, across
+                                 sessions (~/.claude/squad/watch/reviews/<card>.json)
+  SQUAD_SELF_REVIEW_OK=<card id> the owner lets that card through once; logged
+  The step comes from `agenfk get <id> --json` (3 s). It fails OPEN: agenfk missing,
+  slow, failing or unreadable lets the call through, and the reason goes to
+  ~/.claude/squad/review-gate.jsonl.
+
 Merge turn (one per repository, ~/.claude/squad/turn/): the turn covers only the
 merge call itself (`gh pr merge`, direct push to the trunk, merge_pull_request), not
 the sync, the suite or CI. Holding it through all of that left sessions waiting
@@ -163,6 +174,8 @@ import json
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -218,6 +231,21 @@ DISPATCH = {"Agent", "Task"}
 REVIEWER = re.compile(r"verif|review|revis|segur|secur|audit|advers", re.I)
 CARD = re.compile(r"\b(?:[A-Z][A-Z0-9]{1,6}-\d+[a-z]?|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
 ORCH_LIVE = 600        # seconds: a sub-session with activity within this interval counts as live
+# Review gate. Empty SQUAD_REVIEW_STEPS turns it off.
+REVIEW_STEPS = {s.strip().upper() for s in os.environ.get(
+    "SQUAD_REVIEW_STEPS", "REVIEW,ADVERSARIAL,HEAVY_REVIEW").split(",") if s.strip()}
+REVIEW_DAYS = max(env_int("SQUAD_REVIEW_MEMORY_DAYS", 14), 1)
+REVIEWS = os.path.join(STATE, "reviews")      # a folder: a file straight in STATE would count as a session
+REVIEW_LOG = os.path.join(BASE, "review-gate.jsonl")   # not metrics.jsonl: `--tasks` reads every row there as a sub-session
+AGENFK_WAIT = 3        # s for `agenfk get` (measured at 0.7 s); the hook's whole budget is 10 s
+SHORT_ID = re.compile(r"\b[0-9a-f]{8}\b")     # the 8-character prefix of an AgenFK id
+HEX_ID = re.compile(r"[0-9a-f]{8}[0-9a-f-]*")
+VERIFY_VALUED = {"--evidence", "--wait-minutes", "--check", "--check-note"}
+VERIFY_DRY = {"--plan", "-h", "--help"}
+WRAPPER = {"npx", "env", "command", "exec", "time", "nohup", "sudo"}
+SHELLS = {"bash", "sh", "zsh", "dash"}
+ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+VERIFY_LOOSE = re.compile(r"(?:^|[;&|(\n])\s*(?:\S*/)?agenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")
 
 
 TURN = os.path.join(BASE, "turn")
@@ -743,6 +771,246 @@ def dispatch_notice(session, st, ctx):
                    f"and this session is at {k(ctx)}. {tail} A reviewer waits for the SLOT FREE notice.")
     st["orch_warned"] = full
     return out
+
+
+# --------------------------------------------------------------- review gate
+def same_card(a, b):
+    """Two ways of writing the same card: equal, or one AgenFK id the prefix of
+    the other (8 characters at least). A key like ABC-1 is never a prefix of ABC-12."""
+    a, b = str(a or "").lower(), str(b or "").lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return bool(HEX_ID.fullmatch(a) and HEX_ID.fullmatch(b) and (a.startswith(b) or b.startswith(a)))
+
+
+def review_log(p, card, step, decision, why):
+    """Every pass the gate lets through without a reviewer, and every denial, with the reason."""
+    try:
+        os.makedirs(BASE, exist_ok=True)
+        if os.path.exists(REVIEW_LOG) and os.path.getsize(REVIEW_LOG) >= 200_000:
+            return
+        row = {"ts": time.time(), "session": safe(p.get("session_id")), "card": safe(card), "step": safe(step),
+               "decision": decision, "why": why}
+        with open(REVIEW_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
+
+
+def review_files(card):
+    """(path, record) of every card file that names this card, the stale ones left out."""
+    out, now = [], time.time()
+    try:
+        names = os.listdir(REVIEWS)
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(REVIEWS, name)
+        if not name.endswith(".json") or not same_card(name[:-5], card):
+            continue
+        d = load(path)
+        if same_card(d.get("card"), card):
+            ds = d.get("dispatches")
+            d["dispatches"] = [e for e in (ds if isinstance(ds, list) else []) if isinstance(e, dict)
+                               and isinstance(e.get("ts"), (int, float)) and now - e["ts"] < REVIEW_DAYS * 86400]
+            out.append((path, d))
+    return out
+
+
+def remember_review(p, key):
+    """Records a reviewer dispatch per card, in a file every session reads: a handoff
+    opens a new session, and the review done before it still counts. The card is the
+    one review_key() found; with none there, the first 8-character id of the brief."""
+    card = key.partition(":")[2]
+    if card == "no-card":
+        inp = p.get("tool_input") or {}
+        m = SHORT_ID.search(str(inp.get("prompt") or "") + " " + str(inp.get("description") or ""))
+        if not m:
+            return                        # a reviewer with no card id unlocks no card
+        card = m.group(0)
+    now, ttl = time.time(), REVIEW_DAYS * 86400
+    os.makedirs(REVIEWS, exist_ok=True)
+    path = os.path.join(REVIEWS, f"{safe(card)}.json")
+    d = next((d for f, d in review_files(card) if f == path), None) or {"card": card, "dispatches": []}
+    d["dispatches"] = (d["dispatches"] + [{"ts": now, "session": safe(p.get("session_id")),
+                                           "kind": key.partition(":")[0]}])[-20:]
+    save(path, d)
+    for name in os.listdir(REVIEWS):     # cards nobody touched within the memory window go
+        f = os.path.join(REVIEWS, name)
+        try:
+            if now - os.path.getmtime(f) >= ttl:
+                os.remove(f)
+        except OSError:
+            pass
+
+
+def kill_tree(proc):
+    try:
+        if WINDOWS:
+            proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)   # start_new_session: its children go with it
+    except OSError:
+        pass
+    try:
+        proc.stdout.close()
+    except OSError:
+        pass
+
+
+def card_step(card, cwd, wait=AGENFK_WAIT):
+    """(step, "") from `agenfk get <id> --json`, or (None, why it could not be read)."""
+    if wait < 0.5:
+        return None, "no time left in the hook's budget"
+    exe = shutil.which("agenfk")
+    if not exe:
+        return None, "agenfk not found"
+    try:
+        proc = subprocess.Popen([exe, "get", card, "--json"], cwd=cwd if cwd and os.path.isdir(cwd) else None,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, encoding="utf-8", errors="replace", **detached_kwargs())
+    except OSError as exc:
+        return None, f"agenfk did not start ({type(exc).__name__})"
+    try:
+        out, _ = proc.communicate(timeout=wait)
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)                   # never communicate() again: a child holding the pipe would hang it
+        return None, f"agenfk get took more than {wait:.1f} s"
+    if proc.returncode != 0:
+        return None, f"agenfk get exited {proc.returncode}"
+    step = None
+    i = out.find("{")
+    if i >= 0:
+        try:
+            d = json.JSONDecoder().raw_decode(out[i:])[0]
+            step = d.get("status") if isinstance(d, dict) else None
+        except ValueError:
+            pass
+    if not isinstance(step, str) or not step.strip():
+        m = re.search(r"^\s*Status:\s*([A-Za-z_]+)\s*$", out, re.M)
+        step = m.group(1) if m else None
+    if not step:
+        return None, "agenfk get output unreadable"
+    return step.strip().upper(), ""
+
+
+def verify_ids(cmd, depth=0):
+    """Card ids that `agenfk verify <id>` in this command would advance (a dry run
+    with --plan does not). None when the command cannot be read."""
+    flat = cmd.replace("\\\n", " ").replace("\n", " ; ")
+    try:
+        lx = shlex.shlex(flat, posix=True, punctuation_chars=";&|()")
+        lx.whitespace_split = True
+        toks = list(lx)
+    except ValueError:
+        return [m.group(1) for m in VERIFY_LOOSE.finditer(cmd)] or None
+    ids, at, i = [], True, 0
+    sep = lambda t: bool(t) and all(c in ";&|()" for c in t)   # noqa: E731
+    while i < len(toks):
+        t = toks[i]
+        if sep(t):
+            at = True
+        elif at and (ASSIGN.match(t) or os.path.basename(t) in WRAPPER):
+            pass                          # `VAR=x agenfk ...`, `npx agenfk ...`: still the command position
+        elif at:
+            at, name = False, os.path.basename(t)
+            if name in SHELLS and depth < 2:          # bash -c "agenfk verify ..."
+                j = i + 1
+                while j < len(toks) and not sep(toks[j]):
+                    if re.fullmatch(r"-[A-Za-z]*c", toks[j]) and j + 1 < len(toks):
+                        inner = verify_ids(toks[j + 1], depth + 1)
+                        if inner is None:
+                            return None
+                        ids += inner
+                        break
+                    j += 1
+            elif name == "agenfk":
+                j = i + 1
+                while j < len(toks) and toks[j].startswith("-"):
+                    j += 1
+                if j < len(toks) and toks[j] == "verify":
+                    card, dry, j = None, False, j + 1
+                    while j < len(toks) and not sep(toks[j]):
+                        a = toks[j]
+                        if a in VERIFY_DRY:
+                            dry = True
+                        elif a in VERIFY_VALUED:
+                            j += 1
+                        elif not a.startswith("-") and card is None:
+                            card = a
+                        j += 1
+                    if card and not dry:
+                        ids.append(card)
+                    i = j
+                    continue
+        i += 1
+    return ids
+
+
+def review_check(p, card, wait=AGENFK_WAIT):
+    """The denial for advancing this card, or "" when it may advance."""
+    if any(d["dispatches"] for _, d in review_files(card)):
+        return ""                         # a reviewer was dispatched: no need to ask agenfk
+    step, why = card_step(card, str(p.get("cwd") or ""), wait)
+    if step is None:
+        review_log(p, card, "", "allow", why)       # fail open: a broken agenfk must not hold the flow
+        return ""
+    if step not in REVIEW_STEPS:
+        return ""
+    owner = os.environ.get("SQUAD_SELF_REVIEW_OK", "").strip()
+    used = ""
+    if owner and same_card(owner, card):
+        files = review_files(card)
+        spent = [d["override"] for _, d in files if isinstance(d.get("override"), (int, float))
+                 and time.time() - d["override"] < REVIEW_DAYS * 86400]
+        if not spent:
+            os.makedirs(REVIEWS, exist_ok=True)
+            path, d = files[0] if files else (os.path.join(REVIEWS, f"{safe(card)}.json"),
+                                              {"card": card, "dispatches": []})
+            d["override"] = time.time()
+            save(path, d)
+            review_log(p, card, step, "allow", "SQUAD_SELF_REVIEW_OK")
+            return ""
+        used = (" SQUAD_SELF_REVIEW_OK for this card was already used once, at "
+                f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(max(spent)))}.")
+    review_log(p, card, step, "deny", "no reviewer recorded")
+    return (f"[squad-watch] REVIEW REQUIRED: card {card} is on {step}, and no reviewer dispatch for it has been "
+            f"recorded in the last {REVIEW_DAYS} days, in this session or any other. Whoever writes does not "
+            "approve: the main session does not advance a review step on its own reading." + used + " Where the "
+            "work continues: dispatch the verifier (the project's own reviewer agent if it has one, else "
+            f"`verifier`) in a clean context, with the card id {card} and the branch in the brief, never the "
+            "implementer's narrative. When it returns SHIP, run `agenfk verify` again with its verdict as the "
+            "evidence; FIX_FIRST or REJECT goes back to whoever implemented. Do not work around this with "
+            "another tool.")
+
+
+def review_gate(p):
+    """PreToolUse of the main session: True when it denied an advance past a review step."""
+    tool, inp = p.get("tool_name") or "", p.get("tool_input") or {}
+    if not REVIEW_STEPS or not isinstance(inp, dict):
+        return False
+    if tool == "Bash":
+        cmd = str(inp.get("command") or "")
+        if "agenfk" not in cmd or "verify" not in cmd:
+            return False                  # the hot path: every Bash call of the main session
+        cards = verify_ids(cmd)
+        if cards is None:
+            review_log(p, "", "", "allow", "command not readable")
+            return False
+    elif tool.endswith("validate_progress"):
+        card = str(inp.get("itemId") or inp.get("item_id") or inp.get("id") or "").strip()
+        cards = [card] if card else []
+    else:
+        return False
+    start = time.time()
+    for card in dict.fromkeys(cards):     # several cards in one call share the 3 s, not 3 s each
+        why = review_check(p, card, AGENFK_WAIT - (time.time() - start))
+        if why:
+            deny(why)
+            return True
+    return False
 
 
 # --------------------------------------------------------------- merge queue
@@ -1417,6 +1685,11 @@ def pre_tool(p):
     if not agent:
         if p.get("tool_name") in DISPATCH:
             pre_dispatch(p)
+            return
+        try:
+            review_gate(p)
+        except Exception as exc:          # fails open, with the reason where the gate logs
+            review_log(p, "", "", "allow", f"gate error ({type(exc).__name__})")
         return
     st = load(state_path(p.get("session_id"), agent))
     tool = p.get("tool_name") or ""
@@ -1463,6 +1736,10 @@ def post_tool(p):
         if key:
             rev = st.setdefault("rev", {})
             rev[key] = rev.get(key, 0) + 1
+            try:
+                remember_review(p, key)
+            except Exception as exc:      # a broken record must not cost the rest of this PostToolUse
+                review_log(p, key, "", "unrecorded", f"reviewer dispatch not saved ({type(exc).__name__})")
             if rev[key] == 3 and not key.endswith(":no-card"):
                 out.append(f"[squad-watch] 3rd reviewer round for {key}. The rule is at most 2 "
                            f"correction rounds; dispatch number {MAX_REV + 1} is denied. If the same "

@@ -81,6 +81,16 @@ denial after 3 identical calls in a row.
 | `SQUAD_ORCH_HERE` | 500,000 | With no orchestrator slot: below this context the card is implemented in the session itself; at or above it, handoff with the plan |
 | `SQUAD_MAX_REVIEWS` | 6 | Reviewer dispatches allowed for the same card. The next one is denied |
 
+## The review gate
+
+See [watcher.md](watcher.md#the-review-gate-no-self-approval).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SQUAD_REVIEW_STEPS` | `REVIEW,ADVERSARIAL,HEAVY_REVIEW` | Comma-separated flow steps (case does not matter) that `agenfk verify` may not leave without a recorded reviewer dispatch for the card. Empty turns the gate off |
+| `SQUAD_REVIEW_MEMORY_DAYS` | 14 | Days a reviewer dispatch for a card is remembered, across sessions. Minimum 1 |
+| `SQUAD_SELF_REVIEW_OK` | unset | A card id: the owner lets that card through the gate once, and the pass is logged. Set it in the environment Claude Code runs in; a prefix on a command does not reach the hook |
+
 ## The merge queue
 
 | Variable | Default | Meaning |

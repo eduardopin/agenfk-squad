@@ -387,8 +387,11 @@ A delivery is open when either holds:
   or card ("o próximo passo é o card X", "next card"), offers to do it ("posso
   abrir essa frente agora, se você quiser", "quer que eu", "want me to", "shall
   I"), or says it is waiting for the owner ("esperando você", "waiting on
-  you"). It lives only while replies keep doing that, and it ends at the
-  owner's next message. Its first hold counts as no progress unless work was
+  you"). An offer or a wait counts only when it speaks of delivery work (a
+  card, front, PR, merge, push, wave, deploy, review, branch, `#12`) or follows
+  work done in the same turn, so "want me to go deeper?" after an explanation
+  is not a delivery; code blocks and quoted lines are not read. It lives only
+  while replies keep doing that, and it ends at the owner's next message. Its first hold counts as no progress unless work was
   done since the previous stop, so a Q&A answer that only mentions a next step
   is held at most twice.
 
@@ -404,8 +407,10 @@ These are the same lines `squad-wake.py` reads, so a session that stopped for a
 reason the hook cannot see (an API error, a reboot) is still woken by the timer.
 
 The order names what the session must do itself before it calls anything the
-owner's: push, open or reopen a session or pane, merge with a green gate and
-SHIP, start the next front. Only what only the owner can do goes in `BLOCKED`.
+owner's: push, open or reopen a session or pane, merge where the project's
+rules let the session merge (rule 11: a green gate and SHIP, through the merge
+queue), start the next front. Only what only the owner can do goes in
+`BLOCKED`, a merge approval the project reserves for the owner among them.
 
 The hold never wins against the owner or the watcher:
 
@@ -421,7 +426,9 @@ The hold never wins against the owner or the watcher:
 - `SQUAD_CARRY_CAP` (200) holds per goal let go even with progress;
 - an explicit goal released twice in a row without progress in between is
   closed, and one with no progress for `SQUAD_CARRY_AGE` (43200 s, 12 h) has
-  expired, so an abandoned goal does not hold the owner's later chat;
+  expired, so an abandoned goal does not hold the owner's later chat. A goal in
+  `BLOCKED` does not age: the owner's answer re-arms it however late it comes;
+- reaching `SQUAD_CARRY_CAP` closes the goal;
 - `SQUAD_CARRY=0` turns it off.
 
 The idea follows two public Stop hooks: [claude-goal](https://github.com/jthack/claude-goal)

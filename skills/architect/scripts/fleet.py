@@ -30,7 +30,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 HOME = os.path.expanduser("~")
-STATE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude"), "squad", "watch")
+# the hooks write here whatever CLAUDE_CONFIG_DIR says (squad-watch.py, squad-wake.py), so this reads here
+STATE = os.path.join(HOME, ".claude", "squad", "watch")
 AGENFK = os.environ.get("SQUAD_AGENFK") or "agenfk"
 CLOSED = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
 # not open work: parked cards and ideas wait for the owner, as parallel-plan's waves.py takes them

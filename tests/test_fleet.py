@@ -212,6 +212,14 @@ def test_the_survey_flags_a_goal_with_open_cards_and_nothing_running():
     assert rows["11111111-2222-3333-4444-555555555555"]["verdict"] == "-"
 
 
+def test_the_survey_reads_the_directory_the_hooks_write_even_with_a_config_dir_set():
+    h = W.home()
+    state(h, SID, repo="/r/.git", goal=goal("ship checkout", [EPIC]))
+    r = subprocess.run([sys.executable, FLEET, "--json"], capture_output=True, text=True,
+                       env=env(h, fake_agenfk(h), CLAUDE_CONFIG_DIR=os.path.join(h, "elsewhere")))
+    assert [row["session"] for row in json.loads(r.stdout)] == [SID], r.stdout + r.stderr
+
+
 def test_the_survey_prints_a_table_for_a_person():
     h = W.home()
     state(h, SID, repo="/r/.git", goal=goal("ship checkout", [EPIC]))

@@ -303,8 +303,8 @@ function privateTmpBase(tmp) {
  * the shared temporary folder (`<tmp>/journey-qa-<uid>`), else the user's cache folder. Never the shared /tmp itself,
  * where another local user could create the path, or a symlink, first and receive the driver token. The cache folder
  * comes last because it puts HOME among the actor folder's ancestors, where a host's upward search finds ~/CLAUDE.md.
- * The path is derived, not random, because `actor wait` finds the folder again from the run and actor (the driver gets
- * it from spawn, with the actor's token). Deciding the temporary-folder step creates that one empty 0700 folder, even
+ * The path is derived, not random, so a spawn finds the folder an earlier spawn of the same actor left; the driver gets
+ * it from spawn with the actor's token, and `actor wait` from spawn.json. Deciding the temporary-folder step creates that one empty 0700 folder, even
  * when only the path is asked for (a planned spawn, a cleanup).
  */
 export function actorRoot({ env = process.env, tmp = tmpdir(), home = homedir() } = {}) {
@@ -318,8 +318,14 @@ export function actorRoot({ env = process.env, tmp = tmpdir(), home = homedir() 
   return join(cache, WORKDIR_ROOT);
 }
 
-// Folder name of a run under the actors' root: one per run, so two runs never share an actor folder.
-const runKey = (runDir) => createHash("sha1").update(resolve(runDir)).digest("hex").slice(0, 10);
+// Folder name of a run under the actors' root: one per run, so two runs never share an actor folder. Keyed by the run's
+// real path (its resolved path while it does not exist), so `--run` through a symlink names the same folder as the
+// driver started on the run itself.
+function runKey(runDir) {
+  let p = resolve(runDir);
+  try { p = realpathSync(p); } catch {}
+  return createHash("sha1").update(p).digest("hex").slice(0, 10);
+}
 
 /** Actor working directory outside any repository, so hosts do not discover AGENTS.md/CLAUDE.md/skills of the project. */
 export function actorWorkdir(runDir, actorId, opts = {}) {
@@ -374,11 +380,14 @@ export function checkActorWorkdir(dir, runDir, actorId) {
   assertActorId(actorId);
   if (typeof dir !== "string" || !isAbsolute(dir)) throw unsafeWorkdir(String(dir), "it is not an absolute path");
   const parts = [WORKDIR_ROOT, runKey(runDir), actorId];
-  let base = dir;
-  for (let i = parts.length - 1; i >= 0; i--) {
-    if (basename(base) !== parts[i]) throw unsafeWorkdir(dir, `it is not the folder spawn prepares for actor ${actorId} of this run (…/${parts.join("/")})`);
-    base = dirname(base);
-  }
+  // A folder of another actor or run is not unsafe, only not this one: the message says what differs, not to remove it.
+  const notThis = (why) => new ContractError(`Refusing the actor folder ${dir}: ${why}. ` +
+    `Spawn hands over the folder it prepared for the run and actor it was given; spawn the actor again with the run the driver serves.`, "unsafe_workdir");
+  const base = dirname(dirname(dirname(dir)));
+  const [root, run, actor] = [dirname(dirname(dir)), dirname(dir), dir].map((p) => basename(p));
+  if (root !== WORKDIR_ROOT) throw notThis(`it is not an actor folder (…/${parts.join("/")} expected)`);
+  if (actor !== actorId) throw notThis(`it is the folder of actor ${actor}, not of ${actorId}`);
+  if (run !== parts[1]) throw notThis(`it belongs to another run than ${resolve(runDir)} (run folder ${run}, ${parts[1]} expected)`);
   const real = privateBase(base);
   if (!real) throw unsafeBase(base);
   let d = real;
@@ -392,9 +401,20 @@ export function checkActorWorkdir(dir, runDir, actorId) {
   return d;
 }
 
-/** Remove the actor's scratch folder, which holds its driver token, once the actor has ended. Only the folder `actorWorkdir` names. */
-export function cleanupActorWorkdir(runDir, actorId, opts = {}) {
-  rmSync(actorWorkdir(runDir, actorId, opts), { recursive: true, force: true });
+/**
+ * Remove the actor's scratch folder, which holds its driver token, once the actor has ended. `dir` is the folder spawn
+ * prepared (the `cwd` spawn.json records), not one derived again here: `actor wait` may run with another XDG_RUNTIME_DIR,
+ * TMPDIR or HOME than spawn did. The folder is removed only after passing checkActorWorkdir; otherwise nothing is
+ * removed and `{ kept, reason }` says why. A folder already gone is `{ removed: null }`.
+ */
+export function cleanupActorWorkdir(runDir, actorId, dir) {
+  if (typeof dir === "string" && isAbsolute(dir)) {
+    try { lstatSync(dir); } catch (e) { if (e.code === "ENOENT") return { removed: null }; }
+  }
+  let real;
+  try { real = checkActorWorkdir(dir, runDir, actorId); } catch (e) { return { kept: dir ?? null, reason: e.message }; }
+  rmSync(real, { recursive: true, force: true });
+  return { removed: real };
 }
 
 // A fresh file in the actor folder: whatever had the name is removed first, and `wx` refuses anything that reappears.
@@ -518,7 +538,7 @@ writeFileSync(${JSON.stringify(join(src, "exit.json"))}, JSON.stringify({ exit_c
   try {
     evidence = recordTranscript(runDir, actorId, done);
   } finally {
-    cleanupActorWorkdir(runDir, actorId);
+    cleanupActorWorkdir(runDir, actorId, cwd);
   }
   const cj = join(src, "commands.json");
   const session = existsSync(cj) ? JSON.parse(readFileSync(cj, "utf8")) : null;

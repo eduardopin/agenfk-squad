@@ -2,7 +2,7 @@
 // the run. No browser and no network beyond the driver's own loopback port.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -215,4 +215,21 @@ test("actor spawn hands its folder to the driver: an upload works when spawn and
   const said = readFileSync(join(RUN, "actors", "ana", "transcript.md"), "utf8");
   assert.ok(!/only files in the actor's own folder/.test(said), said);
   assert.equal(staged("bytes-from-a-spawned-actor").length, 1, said);
+});
+
+test("actor spawn with --run through a symlink to the driver's run hands over a folder the driver accepts", async (t) => {
+  if (process.platform === "win32") return t.skip("a custom host goes through cmd.exe there; the token and upload checks above cover Windows");
+  const link = join(fakeDir, "run-link");
+  symlinkSync(RUN, link, "dir");
+  const card = { ...JSON.parse(readFileSync(join(ROOT, "skills", "journey-qa", "assets", "templates", "actor-card.json"), "utf8")), actor_id: "ana" };
+  const cardFile = join(fakeDir, "card-link.json");
+  writeFileSync(cardFile, JSON.stringify(card));
+  assert.equal(jqa(["actor", "packet", cardFile, "--run", link]).status, 0);
+  const actor = "const f=require('fs');f.writeFileSync('photo.txt','bytes-through-a-linked-run');" +
+    "const r=require('child_process').spawnSync(process.execPath,['act.mjs','upload','e1','photo.txt'],{encoding:'utf8'});console.log(r.stdout+r.stderr)";
+  const r = jqa(["actor", "spawn", "ana", "--run", link, "--exec", "--host", "custom", "--cmd", `"${process.execPath}" -e "${actor}"`, "--unsandboxed"],
+    { env: { ...process.env, XDG_RUNTIME_DIR: privateBase() } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const said = readFileSync(join(RUN, "actors", "ana", "transcript.md"), "utf8");
+  assert.equal(staged("bytes-through-a-linked-run").length, 1, said);
 });

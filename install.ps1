@@ -217,30 +217,38 @@ function PythonParts {
 }
 
 $ShimMark = 'REM agenfk-squad: written by install.ps1'
-$ShimPath = Join-Path (Join-Path (Join-Path $UserHome '.local') 'bin') 'squad-turn.cmd'
-$ShimTarget = Join-Path (Split-Path $ShimPath) 'squad-turn.path'
+# The commands called by name, as install.sh links them into ~/.local/bin: one <name>.cmd shim and one
+# <name>.path each in %USERPROFILE%\.local\bin, running hooks\<name>.py.
+$Shims = @('squad-turn.cmd', 'squad-decisions.cmd')
+$ShimDir = Join-Path (Join-Path $UserHome '.local') 'bin'
+function ShimName([string]$cmd) { return ($cmd -replace '\.cmd$', '') }
+function ShimPath([string]$cmd) { return (Join-Path $ShimDir $cmd) }
+function ShimTarget([string]$cmd) { return (Join-Path $ShimDir "$(ShimName $cmd).path") }
 
 # cmd decodes the bytes of a batch file in whatever code page the console has when it runs, which an
 # installer cannot know: a path with an accent (a profile called "Jose" with an accent) written in any one
 # code page breaks under another. So the shim holds no path. %~dp0, its own folder, is expanded by cmd
-# itself, and Python reads the path of squad-turn.py from squad-turn.path next to it, in UTF-8.
+# itself, and Python reads the path of <name>.py from <name>.path next to it, in UTF-8.
 $ShimPython = "import runpy,sys;p=open(sys.argv[1],encoding='utf-8-sig').read().strip();sys.argv=[p]+sys.argv[2:];runpy.run_path(p,run_name='__main__')"
 
-function WriteShim {
+function WriteShim([string]$cmd) {
+  $name = ShimName $cmd
+  $ShimPath = ShimPath $cmd
+  $ShimTarget = ShimTarget $cmd
   $parts = @(PythonParts)
   if ($parts.Count -eq 0) {
-    Warn "WARNING no Python 3 on PATH (not the Microsoft Store 'python' alias): squad-turn will not run until there is one."
+    Warn "WARNING no Python 3 on PATH (not the Microsoft Store 'python' alias): $name will not run until there is one."
     $parts = @('python')
   }
   $launcher = '"' + $parts[0] + '"'
   if ($parts.Count -gt 1) { $launcher += ' ' + ($parts[1..($parts.Count - 1)] -join ' ') }
   if ($launcher -match '[^\x20-\x7E]') {
-    Warn "WARNING SQUAD_PYTHON holds a character outside ASCII: squad-turn.cmd may not find it in every console code page."
+    Warn "WARNING SQUAD_PYTHON holds a character outside ASCII: $name.cmd may not find it in every console code page."
   }
-  $body = "@echo off`r`n$ShimMark; it is rewritten on every run`r`n$launcher -c `"$ShimPython`" `"%~dp0squad-turn.path`" %*`r`n"
+  $body = "@echo off`r`n$ShimMark; it is rewritten on every run`r`n$launcher -c `"$ShimPython`" `"%~dp0$name.path`" %*`r`n"
   $oem = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
   $bytes = $oem.GetBytes($body)
-  $target = (New-Object System.Text.UTF8Encoding($false)).GetBytes("$Squad\hooks\squad-turn.py`n")
+  $target = (New-Object System.Text.UTF8Encoding($false)).GetBytes("$Squad\hooks\$name.py`n")
   if (Test-Path -LiteralPath $ShimPath) {
     if (-not $oem.GetString([System.IO.File]::ReadAllBytes($ShimPath)).Contains($ShimMark)) {
       Warn "SKIPPED $ShimPath exists and is not the squad's - resolve it by hand"; return $false
@@ -256,7 +264,7 @@ function WriteShim {
   New-Item -ItemType Directory -Force -Path (Split-Path $ShimPath) | Out-Null
   [System.IO.File]::WriteAllBytes($ShimTarget, $target)
   [System.IO.File]::WriteAllBytes($ShimPath, $bytes)
-  Say "ok      $ShimPath -> $Squad\hooks\squad-turn.py"
+  Say "ok      $ShimPath -> $Squad\hooks\$name.py"
   return $true
 }
 
@@ -284,10 +292,14 @@ if ($Uninstall) {
     }
   }
   SaveMarks
-  if (Test-Path -LiteralPath $ShimPath) {
-    if ([System.IO.File]::ReadAllText($ShimPath).Contains($ShimMark)) {
-      Remove-Item -LiteralPath $ShimPath -Force; Say "removed $ShimPath"
-      if (Test-Path -LiteralPath $ShimTarget) { Remove-Item -LiteralPath $ShimTarget -Force; Say "removed $ShimTarget" }
+  foreach ($cmd in $Shims) {
+    $ShimPath = ShimPath $cmd
+    $ShimTarget = ShimTarget $cmd
+    if (Test-Path -LiteralPath $ShimPath) {
+      if ([System.IO.File]::ReadAllText($ShimPath).Contains($ShimMark)) {
+        Remove-Item -LiteralPath $ShimPath -Force; Say "removed $ShimPath"
+        if (Test-Path -LiteralPath $ShimTarget) { Remove-Item -LiteralPath $ShimTarget -Force; Say "removed $ShimTarget" }
+      }
     }
   }
   exit 0
@@ -318,7 +330,9 @@ if (-not (Link (Join-Path $Squad 'CLAUDE.md') (Join-Path $Claude 'CLAUDE.md'))) 
 foreach ($h in @('squad-router.py', 'squad-watch.py', 'squad-switch.py', 'squad-turn.py')) {
   if (-not (Link (Join-Path (Join-Path $Squad 'hooks') $h) (Join-Path (Join-Path $Claude 'hooks') $h))) { $rc = 1 }
 }
-if (-not (WriteShim)) { $rc = 1 }
+# squad-decisions.py: the SessionStart hook of hooks/manifest.json (docs/decisions.md)
+if (-not (Link (Join-Path (Join-Path $Squad 'hooks') 'squad-decisions.py') (Join-Path (Join-Path $Claude 'hooks') 'squad-decisions.py'))) { $rc = 1 }
+foreach ($cmd in $Shims) { if (-not (WriteShim $cmd)) { $rc = 1 } }
 
 # oh-my-pi (omp) reads a different agent dialect at ~\.omp\agent\agents; see skills/harness-port/SKILL.md
 if (Get-Command omp -ErrorAction SilentlyContinue) {

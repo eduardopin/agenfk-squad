@@ -10,7 +10,9 @@ not depend on whether this account may create symbolic links.
     python tests/test_install_ps1.py
 """
 import hashlib
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +20,34 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
+
+with open(os.path.join(ROOT, "hooks", "manifest.json"), encoding="utf-8") as _fh:
+    MANIFEST_SCRIPTS = sorted({h["script"] for h in json.load(_fh)["hooks"]})
+
+
+def hooks_linked_by_install_ps1():
+    """The hook files install.ps1 links into <config>/hooks, read from its text: the names in the
+    `foreach ($h in @(...))` list plus any Link line of its own that names a hooks/<script>.py."""
+    with open(os.path.join(ROOT, "install.ps1"), encoding="utf-8") as fh:
+        text = fh.read()
+    names = set()
+    for listed in re.findall(r"foreach \(\$h in @\(([^)]*)\)\)", text):
+        names |= set(re.findall(r"'([\w.-]+\.py)'", listed))
+    for line in text.splitlines():
+        if re.search(r"\bLink\b", line) and "'hooks'" in line:
+            names |= set(re.findall(r"'(squad-[\w-]+\.py)'", line))
+    return names
+
+
+def check_every_manifest_hook_is_linked_by_install_ps1():
+    """Runs on every platform, before the Windows guard: a hook registered from the manifest whose file
+    install.ps1 never links makes every Windows session start with a hook error."""
+    missing = sorted(set(MANIFEST_SCRIPTS) - hooks_linked_by_install_ps1())
+    assert not missing, f"hooks/manifest.json registers {missing}, which install.ps1 does not link"
+    print("ok  every hook in hooks/manifest.json is linked by install.ps1 (read from its text)")
+
+
+check_every_manifest_hook_is_linked_by_install_ps1()
 
 if os.name != "nt" or not POWERSHELL:
     print("skipped: install.ps1 is for Windows (use install.sh elsewhere)")
@@ -113,6 +143,32 @@ def test_a_fresh_install_links_directories_and_copies_files_with_a_mark():
     assert sha(os.path.join(cfg, "hooks", "squad-watch.py")) in marks, marks            # the mark that makes it updatable
     assert os.path.isfile(os.path.join(h, ".local", "bin", "squad-turn.cmd"))
     assert "sessions started after this step" in r.out, r.out
+
+
+def test_every_hook_in_the_manifest_is_installed_and_every_command_has_a_shim():
+    """The run itself, on Windows: each script get.ps1 registers from hooks/manifest.json exists in
+    <config>/hooks, and each command install.sh puts in ~/.local/bin has its .cmd shim."""
+    repo, h = repo_copy(), profile()
+    r = run(repo, h, "-NoSymlink")
+    assert r.returncode == 0, r.out
+    for script in MANIFEST_SCRIPTS:
+        dst = os.path.join(h, ".claude", "hooks", script)
+        assert os.path.isfile(dst) and sha(dst) == sha(os.path.join(repo, "hooks", script)), script
+    for name in ("squad-turn", "squad-decisions"):
+        assert os.path.isfile(os.path.join(h, ".local", "bin", name + ".cmd")), name
+        with open(os.path.join(h, ".local", "bin", name + ".path"), encoding="utf-8") as fh:
+            assert fh.read().strip().endswith(os.path.join("hooks", name + ".py")), name
+
+
+def test_the_squad_decisions_command_runs_from_the_shim():
+    repo, h = repo_copy(), profile()
+    assert run(repo, h, "-NoSymlink").returncode == 0
+    work = tempfile.mkdtemp(prefix="work-", dir=TMP)
+    subprocess.run(["git", "init", "-q", work], check=True)
+    shim = os.path.join(h, ".local", "bin", "squad-decisions.cmd")
+    e = dict(os.environ, HOME=h, USERPROFILE=h)
+    r = subprocess.run(["cmd", "/c", shim, "path"], capture_output=True, text=True, env=e, cwd=work, timeout=120)
+    assert r.returncode == 0 and os.path.join(".claude", "squad", "decisions") in r.stdout, (r.stdout, r.stderr)
 
 
 def test_a_second_run_changes_nothing():
@@ -307,6 +363,8 @@ def test_uninstall_removes_what_the_squad_made_and_keeps_what_is_not_its_own():
     assert not os.path.lexists(os.path.join(cfg, "agents", "verifier.md"))
     assert not os.path.lexists(os.path.join(h, ".local", "bin", "squad-turn.cmd"))
     assert not os.path.lexists(os.path.join(h, ".local", "bin", "squad-turn.path"))
+    assert not os.path.lexists(os.path.join(h, ".local", "bin", "squad-decisions.cmd"))
+    assert not os.path.lexists(os.path.join(h, ".local", "bin", "squad-decisions.path"))
     assert read(os.path.join(cfg, "agents", "mine.md")) == "mine\n"
     assert "My own note." in read(os.path.join(cfg, "agents", "developer.md"))             # kept, and said so
     assert "edited" in r.out and "developer.md" in r.out, r.out

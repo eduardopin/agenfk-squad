@@ -93,12 +93,15 @@ stdin. The watcher is one script that looks at `hook_event_name` and branches.
 | `Stop` | The main session ends its turn | `squad-watch.py` | Yes. Returns `decision: block` when a handoff is owed |
 | `PreCompact` | Before `/compact` or an auto-compact | `squad-watch.py` | No. Writes `<session>-compact.md` in the main session; prints nothing |
 
-The router is separate on purpose: it is about two hundred and fifty lines of
+The router is separate on purpose: it is under three hundred lines of
 regular expressions with no state, and it should keep working if the watcher is
 switched off. Its decision detector is an allowlist: a marker ("always",
 "nunca", "from now on") counts only when an instruction from a curated list of
-verbs follows it, and pasted text, diffs and prompts written by programs are
-never read, so untrusted text cannot become a "record this decision" line.
+verbs follows it. Diffs, logs, tracebacks, quoted, indented or fenced lines,
+known program prompts and prompts that announce a quote ("here is what the other
+agent said") are skipped. Other pasted prose, such as a PR description or an
+issue body, can still trigger the line, so the line is a hint the session must
+judge: it says to record only the owner's own words in that prompt.
 
 ### What "deny" looks like to the model
 

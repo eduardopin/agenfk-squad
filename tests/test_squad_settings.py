@@ -301,6 +301,15 @@ def test_a_hook_without_a_list_of_event_names_is_a_bad_manifest():
         assert not os.path.exists(os.path.join(config, "settings.json"))
 
 
+def test_the_guarantees_name_the_empty_list_uninstall_removes():
+    guarantees = ss.__doc__.split("Guarantees:")[1].split("\n\n")[0]
+    with open(os.path.join(ROOT, "docs", "installation.md"), encoding="utf-8") as fh:
+        windows_uninstall = fh.read().split("### Uninstall on Windows")[1].split("\n### ")[0]
+    for text in (guarantees, windows_uninstall):
+        flat = " ".join(text.split())
+        assert "empty list" in flat and "manifest" in flat, text
+
+
 def test_an_empty_or_missing_matcher_is_the_same_as_star():
     config = config_with("squad-watch.py")
     cmd = ss.command_for(config, "squad-watch.py")

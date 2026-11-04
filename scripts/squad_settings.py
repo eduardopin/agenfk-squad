@@ -13,7 +13,10 @@ them. Standard library only. Used by get.sh, and safe to run by hand:
 the link that install.sh creates.
 
 Guarantees:
-  - every other key, and every hook that is not the squad's, stays as it was;
+  - every other key, and every hook that is not the squad's, stays as it was,
+    with one exception: when uninstall removed a squad entry from the file, it
+    also removes an empty list left on one of the manifest's events (an older
+    install could leave one there); an empty list on any other event stays;
   - running install twice changes nothing the second time (no write at all);
   - before any write, the current file is copied to settings.json.bak-<timestamp>;
   - a settings.json that is not valid JSON, or not shaped like Claude Code's

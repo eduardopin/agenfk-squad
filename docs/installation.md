@@ -45,13 +45,17 @@ It links, into `${CLAUDE_CONFIG_DIR:-~/.claude}`:
 | `agents/<name>.md` | each file in `agents/` |
 | `skills/<name>` | each skill directory that has a `SKILL.md`, including those in `skills/vendor/` |
 | `CLAUDE.md` | `CLAUDE.md` |
-| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py` | the files in `hooks/` |
+| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py`, `squad-decisions.py` | the files in `hooks/` |
 
-and, so that the merge queue can be called by name:
+and, so that the merge queue and the project decisions can be called by name:
 
 | Link | Target |
 |---|---|
 | `~/.local/bin/squad-turn` | `hooks/squad-turn.py` |
+| `~/.local/bin/squad-decisions` | `hooks/squad-decisions.py` ([Project decisions](decisions.md)) |
+
+On Windows, `install.ps1` writes `squad-turn.cmd` and `squad-decisions.cmd`
+shims in `%USERPROFILE%\.local\bin` instead (see [Windows](#windows)).
 
 Make sure `~/.local/bin` is on your `PATH`.
 
@@ -154,6 +158,13 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
           { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 20 }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-decisions.py", "timeout": 5 }
+        ]
+      }
     ]
   }
 }
@@ -163,6 +174,7 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 |---|---|
 | `squad-router.py` | `UserPromptSubmit` |
 | `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `PreCompact` |
+| `squad-decisions.py` | `SessionStart`: prints the index of the project's active decisions ([Project decisions](decisions.md)) |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
 them when needed. `squad-wake.py` is not a hook either: the timer runs it.
@@ -328,12 +340,13 @@ What `install.ps1` makes, and what it refuses, is what `install.sh` does:
 a real file in the way is `SKIPPED` and the exit code is 1; a source that
 resolves outside the repository is `REFUSED`. Two things are Windows-only:
 
-- `squad-turn` is a `squad-turn.cmd` in `%USERPROFILE%\.local\bin` that runs
-  `hooks\squad-turn.py` with the interpreter it found. Put that directory on
-  your `PATH` (Settings → System → About → Advanced system settings →
-  Environment Variables → your user's `Path` → Edit → New), then open a new
-  window; `squad-turn status` in the check below fails until you do. The
-  installer warns while it is missing.
+- `squad-turn` and `squad-decisions` are a `squad-turn.cmd` and a
+  `squad-decisions.cmd` in `%USERPROFILE%\.local\bin` that run
+  `hooks\squad-turn.py` and `hooks\squad-decisions.py` with the interpreter it
+  found. Put that directory on your `PATH` (Settings → System → About →
+  Advanced system settings → Environment Variables → your user's `Path` →
+  Edit → New), then open a new window; `squad-turn status` in the check below
+  fails until you do. The installer warns while it is missing.
 - The hook commands in `settings.json` read `python "C:/.../hooks/squad-watch.py"`
   (forward slashes, `python` rather than `python3`). An old entry written as
   `python3 ...` is rewritten, because on Windows it would run the Store stub
@@ -365,10 +378,11 @@ you installed by hand: `git pull`, then `install.ps1` again, as in the previous 
 else's: the one exception is an empty list on an event the hook manifest
 names, which an older install could leave behind; it goes only when uninstall
 removed a squad entry from the file, and an empty list on any other event
-stays), the links into the clone, the `squad-turn.cmd` shim, and the marked
-copies that you did not edit (an edited copy is kept, with a warning); the
-clone stays. `-Purge` deletes the clone too, unless it has local changes: then
-it refuses and you delete it by hand. By hand:
+stays), the links into the clone, the `squad-turn.cmd` and
+`squad-decisions.cmd` shims, and the marked copies that you did not edit (an
+edited copy is kept, with a warning); the clone stays. `-Purge` deletes the
+clone too, unless it has local changes: then it refuses and you delete it by
+hand. By hand:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall`
 and `python scripts\squad_settings.py uninstall`.
 State under `%USERPROFILE%\.claude\squad` is plain files; delete the

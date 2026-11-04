@@ -21,6 +21,11 @@
       "script": "squad-watch.py",
       "timeout": 20,
       "events": ["PreCompact"]
+    },
+    {
+      "script": "squad-decisions.py",
+      "timeout": 5,
+      "events": ["SessionStart"]
     }
   ]
 }

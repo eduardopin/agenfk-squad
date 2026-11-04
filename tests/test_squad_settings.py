@@ -244,6 +244,32 @@ def test_a_malformed_hook_matcher_is_refused_before_anything_is_written():
         assert not os.path.exists(os.path.join(config, "settings.json"))
 
 
+def test_a_moved_hook_keeps_the_timeout_the_user_gave_it():
+    config = config_with("squad-graph.py")
+    old = {"type": "command", "command": ss.command_for(config, "squad-graph.py"), "timeout": 45}
+    settings = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [old]}]}}
+    changed, report = run("install", settings, config, manifest([GRAPH]))      # the manifest says 10
+    assert changed, report
+    assert settings["hooks"]["PreToolUse"] == [{"matcher": "Bash|Grep|Read|Glob", "hooks": [
+        {"type": "command", "command": ss.command_for(config, "squad-graph.py"), "timeout": 45}]}], settings
+
+
+def test_an_empty_or_missing_matcher_is_the_same_as_star():
+    config = config_with("squad-watch.py")
+    cmd = ss.command_for(config, "squad-watch.py")
+    for pre in ({"matcher": ""}, {}):                       # the manifest says "*" on PreToolUse
+        for stop in ({"matcher": "*"}, {"matcher": ""}):    # and nothing on Stop
+            settings = {"hooks": {
+                "PreToolUse": [dict(pre, hooks=[{"type": "command", "command": cmd, "timeout": 10}])],
+                "Stop": [dict(stop, hooks=[{"type": "command", "command": cmd, "timeout": 10}])],
+            }}
+            before = json.dumps(settings, sort_keys=True)
+            changed, report = run("install", settings, config, manifest([WATCH]))
+            assert not changed, (pre, stop, report)
+            assert json.dumps(settings, sort_keys=True) == before, settings
+            assert all("already registered" in line for line in report), report
+
+
 if __name__ == "__main__":
     try:
         for name, fn in sorted(globals().items()):

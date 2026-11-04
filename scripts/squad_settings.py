@@ -35,7 +35,10 @@ The manifest decides each squad hook's matcher: a hook's own "matchers"
 ({event: matcher}, where null means no matcher) wins over the top-level one.
 A squad entry found under any other matcher on that event (moved by hand, or
 left by an older manifest) is moved to the manifest's, so a narrow hook never
-stays registered on every tool call.
+stays registered on every tool call. A moved entry keeps the timeout it had.
+No matcher, "" and "*" all match every tool in Claude Code, so they count as
+one matcher here: an entry under any of them is where a "*" (or no matcher)
+in the manifest wants it, and stays put.
 """
 import contextlib
 import argparse
@@ -214,6 +217,13 @@ def repair_stale(groups, config, script, windows=None):
     return fixed
 
 
+def same_matcher(a, b):
+    """Claude Code runs a group with no matcher, or "", on every tool, as it does "*"."""
+    def broad(m):
+        return m is None or m in ("", "*")
+    return a == b or (broad(a) and broad(b))
+
+
 def runs(group, script, config):
     return any(isinstance(h, dict) and squad_script(h.get("command"), config) == script
                for h in group.get("hooks", []))
@@ -225,7 +235,7 @@ def drop(settings, event, script, config, matcher):
     its group and its place."""
     kept = []
     for g in settings["hooks"][event]:
-        if g.get("matcher") == matcher:
+        if same_matcher(g.get("matcher"), matcher):
             kept.append(g)
             continue
         entries = [h for h in g.get("hooks", [])
@@ -245,15 +255,18 @@ def install(settings, config, plan, report):
         missing = {}                         # matcher -> entries, one group per matcher
         for script, timeout, matcher in wanted:
             groups = settings.get("hooks", {}).get(event, [])
-            right = any(runs(g, script, config) and g.get("matcher") == matcher for g in groups)
-            stale = any(runs(g, script, config) and g.get("matcher") != matcher for g in groups)
+            right = any(runs(g, script, config) and same_matcher(g.get("matcher"), matcher) for g in groups)
+            stale = [h for g in groups if not same_matcher(g.get("matcher"), matcher)
+                     for h in g.get("hooks", [])
+                     if isinstance(h, dict) and squad_script(h.get("command"), config) == script]
             if right:
                 if stale:                    # a second copy would still run on every tool call
                     drop(settings, event, script, config, matcher)
                     changed = True
                     report.append(f"on      {script:<16} {event} (copy under another matcher removed)")
                 # the copy that stays is the one to repair: on Windows a `python3` entry runs the Store stub
-                kept = [g for g in settings.get("hooks", {}).get(event, []) if g.get("matcher") == matcher]
+                kept = [g for g in settings.get("hooks", {}).get(event, [])
+                        if same_matcher(g.get("matcher"), matcher)]
                 if repair_stale(kept, config, script):
                     changed = True
                     report.append(f"fixed   {script:<16} {event} (was `python3`, the Microsoft Store stub)")
@@ -275,6 +288,7 @@ def install(settings, config, plan, report):
             else:
                 report.append(f"on      {script:<16} {event} (added)")
             entry = {"type": "command", "command": command_for(config, script)}
+            timeout = next((h["timeout"] for h in stale if "timeout" in h), timeout)    # the user's, if moved
             if timeout:
                 entry["timeout"] = timeout
             missing.setdefault(matcher, []).append(entry)

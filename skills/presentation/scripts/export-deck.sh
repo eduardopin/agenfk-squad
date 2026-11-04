@@ -21,7 +21,12 @@
 #      always), or the PDF does not have exactly one page per slide
 #
 # Chrome: --chrome, then $CHROME, then google-chrome, google-chrome-stable,
-# chromium, chromium-browser on the PATH and, last, the default macOS path.
+# chromium, chromium-browser on the PATH, the default macOS path and, under
+# Git Bash on Windows, the default Windows install folders.
+#
+# Windows: run it with Git Bash. Chrome for Windows does not read Git Bash
+# paths (/c/...), so there every path handed to Chrome goes through cygpath:
+# files as C:\..., URLs as file:///C:/... Elsewhere paths go as they are.
 set -euo pipefail
 
 DECK="" ; PDF="" ; PNG_DIR="" ; TRANSPARENT=0 ; THEME="" ; MEASURE=0 ; CHROME_ARG=""
@@ -41,6 +46,27 @@ while [ $# -gt 0 ]; do
     *)             DECK="$1"; shift ;;
   esac
 done
+
+# ---------- Windows (Git Bash) ----------
+UNAME=$(uname -s 2>/dev/null || true)
+GIT_BASH=0
+case "$UNAME" in
+  MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && GIT_BASH=1 ;;
+esac
+# posix_path <path>: a path bash can use (C:\x becomes /c/x under Git Bash).
+posix_path() {
+  if [ "$GIT_BASH" -eq 1 ] && [ -n "$1" ]; then cygpath -u "$1"; else printf '%s\n' "$1"; fi
+}
+# native_path <path>: the absolute path Chrome opens (C:\x under Git Bash).
+native_path() {
+  if [ "$GIT_BASH" -eq 1 ]; then cygpath -w -a "$1"; else printf '%s\n' "$1"; fi
+}
+# file_url <absolute path>: file:///C:/x under Git Bash, file:///x elsewhere.
+file_url() {
+  if [ "$GIT_BASH" -eq 1 ]; then printf 'file:///%s\n' "$(cygpath -m -a "$1")"; else printf 'file://%s\n' "$1"; fi
+}
+DECK=$(posix_path "$DECK") ; PDF=$(posix_path "$PDF") ; PNG_DIR=$(posix_path "$PNG_DIR")
+CHROME_ARG=$(posix_path "$CHROME_ARG")
 
 [ -n "$DECK" ] && [ -f "$DECK" ] || usage
 [ -n "$PDF" ] || [ -n "$PNG_DIR" ] || [ "$MEASURE" -eq 1 ] || { echo "nothing to do: pass --pdf, --png-dir or --measure" >&2; exit 2; }
@@ -62,6 +88,7 @@ resolve_chrome() {
     echo "Chrome not found at --chrome $CHROME_ARG" >&2; return 1
   fi
   if [ -n "${CHROME:-}" ]; then
+    CHROME=$(posix_path "$CHROME")
     [ -x "$CHROME" ] && { echo "$CHROME"; return 0; }
     echo "Chrome not found at \$CHROME=$CHROME" >&2; return 1
   fi
@@ -71,18 +98,31 @@ resolve_chrome() {
   done
   c="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   [ -x "$c" ] && { echo "$c"; return 0; }
-  echo "no Chrome found (looked for google-chrome, google-chrome-stable, chromium, chromium-browser on the PATH and the macOS path); pass --chrome <path> or set \$CHROME" >&2
+  if [ "$GIT_BASH" -eq 1 ]; then
+    # Per machine (Program Files, 64- and 32-bit) and per user (LocalAppData).
+    # Matched case-blind: the names reach bash in whatever case the caller used.
+    local base
+    while IFS= read -r base; do
+      [ -n "$base" ] || continue
+      c="$(posix_path "$base")/Google/Chrome/Application/chrome.exe"
+      [ -x "$c" ] && { echo "$c"; return 0; }
+    done <<WINDIRS
+$(env | grep -i -E '^(programfiles|programfiles\(x86\)|programw6432|localappdata)=' | cut -d= -f2- || true)
+WINDIRS
+  fi
+  echo "no Chrome found (looked for google-chrome, google-chrome-stable, chromium, chromium-browser on the PATH, the macOS path and, under Git Bash, the Windows install folders); pass --chrome <path> or set \$CHROME" >&2
   return 1
 }
 CHROME_BIN=$(resolve_chrome) || exit 2
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# Cleanup must never change the exit code: on Windows Chrome can still hold the profile.
+trap 'rm -rf "$WORK" 2>/dev/null || true' EXIT
 DECK_ABS="$(cd "$(dirname "$DECK")" && pwd)/$(basename "$DECK")"
 
 # Throwaway profile: never touches the user's Chrome profile.
 chrome() { "$CHROME_BIN" --headless --disable-gpu --no-first-run --no-default-browser-check \
-  --user-data-dir="$WORK/profile" "$@" 2>/dev/null; }
+  --user-data-dir="$(native_path "$WORK/profile")" "$@" 2>/dev/null; }
 
 # render_variant <classes> <out>: a copy of the deck with classes on <html> and
 # the theme pinned (light, unless the deck pinned another), so the result does
@@ -94,7 +134,7 @@ render_variant() {
   local classes="$1" out="$2" js
   js=$(printf '"%s",' $classes | sed 's/,$//')
   {
-    awk -v b="<base href=\"file://$(dirname "$DECK_ABS")/\">" '
+    awk -v b="<base href=\"$(file_url "$(dirname "$DECK_ABS")")/\">" '
       !seen && match($0, /<[hH][eE][aA][dD]([ \t][^>]*)?>/) {
         $0 = substr($0, 1, RSTART + RLENGTH - 1) b substr($0, RSTART + RLENGTH); seen = 1 }
       { print }' "$DECK"
@@ -134,7 +174,7 @@ measure() {
 JS
   printf '<!doctype html><html><body style="margin:0"><pre id="m"></pre><iframe src="%s" width="%s" height="%s" style="border:0;display:block"></iframe><script>addEventListener("message",function(e){document.getElementById("m").textContent=String(e.data)})</script></body></html>\n' \
     "$(basename "$f")" "$w" "$h" > "$frame"
-  out=$(chrome --window-size="$((w + 200)),$((h + 400))" --virtual-time-budget=10000 --dump-dom "file://$frame" || true)
+  out=$(chrome --window-size="$((w + 200)),$((h + 400))" --virtual-time-budget=10000 --dump-dom "$(file_url "$frame")" || true)
   line=$(printf '%s' "$out" | grep -o 'MEASURE [^<]* END' | head -1 || true)
   [ -n "$line" ] || { echo "measure $label: Chrome returned no measurement" >&2; return 1; }
   counted=$(printf '%s\n' "$line" | tr ' ' '\n' | grep -c '=' || true)
@@ -164,7 +204,7 @@ if [ -n "$PDF" ]; then
   render_variant "render" "$WORK/print.html"
   rm -f "$PDF"
   chrome --no-pdf-header-footer --window-size=1280,720 --virtual-time-budget=15000 \
-    --print-to-pdf="$PDF" "file://$WORK/print.html" || true
+    --print-to-pdf="$(native_path "$PDF")" "$(file_url "$WORK/print.html")" || true
   [ -s "$PDF" ] || { echo "Chrome did not produce $PDF" >&2; exit 1; }
   # /Type /Page (leaf) and /Type /Pages (tree); count only the leaves.
   PAGES=$( (grep -a -o '/Type */Pages*' "$PDF" || true) | (grep -c 'Page$' || true) )
@@ -191,7 +231,7 @@ if [ -n "$PNG_DIR" ]; then
     out="$PNG_DIR/$(printf '%02d' "$i")-$id.png"
     rm -f "$out"
     chrome --hide-scrollbars --window-size=1280,720 --force-device-scale-factor=2 ${BG[@]+"${BG[@]}"} \
-      --virtual-time-budget=12000 --screenshot="$out" "file://$f" || true
+      --virtual-time-budget=12000 --screenshot="$(native_path "$out")" "$(file_url "$f")" || true
     [ -s "$out" ] || { echo "Chrome did not produce $out" >&2; exit 1; }
     echo "png: $out"
     i=$((i+1))

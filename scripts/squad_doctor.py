@@ -119,8 +119,10 @@ def check_agenfk(which=shutil.which, run=subprocess.run, timeout=30):
     if r.returncode != 0 or failed:
         why = f": {(failed or lines)[0]}" if failed or lines else ""
         said = f"exited {r.returncode}" if r.returncode != 0 else "reports a problem"
+        server = any("API Server" in line for line in failed) or not failed
         return result("agenfk", WARN, f"`agenfk health` {said}{why}",
-                      "start the server with `agenfk up`, then run `agenfk health`")
+                      "start the server with `agenfk up`, then run `agenfk health`" if server
+                      else "run `agenfk health` and fix what it reports")
     return result("agenfk", OK, f"`agenfk health` answered ({exe})")
 
 

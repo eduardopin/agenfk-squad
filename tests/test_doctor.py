@@ -321,7 +321,8 @@ def test_the_doctor_writes_no_bytecode_even_without_dash_b():
                 "hooks/squad-watch.py"):
         os.makedirs(os.path.dirname(os.path.join(clone, rel)), exist_ok=True)
         shutil.copy(os.path.join(ROOT, rel), os.path.join(clone, rel))
-    env = {"HOME": clone, "PATH": "/usr/bin:/bin"}            # no PYTHONDONTWRITEBYTECODE, no -B
+    empty = tempfile.mkdtemp(dir=TMP)                         # nothing on PATH: never the real agenfk
+    env = {"HOME": clone, "PATH": empty}                      # no PYTHONDONTWRITEBYTECODE, no -B
     r = subprocess.run([sys.executable, os.path.join(clone, "scripts", "squad_doctor.py"), "--json",
                         "--config", os.path.join(clone, "config")], cwd=clone, env=env, capture_output=True,
                        text=True, encoding="utf-8", errors="replace", timeout=120)
@@ -475,6 +476,7 @@ def test_agenfk_health_that_prints_failed_but_exits_0_warns():
                                   'echo "Found 1 potential issue(s)." >&2; exit 0')
     check = doc.check_agenfk(which=lambda _: exe)
     assert check["status"] == doc.WARN and check["summary"].endswith(": Found 1 potential issue(s)."), check
+    assert "agenfk up" not in check["fix"] and "fix what it reports" in check["fix"], check
     exe = stub(bin_dir, "agenfk", 'echo "Checking API Server... OK"; echo "All systems healthy!"; exit 0')
     assert doc.check_agenfk(which=lambda _: exe)["status"] == doc.OK
 

@@ -170,17 +170,20 @@ S=~/.claude/skills/presentation/scripts
 ```
 
 Chrome comes from `--chrome`, `$CHROME`, then `google-chrome`,
-`google-chrome-stable`, `chromium` or `chromium-browser` on the PATH and,
-last, the default macOS path. With none of them the script stops with exit
-code 2 and says where it looked. It runs with a throwaway profile and never
-touches the user's own.
+`google-chrome-stable`, `chromium` or `chromium-browser` on the PATH, the
+default macOS path and, under Git Bash, the default Windows install folders
+(Program Files and the per-user LocalAppData). With none of them the script
+stops with exit code 2 and says where it looked. It runs with a throwaway
+profile and never touches the user's own.
 
 On Windows, run it with Git Bash (`bash export-deck.sh ...` from Git Bash, or
 Git's `bash.exe` by full path; a bare `bash` from PowerShell or cmd can start
-the WSL launcher instead). There the deck checks and the exit codes below hold,
-but the Chrome export (measure, PDF, PNG) is not verified on Windows: it hands
-Chrome `file://` URLs built from Git Bash paths. Export from Linux, macOS or
-WSL until it is.
+the WSL launcher instead). There every path handed to Chrome goes through
+`cygpath`: files as `C:\...`, URLs as `file:///C:/...`, never the `/c/...` of
+Git Bash. The deck checks and the exit codes below hold there, and the export
+tests run on the Windows CI, but the Chrome export (measure, PDF, PNG) is not
+yet verified on Windows: until a green Windows run, export from Linux, macOS or
+WSL.
 
 The script's gates (exit code other than 0; never work around them):
 
@@ -234,6 +237,7 @@ Adapted from a private slide-deck skill: the protocol, the writing rules, the
 chips and the render-mode lessons came from there. Rewritten for the squad
 without that company's brand and assets, with neutral tokens aligned with
 `design-reference`, a Linux export and the measurement and page-count gates in
-the script. Outlines, layouts, copy formulas and the chart pattern came from
-the claudekit `slides` skill (MIT), which this one replaces. The sideways
+the script. The idea of outlines, layouts, copy formulas and a chart pattern
+came from the claudekit `slides` skill, which this one replaces; it is restated
+in own words, nothing is copied and no licence is claimed. The sideways
 navigation with two rails and the `--ds-*` sweep contract belong to the squad.

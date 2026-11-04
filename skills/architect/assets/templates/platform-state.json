@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "entities": [],
+  "relationships": [],
+  "example_entity_fields": [
+    "id",
+    "type",
+    "owner",
+    "source",
+    "observed_at",
+    "version",
+    "attributes"
+  ],
+  "example_relationship_fields": [
+    "from",
+    "relation",
+    "to",
+    "source",
+    "observed_at"
+  ],
+  "supported_entity_types": [
+    "service",
+    "repository",
+    "pipeline",
+    "environment",
+    "cloud_resource",
+    "identity",
+    "slo",
+    "cost_allocation"
+  ],
+  "note": "Fill in only observed relationships; one versioned JSON is enough to start."
+}
+

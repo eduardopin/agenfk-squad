@@ -9,7 +9,7 @@ It runs **no tests and no build**. The goal is under 5 minutes per run.
 ## Why the suite does not run here
 
 In a squad project, tests, build and heavy review (REVIEW, ADVERSARIAL,
-MUTATE, VERIFY) run inside AgenFK **before** the PR is opened. A card only
+VERIFY) run inside AgenFK **before** the PR is opened. A card only
 advances when its flow step passes with evidence, and leaving the
 implementation step runs the project's suite. The code that reaches the PR
 already carries that seal.

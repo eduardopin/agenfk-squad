@@ -45,6 +45,11 @@ Stop and report when:
 
 ## Steps
 
+Before working, read `squad-decisions index` (the project's settled decisions)
+and follow them; a decision you made that the next session should keep goes in
+your return under a `Decisions` heading (title, what, why), for the main session
+to record.
+
 1. Load the skill `design-bridge` and follow it. It says which flow (A–F) the
    card needs and which Figma tool skills to load. For the motion rule
    (should it animate, for what purpose, with which curve), use

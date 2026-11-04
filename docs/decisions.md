@@ -96,9 +96,13 @@ exist, a path as a file name) exits 2 and writes nothing.
 `add`, `supersede` and `add --supersedes` hold an exclusive lock on the store
 (`.lock` in it) while they check a status and change it, so two sessions
 superseding the same decision at once cannot both win: the second one is
-refused. With `--supersedes`, the old decision is marked first and the new one
-written last; a failure on either side undoes the other, so no half state is
-left with both active.
+refused. With `--supersedes` (and in `supersede`), the new decision is written
+in full first and the old one is marked last. A single failure rolls back: the
+new decision is removed (or, in `supersede`, put back as it was) and the old
+one stays the only active one. A crash between the two steps, or a second fault
+while rolling back, leaves both decisions active, visible in the index, and
+never the old one pointing at a decision that is not there; run
+`squad-decisions supersede <old> --by <new>` again to finish.
 
 **Who can write.** `--source owner` is self-declared: nothing checks that the
 owner typed it. Any session that can run Bash can record a decision, and every

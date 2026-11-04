@@ -142,13 +142,19 @@ def read(folder, name):
 
 
 def write(folder, name, meta, body):
-    """Replaces an existing decision in one step (a reader never sees half a file)."""
+    """Replaces an existing decision in one step (a reader never sees half a file). A failed write or
+    replace removes its temporary file: nothing is left behind in the store."""
     path = inside(folder, name)
     tmp = f"{path}.{os.getpid()}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(render(meta, body))
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(render(meta, body))
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def entries(folder):
@@ -309,25 +315,20 @@ def cmd_add(folder, a):
     meta = {"title": title, "date": date, "source": source, "status": "active", "supersedes": old}
     base = f"{date}-{slug(title)}"
     with locked(folder):
+        before = None
         if old:                                       # again, under the lock: another session may have won
-            meta_old, _ = read(folder, old)
-            if status(meta_old) != "active":
-                raise Refused(f"{old} is already superseded (by {meta_old.get('superseded_by') or '?'})")
+            before = read(folder, old)
+            if status(before[0]) != "active":
+                raise Refused(f"{old} is already superseded (by {before[0].get('superseded_by') or '?'})")
         name = reserve(folder, base)
         try:
-            # The old one is marked first and the new one written last: until the new file has its text it is
-            # empty, and an empty file is not a decision, so the index never shows both as active. A failure
-            # on either side undoes the other.
-            undo = mark(folder, old, name) if old else None
-            try:
-                write(folder, name, meta, body)
-            except BaseException:
-                if undo:
-                    undo()
-                raise
+            # The new one is written in full first and the old one marked last. A crash between the two leaves
+            # both active, which the index shows, never the old one superseded by a file that has no text.
+            write(folder, name, meta, body)
+            if old:
+                mark(folder, old, name)
         except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(inside(folder, name))
+            roll_back(folder, old, before, name, lambda: os.unlink(inside(folder, name)))
             raise
     print(name)
     return 0
@@ -346,12 +347,25 @@ def reserve(folder, base):
 
 
 def mark(folder, old, new):
-    """Marks old as superseded by new; returns the function that puts old back as it was."""
+    """Marks old as superseded by new. The last step of add and supersede: new is already written in full."""
     meta, body = read(folder, old)
-    before = dict(meta)
     meta["status"], meta["superseded_by"] = "superseded", new
     write(folder, old, meta, body)
-    return lambda: write(folder, old, before, body)
+
+
+def roll_back(folder, old, before, new, undo_new):
+    """After a failure in add or supersede: puts old back as it was if it already points at new, and only then
+    undoes new. A second fault on the way stops the undo with both decisions active (and says so), so old is
+    never left pointing at a decision that is gone."""
+    try:
+        if old:
+            meta, _ = read(folder, old)
+            if status(meta) != "active" and meta.get("superseded_by") == new:
+                write(folder, old, *before)
+        undo_new()
+    except Exception as e:                            # the first failure is the one raised; this one is told
+        print(f"squad-decisions: could not undo ({e}); {new} is kept and {old or 'no decision'} may still be "
+              "active: check `squad-decisions list --all` and run `supersede` again.", file=sys.stderr)
 
 
 def cmd_supersede(folder, a):
@@ -360,20 +374,24 @@ def cmd_supersede(folder, a):
         raise Refused("a decision cannot supersede itself")
     read(folder, old), read(folder, new)              # a missing file is named before the store is locked
     with locked(folder):                              # check and mark in one step: one of two racing sessions wins
-        meta_old, _ = read(folder, old)
+        meta_old, body_old = read(folder, old)
         meta_new, body_new = read(folder, new)
         if status(meta_old) != "active":
             raise Refused(f"{old} is already superseded (by {meta_old.get('superseded_by') or '?'})")
         if status(meta_new) != "active":
             raise Refused(f"{new} is itself superseded; supersede with an active decision")
-        undo = mark(folder, old, new)
-        if not meta_new.get("supersedes"):
-            try:
-                meta_new["supersedes"] = old
-                write(folder, new, meta_new, body_new)
-            except BaseException:
-                undo()
-                raise
+        # Same order as add: new records what it supersedes first, old is marked last. A crash between the two
+        # leaves both active (visible in the index), and running supersede again finishes the job.
+        wrote = False
+        try:
+            if not meta_new.get("supersedes"):
+                write(folder, new, dict(meta_new, supersedes=old), body_new)
+                wrote = True
+            mark(folder, old, new)
+        except BaseException:
+            undo_new = (lambda: write(folder, new, meta_new, body_new)) if wrote else (lambda: None)
+            roll_back(folder, old, (meta_old, body_old), new, undo_new)
+            raise
     print(f"{old} superseded by {new}")
     return 0
 

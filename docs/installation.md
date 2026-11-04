@@ -306,12 +306,13 @@ What `install.ps1` makes, and what it refuses, is what `install.sh` does:
 a real file in the way is `SKIPPED` and the exit code is 1; a source that
 resolves outside the repository is `REFUSED`. Two things are Windows-only:
 
-- `squad-turn` is a `squad-turn.cmd` in `%USERPROFILE%\.local\bin` that runs
-  `hooks\squad-turn.py` with the interpreter it found. Put that directory on
-  your `PATH` (Settings → System → About → Advanced system settings →
-  Environment Variables → your user's `Path` → Edit → New), then open a new
-  window; `squad-turn status` in the check below fails until you do. The
-  installer warns while it is missing.
+- `squad-turn` and `squad-decisions` are a `squad-turn.cmd` and a
+  `squad-decisions.cmd` in `%USERPROFILE%\.local\bin` that run
+  `hooks\squad-turn.py` and `hooks\squad-decisions.py` with the interpreter it
+  found. Put that directory on your `PATH` (Settings → System → About →
+  Advanced system settings → Environment Variables → your user's `Path` →
+  Edit → New), then open a new window; `squad-turn status` in the check below
+  fails until you do. The installer warns while it is missing.
 - The hook commands in `settings.json` read `python "C:/.../hooks/squad-watch.py"`
   (forward slashes, `python` rather than `python3`). An old entry written as
   `python3 ...` is rewritten, because on Windows it would run the Store stub
@@ -340,8 +341,8 @@ you installed by hand: `git pull`, then `install.ps1` again, as in the previous 
 ```
 
 `-Uninstall` removes the squad's entries from `settings.json` (and nobody
-else's), the links into the clone, the `squad-turn.cmd` shim, and the marked
-copies that you did not edit (an edited copy is kept, with a warning); the
+else's), the links into the clone, the `squad-turn.cmd` and
+`squad-decisions.cmd` shims, and the marked copies that you did not edit (an edited copy is kept, with a warning); the
 clone stays. `-Purge` deletes the clone too, unless it has local changes: then
 it refuses and you delete it by hand. By hand:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall`

@@ -455,7 +455,8 @@ def test_a_failure_in_add_supersedes_or_supersede_leaves_no_half_state():
     def add_args(old):
         return types.SimpleNamespace(title="Replacement", source="owner", supersedes=old)
 
-    # marking the old one fails: no new decision, the old one still the only active one
+    # marking the old one fails after the new one was written: the new one is removed, the old one still
+    # the only active one
     folder, (old,) = _store_with(m, "Old")
     m.write = failing(lambda n: n == old)
     sys.stdin, stdin = io.StringIO("## What\nnew\n"), sys.stdin
@@ -470,7 +471,7 @@ def test_a_failure_in_add_supersedes_or_supersede_leaves_no_half_state():
         assert [n for n, _ in m.active(folder)] == [old], m.active(folder)
         assert sorted(os.listdir(folder)) == [m.LOCK, old], os.listdir(folder)
 
-        # writing the new one fails after the old one was marked: the old one is put back as it was
+        # writing the new one fails before the old one is touched: the old one stays as it was
         m.write = failing(lambda n: n != old)
         sys.stdin = io.StringIO("## What\nnew\n")
         with contextlib.redirect_stdout(io.StringIO()):
@@ -500,6 +501,140 @@ def test_a_failure_in_add_supersedes_or_supersede_leaves_no_half_state():
     finally:
         m.write = real
     assert m.status(m.read(folder, old)[0]) == "active", m.read(folder, old)
+
+
+def _consistent(m, folder):
+    """At least one decision is active, and every superseded one points at a decision that is there with its text."""
+    every = dict(m.entries(folder))
+    assert m.active(folder), ("nothing is active", sorted(os.listdir(folder)))
+    for name, meta in every.items():
+        if m.status(meta) == "superseded":
+            assert meta.get("superseded_by") in every, (f"{name} points at a decision that is not there", every)
+
+
+# The child process crashes (os._exit: no finally, no except) right before or right after the k-th os.replace,
+# that is in the middle of add --supersedes or supersede, wherever a hard kill can land.
+_CRASH = r"""
+import importlib.util, io, os, sys, types
+hook, folder, cmd, old, new, when, k = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("squad_decisions", hook)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+real, calls = os.replace, [0]
+def replace(src, dst):
+    calls[0] += 1
+    if when == "before" and calls[0] == int(k):
+        os._exit(9)
+    real(src, dst)
+    if when == "after" and calls[0] == int(k):
+        os._exit(9)
+os.replace = replace
+sys.stdin = io.StringIO("## What\nnew\n")
+if cmd == "add":
+    m.cmd_add(folder, types.SimpleNamespace(title="Replacement", source="owner", supersedes=old))
+else:
+    m.cmd_supersede(folder, types.SimpleNamespace(file=old, by=new))
+"""
+
+
+def test_a_crash_in_the_middle_of_add_supersedes_or_supersede_leaves_something_active():
+    m = module()
+    for cmd in ("add", "supersede"):
+        for when in ("before", "after"):
+            for k in (1, 2):
+                folder, names = _store_with(m, "Old", "New")
+                old, new = names
+                r = subprocess.run([sys.executable, "-c", _CRASH, HOOK, folder, cmd, old, new, when, str(k)],
+                                   capture_output=True, text=True, env=env(home()))
+                assert r.returncode in (0, 9), (cmd, when, k, r.stderr)
+                where = (cmd, when, k, r.returncode)
+                _consistent(m, folder)
+                if cmd == "add":                      # the new one, if it got its text, is the replacement
+                    new = next((n for n, meta in m.entries(folder) if meta.get("title") == "Replacement"), None)
+                    if new is None:
+                        continue
+                if m.status(m.read(folder, old)[0]) == "active":
+                    # both are active and the index shows it; running supersede again finishes the job
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        assert m.cmd_supersede(folder, types.SimpleNamespace(file=old, by=new)) == 0, where
+                meta = m.read(folder, old)[0]
+                assert m.status(meta) == "superseded" and meta["superseded_by"] == new, (where, meta)
+                assert m.read(folder, new)[0].get("supersedes") == old, (where, m.read(folder, new))
+                _consistent(m, folder)
+
+
+def test_a_second_fault_during_the_undo_leaves_both_active_never_none():
+    m = module()
+    real_write, real_mark, real_unlink = m.write, m.mark, os.unlink
+    args = types.SimpleNamespace(title="Replacement", source="owner")
+
+    def no_write_to(target):
+        def write(f, name, meta, body):
+            if name == target:
+                raise OSError(28, "No space left on device")
+            return real_write(f, name, meta, body)
+        return write
+
+    # marking the old one fails, and so does removing the new one: both stay active, and stderr says so
+    folder, (old,) = _store_with(m, "Old")
+    m.write, err = no_write_to(old), io.StringIO()
+
+    def no_unlink(*a, **kw):
+        raise PermissionError(13, "Permission denied")
+    m.os.unlink = no_unlink
+    sys.stdin, stdin = io.StringIO("## What\nnew\n"), sys.stdin
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            try:
+                m.cmd_add(folder, types.SimpleNamespace(supersedes=old, **vars(args)))
+            except OSError as e:
+                assert e.errno == 28, e                # the first failure is the one raised
+            else:
+                raise AssertionError("the failure was swallowed")
+    finally:
+        sys.stdin, m.write, m.os.unlink = stdin, real_write, real_unlink
+    assert len(m.active(folder)) == 2, m.active(folder)
+    assert "could not undo" in err.getvalue(), err.getvalue()
+    _consistent(m, folder)
+
+    # the old one is marked, then the call is interrupted and putting the old one back fails: the new one is kept,
+    # since the old one points at it
+    folder, (old,) = _store_with(m, "Old")
+
+    def interrupted(f, o, n):
+        real_mark(f, o, n)
+        m.write = no_write_to(old)
+        raise KeyboardInterrupt
+    m.mark = interrupted
+    sys.stdin = io.StringIO("## What\nnew\n")
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                m.cmd_add(folder, types.SimpleNamespace(supersedes=old, **vars(args)))
+            except KeyboardInterrupt:
+                pass
+            else:
+                raise AssertionError("the interrupt was swallowed")
+    finally:
+        sys.stdin, m.write, m.mark = stdin, real_write, real_mark
+    assert m.status(m.read(folder, old)[0]) == "superseded", m.read(folder, old)
+    _consistent(m, folder)
+
+
+def test_a_failed_replace_leaves_no_temporary_file():
+    m = module()
+    folder = home()
+    name = "2026-01-01-blocked.md"
+    os.mkdir(os.path.join(folder, name))              # a directory where the file goes: os.replace fails
+    with open(os.path.join(folder, name, "x"), "w", encoding="utf-8") as fh:
+        fh.write("x")
+    try:
+        m.write(folder, name, {"title": "Blocked", "status": "active"}, "## What\nx\n")
+    except OSError:
+        pass
+    else:
+        raise AssertionError("the replace onto a directory did not fail")
+    assert sorted(os.listdir(folder)) == [name], os.listdir(folder)
 
 
 # 6. nothing escapes the store

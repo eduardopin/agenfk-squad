@@ -86,5 +86,6 @@ never `transition: all`.
 
 ## Origin
 
-Token architecture, specs and states summarised from the claudekit
-`design-system` and `ui-styling` skills (MIT), rewritten.
+The idea of the token layers, the specs and the states comes from the claudekit
+`design-system` and `ui-styling` skills. It is restated in this skill's own
+words and no file or passage is copied, so no licence is claimed.

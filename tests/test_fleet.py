@@ -465,6 +465,57 @@ def test_an_idle_session_whose_goal_went_stale_is_left_alone_like_an_old_convers
     assert W.lines(h, "prompts") == []
 
 
+def woken(h, wake_state=None, **watch):
+    """One wake of an idle session whose goal names EPIC; the prompt sent."""
+    W.fake_herdr(h, {"w1:p1": [SID, "idle"]})
+    W.conversation(h, SID, reply="Wave 1 merged.", ago=50_000)
+    g = watch.pop("goal", None) or goal("ship checkout", [EPIC])
+    W.watch_state(h, SID, goal=g, **watch)
+    if wake_state is not None:
+        folder = os.path.join(h, ".claude", "squad", "wake")
+        os.makedirs(folder, exist_ok=True)
+        json.dump(wake_state, open(os.path.join(folder, f"{SID}.json"), "w"))
+    W.scan(h, {"SQUAD_AGENFK": fake_agenfk(h)})
+    p = W.lines(h, "prompts")
+    assert len(p) == 1, p
+    return p[0]
+
+
+def test_a_wake_right_after_a_denied_dispatch_does_not_repeat_the_refused_order():
+    h = W.home()
+    p = woken(h, denied_ts=time.time() - 30)
+    assert "ship checkout" in p and "FAN OUT" not in p, p
+
+
+def test_a_wake_long_after_a_denied_dispatch_orders_the_fan_out_again():
+    h = W.home()
+    assert "FAN OUT" in woken(h, denied_ts=time.time() - 3600)
+
+
+def test_a_wake_with_a_corrupt_denied_time_still_orders_the_fan_out():
+    h = W.home()
+    assert "FAN OUT" in woken(h, denied_ts="bad")
+
+
+def test_the_fan_out_given_by_a_wake_is_recorded_and_not_repeated_by_the_next_one():
+    h = W.home()
+    g = goal("ship checkout", [EPIC])
+    assert "FAN OUT" in woken(h, goal=g)
+    assert W.mine(h, SID).get("fan_goal") == g["ts"], W.mine(h, SID)
+    h2 = W.home()
+    p = woken(h2, wake_state={"n": 1, "ts": time.time() - 99999, "size": 0, "fan_goal": g["ts"]}, goal=g)
+    assert "ship checkout" in p and "FAN OUT" not in p, p
+    h3 = W.home()                                        # a new goal is a new order
+    p = woken(h3, wake_state={"n": 1, "ts": time.time() - 99999, "size": 0, "fan_goal": g["ts"] - 5}, goal=g)
+    assert "FAN OUT" in p, p
+
+
+def test_wake_and_watch_keep_quiet_for_the_same_time_after_a_denied_dispatch():
+    wake = module(os.path.join(ROOT, "hooks", "squad-wake.py"), "wake_t3")
+    watch = module(WATCH, "watch_t3")
+    assert wake.DENIED_QUIET == watch.DENIED_QUIET
+
+
 def test_the_goal_line_is_not_computed_for_a_session_that_is_not_woken():
     h = W.home()
     W.fake_herdr(h, {"w1:p1": [SID, "idle"]})

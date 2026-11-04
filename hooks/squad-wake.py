@@ -137,9 +137,23 @@ def open_goal(watch):
     return None if g.get("source") != "implicit" and age > CARRY_AGE else g
 
 
-def goal_line(goal):
-    """One line: the goal, and the fan-out order when its cards should be running in parallel."""
+DENIED_QUIET = 300     # as squad-watch's: no FAN OUT for this long after a denied dispatch
+
+
+def goal_line(goal, watch=None, st=None):
+    """One line: the goal, and the fan-out order when its cards should be running in parallel. No
+    order within DENIED_QUIET of a denied dispatch (the brake would refuse it again), and none for a
+    goal whose order an earlier wake already gave (st["fan_goal"] is that goal's ts); giving one is
+    recorded on `st`."""
     line = f"The open goal: \"{str(goal.get('text') or '')[:300]}\"."
+    try:
+        denied = float((watch or {}).get("denied_ts") or 0)
+    except (TypeError, ValueError):
+        denied = 0       # a corrupt state file must not cost the session its order
+    st = st if st is not None else {}
+    if goal.get("fanned") or time.time() - denied < DENIED_QUIET or (
+            goal.get("ts") is not None and st.get("fan_goal") == goal.get("ts")):
+        return line
     try:
         import importlib.util
         here = os.path.dirname(os.path.realpath(__file__))
@@ -149,8 +163,10 @@ def goal_line(goal):
         spec.loader.exec_module(fleet)
         leaves, read, total = fleet.goal_leaves(goal.get("cards") or [], os.environ.get("SQUAD_AGENFK") or "agenfk", 6)
         leaves = fleet.unfanned(leaves)
-        if not goal.get("fanned") and fleet.verdict(goal, leaves, 0) == "FAN OUT":
+        if fleet.verdict(goal, leaves, 0) == "FAN OUT":
             line += " " + fleet.fan_out_order(goal, leaves, read, total)
+            if read >= total and goal.get("ts") is not None:
+                st["fan_goal"] = goal.get("ts")
     except Exception:
         pass
     return line
@@ -454,7 +470,7 @@ def decide(a, now, dry_run=False):
     if watch.get("ctx_level", 0) >= 2:
         return "none", "handoff with the watcher", ctx
     goal = open_goal(watch)
-    ctx["goal"] = goal                    # the line is built in wake(): it asks AgEnFK, up to 6 s
+    ctx["goal"], ctx["watch"] = goal, watch   # the line is built in wake(): it asks AgEnFK, up to 6 s
     if quiet > AGE and not goal:
         return "none", f"idle for {int(quiet // 3600)} h: old conversation", ctx
     asked, reply = last_reply(tr)
@@ -496,12 +512,14 @@ def wake(ctx):
     before = dict(st)
     st.update(n=int(st.get("n") or 0) + 1, ts=time.time(), size=os.path.getsize(ctx["tr"]))
     save(ctx["path"], st)                 # counted before sending: a full disk does not become a wake loop
-    extra = goal_line(ctx["goal"]) if ctx.get("goal") else ""
+    extra = goal_line(ctx["goal"], ctx.get("watch"), st) if ctx.get("goal") else ""
     rc, _ = herdr("agent", "prompt", pane, text(int(ctx["quiet"] // 60), extra))
     if rc != 0:
         save(ctx["path"], before)
         log(pane, f"{sid[:8]} gave up: the prompt failed")
         return False
+    if st.get("fan_goal") != before.get("fan_goal"):
+        save(ctx["path"], st)             # the order went out: the next wake does not repeat it
     return True
 
 

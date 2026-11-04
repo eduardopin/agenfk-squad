@@ -59,7 +59,7 @@ ITEMS = [
 ]
 
 
-def fake_agenfk(h, items=ITEMS):
+def fake_agenfk(h, items=ITEMS, slow=()):
     data = os.path.join(h, "items.json")
     with open(data, "w") as fh:
         json.dump(items, fh)
@@ -69,7 +69,10 @@ def fake_agenfk(h, items=ITEMS):
             "import json, sys\n"
             f"items = json.load(open({data!r}))\n"
             "a = sys.argv[1:]\n"
+            "import time\n"
+            f"slow = {list(slow)!r}\n"
             "if a[:1] == ['get']:\n"
+            "    if a[1] in slow: time.sleep(30)\n"
             "    hit = [i for i in items if i['id'] == a[1]]\n"
             "    if not hit: sys.exit(1)\n"
             "    print(json.dumps(hit[0])); sys.exit(0)\n"
@@ -132,6 +135,62 @@ def test_open_leaves_skip_paused_blocked_trashed_and_ideas_cards_and_their_child
     items = [ITEMS[0], paused, idea, todo, blocked, trashed, under_paused]
     leaves = fleet.open_leaves([EPIC], fake_agenfk(h, items))
     assert [c["id"] for c in leaves] == [todo["id"]], leaves
+
+
+def six_cards():
+    return [{"id": f"{n}2000000-0000-4000-8000-000000000000", "type": "TASK", "status": "TODO",
+             "title": f"Card {n}", "projectId": PROJECT} for n in range(1, 7)]
+
+
+def test_open_leaves_read_every_named_card_not_only_the_first_four():
+    h = W.home()
+    fleet = module(FLEET, "fleet_t2a")
+    items = six_cards()
+    leaves = fleet.open_leaves([c["id"] for c in items], fake_agenfk(h, items))
+    assert sorted(c["id"] for c in leaves) == sorted(c["id"] for c in items), leaves
+
+
+def test_a_deadline_that_cuts_the_read_short_is_reported_and_bounds_the_wait():
+    h = W.home()
+    fleet = module(FLEET, "fleet_t2b")
+    items = six_cards()
+    ids = [c["id"] for c in items]
+    start = time.time()
+    leaves, read, total = fleet.goal_leaves(ids, fake_agenfk(h, items, slow=ids[4:]), deadline=1.5)
+    assert time.time() - start < 4, "the deadline is the bound"
+    assert (read, total) == (4, 6) and sorted(c["id"] for c in leaves) == sorted(ids[:4]), (leaves, read, total)
+    order = fleet.fan_out_order(goal("x", ids), leaves, read, total)
+    assert "4 of the 6 named cards" in order, order
+
+
+def test_a_cut_read_does_not_mark_the_goal_fanned():
+    h = W.home()
+    items = six_cards()
+    ids = [c["id"] for c in items]
+    s = Session(h, fake_agenfk(h, items, slow=ids[5:]))
+    path = open_goal_without_order(h, s)
+    st = json.load(open(path))
+    st["goal"]["cards"] = ids
+    json.dump(st, open(path, "w"))
+    s.work("Wrote the cart.")
+    reason = s.stop()
+    assert "FAN OUT" in reason and "5 of the 6 named cards" in reason, reason
+    assert not json.load(open(path))["goal"].get("fanned"), "an order on part of the goal is not the order"
+
+
+def test_a_fan_out_names_every_card_of_a_six_card_goal_and_is_recorded():
+    h = W.home()
+    items = six_cards()
+    ids = [c["id"] for c in items]
+    s = Session(h, fake_agenfk(h, items))
+    path = open_goal_without_order(h, s)
+    st = json.load(open(path))
+    st["goal"]["cards"] = ids
+    json.dump(st, open(path, "w"))
+    s.work("Wrote the cart.")
+    reason = s.stop()
+    assert "6 open cards" in reason and ids[5] in reason and "named cards" not in reason, reason
+    assert json.load(open(path))["goal"].get("fanned")
 
 
 def test_open_leaves_fail_open_when_agenfk_does_not_answer():

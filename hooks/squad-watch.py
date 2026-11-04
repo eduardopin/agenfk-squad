@@ -2672,12 +2672,14 @@ def fan_out(goal, session, st=None):
         fleet = fleet_lib()
         if fleet is None:
             return ""
-        leaves = fleet.unfanned(fleet.open_leaves(goal["cards"], AGENFK, deadline=6))
+        leaves, read, total = fleet.goal_leaves(goal["cards"], AGENFK, deadline=6)
+        leaves = fleet.unfanned(leaves)
         subs = fleet.live_subs(session, STATE)
         if fleet.verdict(goal, leaves, subs) != "FAN OUT":
             return ""
-        order = fleet.fan_out_order(goal, leaves)
-        goal["fanned"] = True
+        order = fleet.fan_out_order(goal, leaves, read, total)
+        if read >= total:
+            goal["fanned"] = True       # an order on part of the goal is not recorded: the rest is still due
         return order
     except Exception:
         return ""

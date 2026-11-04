@@ -147,9 +147,10 @@ def goal_line(goal):
             "squad_fleet", os.path.join(os.path.dirname(here), "skills", "architect", "scripts", "fleet.py"))
         fleet = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fleet)
-        leaves = fleet.unfanned(fleet.open_leaves(goal.get("cards") or [], os.environ.get("SQUAD_AGENFK") or "agenfk", 6))
+        leaves, read, total = fleet.goal_leaves(goal.get("cards") or [], os.environ.get("SQUAD_AGENFK") or "agenfk", 6)
+        leaves = fleet.unfanned(leaves)
         if not goal.get("fanned") and fleet.verdict(goal, leaves, 0) == "FAN OUT":
-            line += " " + fleet.fan_out_order(goal, leaves)
+            line += " " + fleet.fan_out_order(goal, leaves, read, total)
     except Exception:
         pass
     return line

@@ -27,6 +27,7 @@ import shlex
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 HOME = os.path.expanduser("~")
 STATE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude"), "squad", "watch")
@@ -36,44 +37,57 @@ CLOSED = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
 PARKED = {"BLOCKED", "PAUSED", "TRASHED", "IDEAS"}
 LIVE = 600             # seconds: a sub-session touched within this is running
 FAN_MIN = 2            # open cards that make a goal worth fanning out
-MAX_CARDS = 4          # goal cards read per session
 FANNED = 6 * 3600      # seconds: a card whose fanout.py session started within this is taken as running
 TITLE_MAX = 80         # characters of a card title in the order: it is one line
 
 
-def run_json(args, timeout):
+def call_json(args, timeout):
+    """(parsed JSON or None, cut): cut is True when the call ran out of time, not when it failed."""
+    if timeout <= 0:
+        return None, True
     try:
         r = subprocess.run([*shlex.split(AGENFK), *args], capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL)
-        return json.loads(r.stdout) if r.returncode == 0 else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
+        return (json.loads(r.stdout) if r.returncode == 0 else None), False
+    except subprocess.TimeoutExpired:
+        return None, True
+    except (OSError, ValueError):
+        return None, False
 
 
-def open_leaves(cards, agenfk=None, deadline=6.0):
-    """The open cards at the bottom of the goal: for each goal card, its open descendants
-    that have no open child of their own, or the card itself when it has none. A list of
-    {id, type, status, title}; [] on any doubt."""
+def run_json(args, timeout):
+    return call_json(args, timeout)[0]
+
+
+def goal_leaves(cards, agenfk=None, deadline=6.0):
+    """(leaves, read, total): the open cards at the bottom of the goal and how many of the `total`
+    named cards were read. For each goal card, its open descendants that have no open child of
+    their own, or the card itself when it has none. Every named card is read, in parallel, with
+    `deadline` seconds as the only bound; `read` < `total` means the deadline cut the read short.
+    Leaves are {id, type, status, title}; [] on any doubt."""
     global AGENFK
     if agenfk:
         AGENFK = agenfk
+    cards = list(dict.fromkeys(cards))
     end = time.time() + deadline
-    leaves, seen_projects, items = {}, set(), {}
-    for card in list(cards)[:MAX_CARDS]:
-        left = end - time.time()
-        if left <= 0:
-            break
-        root = run_json(["get", card, "--json"], min(left, 5))
-        if not isinstance(root, dict) or not root.get("id"):
-            continue
-        items[root["id"]] = root
-        pid = root.get("projectId")
-        if pid and pid not in seen_projects and end - time.time() > 0:
-            seen_projects.add(pid)
-            listed = run_json(["list", "--project", pid, "--json"], min(end - time.time(), 5))
+    if not cards:
+        return [], 0, 0
+
+    def left():
+        return min(end - time.time(), 5)
+
+    leaves, items, read = {}, {}, 0
+    with ThreadPoolExecutor(max_workers=min(len(cards), 8)) as pool:
+        roots = list(pool.map(lambda c: call_json(["get", c, "--json"], left()), cards))
+        for root, cut in roots:
+            read += 0 if cut else 1
+            if isinstance(root, dict) and root.get("id"):
+                items[root["id"]] = root
+        projects = list(dict.fromkeys(r.get("projectId") for r in items.values() if r.get("projectId")))
+        for listed, cut in pool.map(lambda p: call_json(["list", "--project", p, "--json"], left()), projects):
             for it in listed if isinstance(listed, list) else []:
                 if isinstance(it, dict) and it.get("id"):
-                    items[it["id"]] = it
+                    items.setdefault(it["id"], it)
     children = {}
     for it in items.values():
         if it.get("parentId"):
@@ -93,10 +107,15 @@ def open_leaves(cards, agenfk=None, deadline=6.0):
         for k in kids:
             walk(k)
 
-    for card in list(cards)[:MAX_CARDS]:
+    for card in cards:
         if card in items:
             walk(items[card])
-    return list(leaves.values())
+    return list(leaves.values()), read, len(cards)
+
+
+def open_leaves(cards, agenfk=None, deadline=6.0):
+    """goal_leaves without the count."""
+    return goal_leaves(cards, agenfk, deadline)[0]
 
 
 def live_subs(session, state=None, now=None):
@@ -153,13 +172,15 @@ def verdict(goal, leaves, subs):
     return "CARRY"
 
 
-def fan_out_order(goal, leaves):
-    """The order squad-watch gives when the verdict is FAN OUT."""
+def fan_out_order(goal, leaves, read=None, total=None):
+    """The order squad-watch gives when the verdict is FAN OUT. `read` of `total` named cards, when
+    the deadline cut the read short, is said in the order."""
     def label(c):
         t = " ".join(str(c.get("title") or c.get("type") or "").split())     # one line, whatever the title holds
         return f"{c['id']} ({t[:TITLE_MAX].rstrip()})"
     ids = ", ".join(label(c) for c in leaves[:8])
-    return (f"[squad-watch] FAN OUT: the goal has {len(leaves)} open cards and nothing runs in parallel: {ids}. "
+    part = f" (read {read} of the {total} named cards)" if None not in (read, total) and read < total else ""
+    return (f"[squad-watch] FAN OUT: the goal has {len(leaves)} open cards{part} and nothing runs in parallel: {ids}. "
             "Parallel is the default: run parallel-plan's waves on these cards (skills/parallel-plan) and "
             "dispatch wave 1 in one message, one front per card in its own worktree (`github` draws the map), "
             "at most 6. Pick the agent and the skills by card type: infra for Terraform and CI, developer or "

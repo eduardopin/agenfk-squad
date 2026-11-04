@@ -97,12 +97,15 @@ exist, a path as a file name) exits 2 and writes nothing.
 (`.lock` in it) while they check a status and change it, so two sessions
 superseding the same decision at once cannot both win: the second one is
 refused. With `--supersedes` (and in `supersede`), the new decision is written
-in full first and the old one is marked last. A single failure rolls back: the
-new decision is removed (or, in `supersede`, put back as it was) and the old
-one stays the only active one. A crash between the two steps, or a second fault
-while rolling back, leaves both decisions active, visible in the index, and
-never the old one pointing at a decision that is not there; run
-`squad-decisions supersede <old> --by <new>` again to finish.
+in full first and the old one is marked last. A single failure rolls back to
+where the command started: `add --supersedes` removes the new decision and the
+old one stays active; `supersede` puts the new decision back as it was, and
+both stay active as before. A crash between the two steps leaves both
+decisions active, visible in the index. A second fault while rolling back
+leaves either both active or the old one marked as superseded by the new one,
+which is complete and active; it never leaves the old one pointing at a
+decision that is not there, and it says "could not undo" on stderr. In every
+case `squad-decisions supersede <old> --by <new>` can be run again to finish.
 
 **Who can write.** `--source owner` is self-declared: nothing checks that the
 owner typed it. Any session that can run Bash can record a decision, and every

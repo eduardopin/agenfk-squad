@@ -419,7 +419,8 @@ directory if you want it gone.
   (`skills/board-heartbeat`), the heavy review (`hooks/squad-review.py`), the
   merge seal (`hooks/squad-seal.py`, `git config squad.seal`), and the
   scripts of the cloud-resource pricing guard, the design bridge, the
-  pull-request skill and the writing skill. Their
+  pull-request skill and the writing skill, and the blind trials of
+  `skills/skill-trial` (they need bubblewrap). Their
   tests say so and exit 0 on Windows. Leave the
   seal off there.
 - **Not yet verified on Windows, tests running:** the Chrome export of the

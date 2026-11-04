@@ -256,6 +256,35 @@ def test_a_moved_hook_keeps_the_timeout_the_user_gave_it():
         {"type": "command", "command": ss.command_for(config, "squad-graph.py"), "timeout": 45}]}], settings
 
 
+def test_collapsing_copies_keeps_the_timeout_the_user_gave_any_of_them():
+    config = config_with("squad-watch.py")
+    cmd = ss.command_for(config, "squad-watch.py")
+    m = manifest([WATCH])                                   # the manifest says 10
+    for first, second in (({"timeout": 10}, {"timeout": 99}), ({}, {"timeout": 99}), ({"timeout": 99}, {})):
+        settings = {"hooks": {"PreToolUse": [
+            {"matcher": "*", "hooks": [dict(first, type="command", command=cmd)]},
+            {"matcher": "", "hooks": [dict(second, type="command", command=cmd)]},
+        ]}}
+        changed, report = run("install", settings, config, m)
+        assert changed, report
+        assert settings["hooks"]["PreToolUse"] == [{"matcher": "*", "hooks": [
+            {"type": "command", "command": cmd, "timeout": 99}]}], (first, second, settings)
+        changed, report = run("install", settings, config, m)
+        assert not changed, report
+
+
+def test_a_moved_hook_with_a_null_or_zero_timeout_gets_the_manifests():
+    config = config_with("squad-graph.py")
+    cmd = ss.command_for(config, "squad-graph.py")
+    for given in (None, 0):
+        settings = {"hooks": {"PreToolUse": [
+            {"matcher": "*", "hooks": [{"type": "command", "command": cmd, "timeout": given}]}]}}
+        changed, report = run("install", settings, config, manifest([GRAPH]))      # the manifest says 10
+        assert changed, report
+        assert settings["hooks"]["PreToolUse"] == [{"matcher": "Bash|Grep|Read|Glob", "hooks": [
+            {"type": "command", "command": cmd, "timeout": 10}]}], (given, settings)
+
+
 def test_a_hook_without_a_list_of_event_names_is_a_bad_manifest():
     config = config_with("squad-watch.py")
     missing = {k: v for k, v in WATCH.items() if k != "events"}

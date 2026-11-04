@@ -35,14 +35,16 @@ The manifest decides each squad hook's matcher: a hook's own "matchers"
 ({event: matcher}, where null means no matcher) wins over the top-level one.
 A squad entry found under any other matcher on that event (moved by hand, or
 left by an older manifest) is moved to the manifest's, so a narrow hook never
-stays registered on every tool call. A moved entry keeps the timeout it had.
+stays registered on every tool call. A moved entry keeps the timeout it had;
+one with a null or 0 timeout gets the manifest's.
 No matcher, "" and "*" all match every tool in Claude Code, so they count as
 one matcher here: an entry under any of them is where a "*" (or no matcher)
 in the manifest wants it, and stays put. A manifest that lists one script
 twice on the same event is refused (install would move it back and forth on
 every run); uninstall reads only the script names and events, so a manifest
 that install refuses does not stop it. Copies of one squad hook under matchers
-Claude Code reads alike collapse to the first one.
+Claude Code reads alike collapse to the first one, which takes the timeout the
+user gave any of them (one that differs from the manifest's).
 """
 import contextlib
 import argparse
@@ -285,29 +287,46 @@ def drop(settings, event, script, config, matcher):
         del settings["hooks"]
 
 
-def dedupe(settings, event, script, config, matcher):
+def users_timeout(entries, manifest_timeout):
+    """The timeout to keep from these copies of one squad hook: the first one set
+    to something other than the manifest's (the user changed it), else the first
+    one set at all, else None. A null or 0 timeout counts as not set."""
+    given = [h["timeout"] for h in entries if h.get("timeout")]
+    return next((t for t in given if t != manifest_timeout), given[0] if given else None)
+
+
+def dedupe(settings, event, script, config, matcher, timeout=None):
     """Keeps the first copy of this script among the event's groups under this
     matcher, or one Claude Code reads the same, so it runs once per tool call.
-    Returns True when it removed a copy."""
-    first, removed, out = True, False, []
-    for g in settings["hooks"][event]:
+    The copy kept takes the timeout the user gave any of them (`timeout` is the
+    manifest's). Returns True when it removed a copy."""
+    def mine(h):
+        return isinstance(h, dict) and squad_script(h.get("command"), config) == script
+    groups = settings["hooks"][event]
+    copies = [h for g in groups if same_matcher(g.get("matcher"), matcher) for h in g.get("hooks", []) if mine(h)]
+    if len(copies) < 2:
+        return False
+    keep = users_timeout(copies, timeout)
+    first, out = True, []
+    for g in groups:
         if not same_matcher(g.get("matcher"), matcher):
             out.append(g)
             continue
         entries = []
         for h in g.get("hooks", []):
-            if isinstance(h, dict) and squad_script(h.get("command"), config) == script:
+            if mine(h):
                 if not first:
-                    removed = True
                     continue
                 first = False
+                if keep and h.get("timeout") != keep:
+                    h = dict(h, timeout=keep)
             entries.append(h)
-        if len(entries) == len(g.get("hooks", [])):
+        if entries == g.get("hooks", []):
             out.append(g)
         elif entries:
             out.append(dict(g, hooks=entries))
     settings["hooks"][event] = out
-    return removed
+    return True
 
 
 def install(settings, config, plan, report):
@@ -327,7 +346,7 @@ def install(settings, config, plan, report):
                     drop(settings, event, script, config, matcher)
                     changed = True
                     report.append(f"on      {script:<16} {event} (copy under another matcher removed)")
-                twice = dedupe(settings, event, script, config, matcher)
+                twice = dedupe(settings, event, script, config, matcher, timeout)
                 if twice:
                     changed = True
                     report.append(f"on      {script:<16} {event} (second copy removed)")
@@ -355,7 +374,7 @@ def install(settings, config, plan, report):
             else:
                 report.append(f"on      {script:<16} {event} (added)")
             entry = {"type": "command", "command": command_for(config, script)}
-            timeout = next((h["timeout"] for h in stale if "timeout" in h), timeout)    # the user's, if moved
+            timeout = users_timeout(stale, timeout) or timeout      # the user's, if moved; null or 0 is not one
             if timeout:
                 entry["timeout"] = timeout
             missing.setdefault(matcher, []).append(entry)

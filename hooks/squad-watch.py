@@ -62,12 +62,12 @@ Thresholds, by environment variable:
       context >= SQUAD_CTX_PCT (90)% of the window, OR
       reread >= SQUAD_REREAD (60)% AND context >= floor
       (reread = 0.1*cache-read / weighted burn, the cockpit's REREAD %; minimum floor 2*CTX_BASE)
-  The floor weighs the burn: SQUAD_REREAD_FLOOR (70)% of the window once the burn
+  The floor weighs the burn: SQUAD_REREAD_FLOOR (50)% of the window once the burn
   has reached SQUAD_BURN_FULL (50)% of the session budget (CLAUDE_SESSION_BUDGET,
   20M, the cockpit's BURN %), rising in a straight line to 90% with zero burn.
-  Context at 70% with burn at 10% is NOT handoff time: the floor there is 86%. A
+  Context at 50% with burn at 10% is NOT handoff time: the floor there is 82%. A
   session that has just built its context and barely used it is not cut.
-  In other words: the cut falls between 70% and 90% of the window. Above 70%
+  In other words: the cut falls between 50% and 90% of the window. Above 50%
   without the math closing, only an informational notice goes out (level 1),
   with no order to stop. (Up to October 2026 it was 50-80%, with a forced
   handoff for no orchestrator slot from 120k up: sessions cut at 12-51% of

@@ -49,8 +49,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
    talks to you through `[squad-watch]` messages. They are orders, not suggestions:
    - **PROACTIVE HANDOFF** (the watcher's math, 1M window: context ≥ 90% of the
      window, or reread ≥ 60% with context above a floor that weighs the burn:
-     70% of the window with burn ≥ 50% of the session budget, rising to 90% with
-     zero burn; context at 70% with burn at 10% is not the time): close the step
+     50% of the window with burn ≥ 50% of the session budget, rising to 90% with
+     zero burn; context at 50% with burn at 10% is not the time): close the step
      in progress, comment on the card, write the
      handoff through MODE A of `clear-pickup` **without asking for permission**, with what
      is left of the request under "Next step", and stop. When you stop, the watcher clears the

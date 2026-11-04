@@ -40,8 +40,9 @@ No matcher, "" and "*" all match every tool in Claude Code, so they count as
 one matcher here: an entry under any of them is where a "*" (or no matcher)
 in the manifest wants it, and stays put. A manifest that lists one script
 twice on the same event is refused (install would move it back and forth on
-every run); uninstall reads only the script names, so a manifest that install
-refuses does not stop it.
+every run); uninstall reads only the script names and events, so a manifest
+that install refuses does not stop it. Copies of one squad hook under matchers
+Claude Code reads alike collapse to the first one.
 """
 import contextlib
 import argparse
@@ -83,10 +84,13 @@ def read_manifest(path):
     return m, [h["script"] for h in hooks]
 
 
-def manifest_scripts(path):
-    """Only the script names: all uninstall needs, so a manifest install refuses
-    for its matchers or events does not stop an uninstall."""
-    return read_manifest(path)[1]
+def manifest_names(path):
+    """The script names, and the events the manifest names: all uninstall needs,
+    so a manifest install refuses for its matchers or events does not stop it."""
+    m, scripts = read_manifest(path)
+    events = {e for h in m["hooks"] if isinstance(h.get("events"), list)
+              for e in h["events"] if isinstance(e, str)}
+    return scripts, events
 
 
 def load_manifest(path):
@@ -278,6 +282,31 @@ def drop(settings, event, script, config, matcher):
         del settings["hooks"]
 
 
+def dedupe(settings, event, script, config, matcher):
+    """Keeps the first copy of this script among the event's groups under this
+    matcher, or one Claude Code reads the same, so it runs once per tool call.
+    Returns True when it removed a copy."""
+    first, removed, out = True, False, []
+    for g in settings["hooks"][event]:
+        if not same_matcher(g.get("matcher"), matcher):
+            out.append(g)
+            continue
+        entries = []
+        for h in g.get("hooks", []):
+            if isinstance(h, dict) and squad_script(h.get("command"), config) == script:
+                if not first:
+                    removed = True
+                    continue
+                first = False
+            entries.append(h)
+        if len(entries) == len(g.get("hooks", [])):
+            out.append(g)
+        elif entries:
+            out.append(dict(g, hooks=entries))
+    settings["hooks"][event] = out
+    return removed
+
+
 def install(settings, config, plan, report):
     """Adds what is missing, and moves a squad hook whose matcher the manifest
     changed. Returns True when settings changed."""
@@ -295,13 +324,17 @@ def install(settings, config, plan, report):
                     drop(settings, event, script, config, matcher)
                     changed = True
                     report.append(f"on      {script:<16} {event} (copy under another matcher removed)")
+                twice = dedupe(settings, event, script, config, matcher)
+                if twice:
+                    changed = True
+                    report.append(f"on      {script:<16} {event} (second copy removed)")
                 # the copy that stays is the one to repair: on Windows a `python3` entry runs the Store stub
                 kept = [g for g in settings.get("hooks", {}).get(event, [])
                         if same_matcher(g.get("matcher"), matcher)]
                 if repair_stale(kept, config, script):
                     changed = True
                     report.append(f"fixed   {script:<16} {event} (was `python3`, the Microsoft Store stub)")
-                elif not stale:
+                elif not stale and not twice:
                     report.append(f"on      {script:<16} {event} (already registered)")
                 continue
             if not os.path.exists(os.path.join(config, "hooks", script)):
@@ -331,10 +364,12 @@ def install(settings, config, plan, report):
     return changed
 
 
-def uninstall(settings, config, scripts, report):
+def uninstall(settings, config, scripts, report, events=()):
     """Removes every hook entry that runs one of the squad's scripts, then the
-    groups and events that only held those, and any event list already empty
-    (an older install could leave one). Returns True when settings changed."""
+    groups and events that only held those. When it removed something, an empty
+    list on one of these `events` (the manifest's) goes too: an older install
+    could leave one there. An empty list elsewhere is the user's and stays, and
+    a file with nothing of the squad's is not written. Returns True when settings changed."""
     hooks = settings.get("hooks")
     if not hooks:
         return False
@@ -353,14 +388,16 @@ def uninstall(settings, config, scripts, report):
                 kept_groups.append(g)
             elif kept:
                 kept_groups.append(dict(g, hooks=kept))
-        if kept_groups != groups or not groups:
+        if kept_groups != groups:
             changed = True
             if kept_groups:
                 hooks[event] = kept_groups
-            else:                            # it only held the squad's hooks, or nothing
+            else:                            # it only held the squad's hooks
                 del hooks[event]
-                if not groups:
-                    report.append(f"off     {event}: an empty list")
+    for event in sorted(events) if changed else ():
+        if hooks.get(event) == []:
+            del hooks[event]
+            report.append(f"off     {event}: an empty list")
     if changed and not hooks:
         del settings["hooks"]
     return changed
@@ -416,7 +453,7 @@ def main(argv=None):
         if a.action == "install":
             plan, _ = load_manifest(a.manifest)
         else:
-            scripts = manifest_scripts(a.manifest)
+            scripts, events = manifest_names(a.manifest)
     except BadManifest as e:
         print(f"ERROR   {e}", file=sys.stderr)
         return 2
@@ -424,7 +461,7 @@ def main(argv=None):
     if a.action == "install":
         changed = install(settings, config, plan, report)
     else:
-        changed = uninstall(settings, config, set(scripts), report)
+        changed = uninstall(settings, config, set(scripts), report, events)
     for line in report:
         print(line)
     if changed:

@@ -7,6 +7,8 @@ and config dir, so nothing here reads the real hooks/manifest.json or ~/.claude.
 
     python3 tests/test_squad_settings.py
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -42,7 +44,7 @@ def run(action, settings, config, manifest_path):
     report = []
     if action == "install":
         return ss.install(settings, config, plan, report), report
-    return ss.uninstall(settings, config, set(scripts), report), report
+    return ss.uninstall(settings, config, set(scripts), report, set(plan)), report
 
 
 def groups_of(settings, event, script, config):
@@ -281,15 +283,47 @@ def test_install_leaves_no_empty_event_list_behind():
 
 def test_uninstall_clears_an_empty_event_list_an_older_install_left():
     config = config_with("squad-watch.py")
-    m = manifest([WATCH])
+    m = manifest([dict(WATCH, events=["PreToolUse", "PostToolUse", "Stop"])],
+                 matchers={"PreToolUse": "*", "PostToolUse": "*"})
     settings = {"model": "opus"}
     run("install", settings, config, m)
-    settings["hooks"]["PostToolUse"] = []
+    settings["hooks"]["PostToolUse"] = []                   # an event the manifest names: the squad's leftover
+    settings["hooks"]["Notification"] = []                  # one it does not name: the user's, left alone
     changed, report = run("uninstall", settings, config, m)
     assert changed, report
-    assert settings == {"model": "opus"}, settings
-    changed, _ = run("uninstall", {"hooks": {"PreToolUse": []}}, config, m)
-    assert changed
+    assert settings == {"model": "opus", "hooks": {"Notification": []}}, settings
+
+
+def test_uninstall_leaves_a_file_with_nothing_of_the_squads_alone():
+    config = config_with("squad-watch.py")
+    path = os.path.join(config, "settings.json")
+    text = '{"hooks":   {"PreToolUse": [], "Notification": []}}\n'      # odd spacing: a rewrite would show
+    with open(path, "w") as fh:
+        fh.write(text)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert ss.main(["uninstall", "--config", config, "--manifest", manifest([WATCH])]) == 0
+    with open(path) as fh:
+        assert fh.read() == text
+    assert not [f for f in os.listdir(config) if ".bak-" in f], os.listdir(config)
+    assert "nothing to change" in out.getvalue(), out.getvalue()
+
+
+def test_copies_under_empty_star_and_no_matcher_collapse_to_one():
+    config = config_with("squad-watch.py")
+    cmd = {"type": "command", "command": ss.command_for(config, "squad-watch.py"), "timeout": 10}
+    mine = {"type": "command", "command": "echo mine"}
+    settings = {"hooks": {"PreToolUse": [
+        {"matcher": "", "hooks": [dict(cmd)]},
+        {"matcher": "*", "hooks": [dict(cmd), mine]},
+        {"hooks": [dict(cmd)]},
+    ]}}
+    changed, report = run("install", settings, config, manifest([WATCH]))
+    assert changed, report
+    assert settings["hooks"]["PreToolUse"] == [{"matcher": "", "hooks": [cmd]}, {"matcher": "*", "hooks": [mine]}], \
+        settings
+    changed, report = run("install", settings, config, manifest([WATCH]))
+    assert not changed, report
 
 
 def test_the_same_script_twice_on_one_event_is_refused():

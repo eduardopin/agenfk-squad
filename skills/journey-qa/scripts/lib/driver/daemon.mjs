@@ -11,7 +11,7 @@ import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendEvidence, appendTrace } from "../ledger.mjs";
 import { loadPlaywright } from "./playwright.mjs";
-import { ACTOR_COMMANDS, ACTOR_FLAGS, actorWorkdir, recordOutcome } from "../packet.mjs";
+import { ACTOR_COMMANDS, ACTOR_FLAGS, checkActorWorkdir, recordOutcome } from "../packet.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SNAPSHOT_FN = readFileSync(join(HERE, "snapshot.js"), "utf8").replace(/^\s*\/\/.*$/gm, "").trim();
@@ -35,6 +35,7 @@ const state = {
   pw: null, browser: null, mode: cfg.cdp ? "driver_cdp" : "driver_launch", browserName: null, browserVersion: null,
   actors: new Map(), allow: new Set(cfg.allow ?? []), traceSeq: 0, lastActivity: Date.now(), queue: new Map(),
   actorTokens: new Map(), // token -> actor id, for spawned actors that talk to the driver directly
+  actorDirs: new Map(), // actor id -> the actor folder spawn handed over with the token (real path, checked)
 };
 
 // ---------- helpers ----------
@@ -801,6 +802,10 @@ async function dispatch(body) {
     return { ok: true, text: `session state saved to ${path} (contains cookies: do not attach to reports)` };
   }
   if (cmd === "actor-token") {
+    // Spawn hands over the actor folder it prepared; the driver keeps that path instead of deriving one from its own
+    // environment, and only after the same private-folder check spawn applied.
+    if (!flags.workdir) throw err("bad_args", "actor-token needs --workdir: the actor folder spawn prepared");
+    state.actorDirs.set(actor.id, checkActorWorkdir(String(flags.workdir), runDir, actor.id));
     const t = randomBytes(24).toString("hex");
     state.actorTokens.set(t, actor.id);
     trace({ actor_id: actor.id, as: "coordinator", cmd: "actor-token", ok: true });
@@ -808,6 +813,7 @@ async function dispatch(body) {
   }
   if (cmd === "actor-token-revoke") {
     for (const [t, id] of state.actorTokens) if (id === actor.id) state.actorTokens.delete(t);
+    state.actorDirs.delete(actor.id);
     return { ok: true, text: `tokens of ${actor.id} revoked` };
   }
   if (cmd === "budget") {
@@ -867,7 +873,13 @@ function actorRequest(actorId, body) {
   }
   const args = (body.args ?? []).map(String);
   if (body.cmd === "upload") {
-    const r = stageUploads(actorWorkdir(runDir, actorId), join(jqaDir, "uploads"), args.slice(1));
+    // The folder recorded with the token, checked again: it may have been removed or replaced since it was handed over.
+    const recorded = state.actorDirs.get(actorId);
+    let dir;
+    try { dir = checkActorWorkdir(recorded, runDir, actorId); } catch (e) {
+      return { ok: false, code: "unsafe_workdir", text: `upload: the actor folder handed over with this token is gone or no longer private (${e.message})` };
+    }
+    const r = stageUploads(dir, join(jqaDir, "uploads"), args.slice(1));
     if (!r.ok) return r;
     args.splice(1, args.length, ...r.paths);
   }

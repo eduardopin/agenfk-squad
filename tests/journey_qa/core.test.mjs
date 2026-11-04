@@ -549,11 +549,19 @@ test("an ended actor leaves no workdir and no driver token behind", async () => 
   writeFileSync(join(wd, ".driver.json"), JSON.stringify({ port: 1, token: "secret" }));
   writeFileSync(join(wd, "PACKET.md"), "x");
   const other = prepareActorWorkdir(run, "bruno", { env });
-  cleanupActorWorkdir(run, "ana", { env });
+  assert.deepEqual(cleanupActorWorkdir(run, "ana", wd), { removed: wd });
   assert.equal(existsSync(wd), false);
   assert.equal(existsSync(other), true, "another actor's folder is untouched");
-  cleanupActorWorkdir(run, "ana", { env }); // already gone: no error
-  cleanupActorWorkdir(run, "bruno", { env });
+  assert.deepEqual(cleanupActorWorkdir(run, "ana", wd), { removed: null }); // already gone: no error
+  // Handed another actor's folder, or none, the cleanup of ana removes nothing and says why.
+  for (const dir of [other, undefined]) {
+    const r = cleanupActorWorkdir(run, "ana", dir);
+    assert.equal(typeof r.reason, "string", String(dir));
+    assert.equal(r.removed, undefined, String(dir));
+  }
+  assert.equal(existsSync(other), true, "handed to ana's cleanup, bruno's folder stays");
+  cleanupActorWorkdir(run, "bruno", other);
+  assert.equal(existsSync(other), false);
 });
 
 // The actor folder holds the driver token and a runner that gets executed: it must be this user's alone.
@@ -620,6 +628,82 @@ test("actor workdir: a folder owned by another user is refused", async (t) => {
   assert.throws(() => assertPrivateDir(dir, process.getuid() + 1), (e) => e.code === "unsafe_workdir" && /belongs to uid/.test(e.message));
 });
 
+// A shared temporary folder the way /tmp is one: sticky, everyone can write.
+function sharedTmp() {
+  const dir = tmp();
+  chmodSync(dir, 0o1777);
+  return dir;
+}
+
+test("actor workdir: a shared temporary folder gets a 0700 folder of this user before the cache folder", async (t) => {
+  if (process.platform === "win32") return t.skip("no POSIX owner or mode on Windows: the root stays in the user's temporary folder");
+  const { actorRoot } = await lib("packet.mjs");
+  const home = tmp();
+  const name = `journey-qa-${process.getuid()}`;
+  // The cache folder puts HOME among the actor folder's ancestors, where Claude's upward search finds ~/CLAUDE.md.
+  const shared = sharedTmp();
+  const mine = join(realpathSync(shared), name);
+  assert.equal(actorRoot({ env: {}, tmp: shared, home }), join(mine, "journey-qa-actors"));
+  assert.equal(lstatSync(mine).mode & 0o777, 0o700, "created 0700");
+  assert.equal(actorRoot({ env: {}, tmp: shared, home }), join(mine, "journey-qa-actors"), "found again by the next call");
+  // Planted before journey-qa came: a symlink, or a folder others can enter. Refused, left as found, and the cache is used.
+  for (const plant of ["symlink", "open folder"]) {
+    const other = sharedTmp();
+    const p = join(other, name);
+    if (plant === "symlink") symlinkSync(tmp(), p, "dir");
+    else { mkdirSync(p); chmodSync(p, 0o755); }
+    assert.equal(actorRoot({ env: {}, tmp: other, home }), join(home, ".cache", "journey-qa-actors"), plant);
+    if (plant === "open folder") assert.equal(lstatSync(p).mode & 0o777, 0o755, "a planted folder is not repaired");
+  }
+});
+
+test("unsafe_workdir: a base others can write gets a chmod hint, a folder journey-qa makes gets a removal hint", async (t) => {
+  if (process.platform === "win32") return t.skip("no POSIX modes on Windows");
+  const { prepareActorWorkdir } = await lib("packet.mjs");
+  // ~/.cache made under umask 002: 0775. It is the user's, not journey-qa's, so removing it is the wrong advice.
+  const cache = tmp();
+  chmodSync(cache, 0o775);
+  const shared = sharedTmp();
+  mkdirSync(join(shared, `journey-qa-${process.getuid()}`), { mode: 0o700 });
+  chmodSync(join(shared, `journey-qa-${process.getuid()}`), 0o755); // the temporary-folder step is refused, so the cache is the base
+  const opts = { env: { XDG_CACHE_HOME: cache }, tmp: shared, home: tmp() };
+  const run = join(tmp(), "run");
+  assert.throws(() => prepareActorWorkdir(run, "ana", opts),
+    (e) => e.code === "unsafe_workdir" && e.message.includes(`chmod go-w ${cache}`) && !/Remove it/.test(e.message), "base");
+  chmodSync(cache, 0o700);
+  const actors = join(cache, "journey-qa-actors");
+  mkdirSync(actors, { mode: 0o700 });
+  chmodSync(actors, 0o755);
+  assert.throws(() => prepareActorWorkdir(run, "ana", opts),
+    (e) => e.code === "unsafe_workdir" && /Remove it and run again/.test(e.message) && !/chmod/.test(e.message), "journey-qa-actors");
+});
+
+test("actor workdir: the driver accepts a handed-over folder only when it is this actor's and private", async (t) => {
+  const { checkActorWorkdir, prepareActorWorkdir } = await lib("packet.mjs");
+  const base = tmp();
+  const run = join(tmp(), "run");
+  const env = { XDG_RUNTIME_DIR: base };
+  const wd = prepareActorWorkdir(run, "ana", { env });
+  const bruno = prepareActorWorkdir(run, "bruno", { env });
+  const otherRun = prepareActorWorkdir(join(tmp(), "run"), "ana", { env });
+  assert.equal(checkActorWorkdir(wd, run, "ana"), realpathSync(wd));
+  const refused = (dir, label) => assert.throws(() => checkActorWorkdir(dir, run, "ana"), (e) => e.code === "unsafe_workdir", label);
+  refused(undefined, "no folder");
+  refused(relative(base, wd), "a relative path");
+  refused(bruno, "another actor's folder");
+  refused(otherRun, "the same actor in another run");
+  refused(base, "the base itself");
+  const carla = join(dirname(wd), "carla");
+  assert.throws(() => checkActorWorkdir(carla, run, "carla"), (e) => e.code === "unsafe_workdir" && /missing/.test(e.message), "a folder that does not exist");
+  assert.equal(existsSync(carla), false, "the check creates nothing");
+  if (process.platform === "win32") return t.skip("no POSIX modes on Windows: the shape checks above are what applies");
+  chmodSync(wd, 0o755);
+  refused(wd, "an actor folder others can enter");
+  chmodSync(wd, 0o700);
+  chmodSync(base, 0o777);
+  assert.throws(() => checkActorWorkdir(wd, run, "ana"), (e) => e.code === "unsafe_workdir" && /chmod go-w/.test(e.message), "a base others can write");
+});
+
 test("actor spawn writes the actor folder 0700 and its files 0600 (act.mjs 0700), then removes it", async (t) => {
   if (process.platform === "win32") return t.skip("no POSIX modes on Windows");
   const { spawnActor, prepareActorWorkdir } = await lib("packet.mjs");
@@ -655,6 +739,61 @@ test("actor spawn and actor wait call the cleanup after recording the transcript
   // Spawning a host is out of scope here, so pin the wiring in the source: each path cleans up in a finally.
   const packet = readFileSync(join(S, "lib", "packet.mjs"), "utf8");
   const cli = readFileSync(JQA, "utf8");
-  assert.match(packet, /recordTranscript\(runDir, actorId, done\);\s*\} finally \{\s*cleanupActorWorkdir\(runDir, actorId\)/);
-  assert.match(cli, /recordTranscript\(runDir, id, done\); \} finally \{ cleanupActorWorkdir\(runDir, id\)/);
+  // Each removes the folder spawn prepared and recorded, never one derived again from the environment.
+  assert.match(packet, /recordTranscript\(runDir, actorId, done\);\s*\} finally \{\s*cleanupActorWorkdir\(runDir, actorId, cwd\)/);
+  assert.match(cli, /recordTranscript\(runDir, id, done\); \} finally \{ left = cleanupActorWorkdir\(runDir, id, meta\.cwd\)/);
+});
+
+test("actor workdir: the run is named by its real path, so --run through a symlink names the driver's folder", async (t) => {
+  const { actorWorkdir, checkActorWorkdir, prepareActorWorkdir } = await lib("packet.mjs");
+  const env = { XDG_RUNTIME_DIR: tmp() };
+  const run = tmp();
+  const link = join(tmp(), "run-link");
+  try { symlinkSync(run, link, "dir"); } catch (e) { return t.skip(`symlinks unavailable here (${e.code})`); }
+  const wd = prepareActorWorkdir(link, "ana", { env });
+  assert.equal(wd, actorWorkdir(run, "ana", { env }), "spawn through the link and the driver on the run name one folder");
+  assert.equal(checkActorWorkdir(wd, run, "ana"), wd);
+  assert.equal(checkActorWorkdir(wd, link, "ana"), wd);
+  // A folder of another run or actor is not unsafe, only not this one: the message names what differs, not a removal.
+  const otherRun = prepareActorWorkdir(tmp(), "ana", { env });
+  assert.throws(() => checkActorWorkdir(otherRun, run, "ana"),
+    (e) => e.code === "unsafe_workdir" && /another run than/.test(e.message) && !/Remove it/.test(e.message), "another run");
+  const bruno = prepareActorWorkdir(run, "bruno", { env });
+  assert.throws(() => checkActorWorkdir(bruno, run, "ana"),
+    (e) => e.code === "unsafe_workdir" && /actor bruno, not of ana/.test(e.message) && !/Remove it/.test(e.message), "another actor");
+});
+
+test("actor wait removes the folder spawn recorded, from any environment, and nothing that fails the check", async (t) => {
+  if (process.platform === "win32") return t.skip("a custom host goes through cmd.exe there");
+  const { prepareActorWorkdir } = await lib("packet.mjs");
+  const work = tmp();
+  const run = join(work, "r");
+  assert.equal(jqa(["init", "--product", "p", "--out", run, "--no-current"]).status, 0);
+  const card = { ...JSON.parse(readFileSync(join(ROOT, "skills", "journey-qa", "assets", "templates", "actor-card.json"), "utf8")), actor_id: "ana" };
+  writeFileSync(join(work, "card.json"), JSON.stringify(card));
+  assert.equal(jqa(["actor", "packet", join(work, "card.json"), "--run", run]).status, 0);
+  // Spawn under one XDG_RUNTIME_DIR, wait without it and with another TMPDIR: the folder each would derive differs.
+  const runtime = tmp();
+  const s = jqa(["actor", "spawn", "ana", "--run", run, "--exec", "--background", "--host", "custom", "--cmd", `"${process.execPath}" -e "console.log(1)"`, "--unsandboxed"],
+    { env: { ...process.env, XDG_RUNTIME_DIR: runtime } });
+  assert.equal(s.status, 0, s.stdout + s.stderr);
+  const spawnFile = join(run, "actors", "ana", "spawn.json");
+  const { cwd } = JSON.parse(readFileSync(spawnFile, "utf8"));
+  assert.ok(cwd.startsWith(realpathSync(runtime)), cwd);
+  assert.ok(existsSync(join(cwd, ".runner.mjs")), "the runner is in the folder spawn recorded");
+  const waitEnv = { ...process.env, TMPDIR: tmp() };
+  delete waitEnv.XDG_RUNTIME_DIR;
+  const wait = () => jqa(["actor", "wait", "ana", "--run", run], { env: waitEnv });
+  const w = wait();
+  assert.equal(w.status, 0, w.stdout + w.stderr);
+  assert.equal(existsSync(cwd), false, "runner, packet and driver file are gone with the folder spawn recorded");
+  // A recorded folder that is not ana's (another actor's, or any folder at all) is left as it is, and wait says so.
+  for (const victim of [prepareActorWorkdir(run, "bruno", { env: { XDG_RUNTIME_DIR: runtime } }), tmp()]) {
+    writeFileSync(join(victim, "keep.txt"), "x");
+    writeFileSync(spawnFile, JSON.stringify({ ...JSON.parse(readFileSync(spawnFile, "utf8")), recorded: false, cwd: victim }));
+    const again = wait();
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    assert.equal(existsSync(join(victim, "keep.txt")), true, victim);
+    assert.match(again.stdout + again.stderr, /actor folder not removed/);
+  }
 });

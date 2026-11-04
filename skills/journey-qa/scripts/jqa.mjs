@@ -10,7 +10,7 @@ import { RUN_DOCUMENTS, SKILL_ROOT, loadTemplate, validateDocument } from "./lib
 import { VALIDATION_LIMIT, checkCapabilities, syncReport, validateReport } from "./lib/report.mjs";
 import { appendEvidence, appendTrace, readLedger, verifyLedger } from "./lib/ledger.mjs";
 import { renderReport } from "./lib/render.mjs";
-import { assertActorId, buildPacket, cleanupActorWorkdir, loadObserverDocs, recordOutcome, recordTranscript, spawnActor } from "./lib/packet.mjs";
+import { assertActorId, buildPacket, cleanupActorWorkdir, loadObserverDocs, prepareActorWorkdir, recordOutcome, recordTranscript, spawnActor } from "./lib/packet.mjs";
 
 export const VERSION = readFileSync(join(SKILL_ROOT, "VERSION"), "utf8").trim();
 const BOOL = new Set(["dry-run", "chromium", "unsandboxed", 
@@ -237,21 +237,31 @@ async function cmdActor({ pos, flags }) {
   if (sub === "spawn") {
     const id = pos[1];
     const runDir = runDirFrom(flags);
-    // A spawned actor gets its own driver token: it can drive only its own context through the interface.
+    // A spawned actor gets its own driver token: it can drive only its own context through the interface. The token
+    // goes with the actor folder spawn prepared here, so the driver checks uploads against this folder rather than one
+    // it derives from its own environment (XDG_RUNTIME_DIR, TMPDIR, HOME may differ between the two processes).
     let driver = null;
+    let workdir = null;
     if (flags.exec) {
       const { driverInfo, send } = await import("./lib/driver/client.mjs");
       const info = driverInfo(runDir);
       if (info) {
-        const t = await send(runDir, { cmd: "actor-token", actor: id, args: [], flags: { as: "coordinator" } });
+        workdir = prepareActorWorkdir(runDir, assertActorId(id));
+        const t = await send(runDir, { cmd: "actor-token", actor: id, args: [], flags: { as: "coordinator", workdir } });
         if (!t.ok) throw new ContractError(t.text, t.code ?? "driver_error");
         driver = { port: info.port, token: t.token };
       }
     }
-    const r = spawnActor(runDir, id, {
-      driver, host: flags.host, model: flags.model, custom: flags.cmd, bare: !!flags.bare, exec: !!flags.exec, background: !!flags.background,
-      unsandboxed: !!flags.unsandboxed, timeoutMinutes: Number(flags["timeout-minutes"] ?? 30),
-    });
+    let r;
+    try {
+      r = spawnActor(runDir, id, {
+        driver, host: flags.host, model: flags.model, custom: flags.cmd, bare: !!flags.bare, exec: !!flags.exec, background: !!flags.background,
+        unsandboxed: !!flags.unsandboxed, timeoutMinutes: Number(flags["timeout-minutes"] ?? 30),
+      });
+    } catch (e) {
+      if (driver) { await revokeActorToken(runDir, id); cleanupActorWorkdir(runDir, id, workdir); }
+      throw e;
+    }
     if (driver && !r.background) await revokeActorToken(runDir, id);
     out(flags, r, r.planned ? `command (not executed; pass --exec):\n  cd ${r.cwd}\n  ${r.command}` : r.background ? `actor ${id} started in the background (pid ${r.pid}); follow it with \`jqa actor wait ${id}\`` : `actor ${id} finished (exit ${r.exit_code})${r.error ? ` error: ${r.error}` : ""} · transcript ${r.evidence ?? "missing"}${r.session ? ` · ${r.session.total} commands, ${r.session.outside_interface} outside act.mjs, ${r.session.denied.length} denied${r.session.cost_usd != null ? `, USD ${r.session.cost_usd.toFixed(2)}` : ""}` : ""}`);
     return r.planned || r.background || r.exit_code === 0 ? 0 : 1;
@@ -271,9 +281,11 @@ async function cmdActor({ pos, flags }) {
     const exit = existsSync(exitFile) ? readJson(exitFile) : { exit_code: null, error: "process ended without recording an exit" };
     const done = { ...meta, ...exit, ended_at: exit.ended_at ?? new Date().toISOString(), recorded: true };
     writeFileSync(spawnFile, JSON.stringify(done, null, 2));
-    let ev;
-    try { ev = recordTranscript(runDir, id, done); } finally { cleanupActorWorkdir(runDir, id); }
-    out(flags, { finished: true, exit_code: done.exit_code, evidence: ev }, `actor ${id} finished (exit ${done.exit_code ?? "unknown"}) · transcript ${ev ?? "missing"}`);
+    // The folder spawn recorded, not one derived from this process's environment, which may differ from spawn's.
+    let ev, left;
+    try { ev = recordTranscript(runDir, id, done); } finally { left = cleanupActorWorkdir(runDir, id, meta.cwd); }
+    out(flags, { finished: true, exit_code: done.exit_code, evidence: ev, ...(left.kept !== undefined ? { workdir_kept: left.kept, workdir_reason: left.reason } : {}) },
+      `actor ${id} finished (exit ${done.exit_code ?? "unknown"}) · transcript ${ev ?? "missing"}${left.kept !== undefined ? `\n! actor folder not removed: ${left.reason}` : ""}`);
     await revokeActorToken(runDir, id);
     return done.exit_code === 0 ? 0 : 1;
   }

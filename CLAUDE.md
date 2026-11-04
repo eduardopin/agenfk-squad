@@ -127,7 +127,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 12. **A defined delivery runs to the end.** A milestone is not a stopping point:
     when a reply would end with "the next step is card X", do card X. Open the
     delivery with `[squad] GOAL: docs/architect/plan.json - 51d1c739-d0d2-400a-8037-f46b00d1668b` (what is delivered, then the card ids; a line whose text starts with `<` is read as a quoted template and opens no goal) and stop only by
-    ending a reply with `[squad] DONE: <evidence>`, `[squad] BLOCKED: <what only
-    the owner can do>` or `[squad] END: <why nothing is left>`. The watcher
+    ending a reply with `[squad] DONE: PR #64 merged, cards DONE`, `[squad] BLOCKED: merge approval on PR #64 is the owner's` or `[squad] END: no card is left that I can take` (your own text
+    after the colon, never a `<placeholder>`). The watcher
     refuses any other stop while the delivery is open (docs/watcher.md, "Carrying
     a delivery to the end").

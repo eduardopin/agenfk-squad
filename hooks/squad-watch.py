@@ -1985,11 +1985,11 @@ CARRY_CARDS = 4        # goal cards looked up at DONE, in parallel, inside the h
 CARRY_EXITS = ("Before you call anything the owner's, do every part you can do yourself: push, open or reopen "
                "a session or pane, merge where the project's rules let the session merge (a green gate and "
                "SHIP, through the merge queue), start the next front. Stop only by ending a reply with one of "
-               "these lines: `[squad] DONE: <evidence: PRs merged, cards DONE>` when everything the delivery "
-               "defines is done, `[squad] BLOCKED: <what only the owner can do>` for a human gate (a merge "
+               "these lines: `[squad] DONE: PR #64 merged, cards DONE` when everything the delivery "
+               "defines is done, `[squad] BLOCKED: merge approval on PR #64 is the owner's` for a human gate (a merge "
                "approval the project reserves for the owner, approval on the board, a decision or an answer "
-               "only the owner has, a production apply), or `[squad] END: <why nothing is left that you can "
-               "do>`.")
+               "only the owner has, a production apply), or `[squad] END: no card is left that I can take`. "
+               "These are examples: write your own text after the colon, never a <placeholder>.")
 GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts")
 
 
@@ -2205,7 +2205,7 @@ def carry_on(p, path, st):
                 print(json.dumps({"decision": "block", "reason": (
                     f"[squad-watch] DONE refused: card {card} is in {safe(status)} in AgEnFK, not DONE. "
                     "Finish it through its flow (`agenfk verify`), or, if a person has to act, end with "
-                    "`[squad] BLOCKED: <what only the owner can do>`.")}))
+                    "`[squad] BLOCKED: merge approval on PR #64 is the owner's` (your own text, not a <placeholder>).")}))
                 return True
         keep(None)
         return False

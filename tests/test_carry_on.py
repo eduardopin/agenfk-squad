@@ -589,6 +589,15 @@ def test_every_goal_line_the_instructions_show_is_one_the_watcher_reads():
         assert watch.GOAL.search(line), f"{name} tells the session to write a goal the watcher does not read: {line}"
 
 
+def test_every_exit_line_the_instructions_show_is_one_the_watcher_reads():
+    watch, wake = _load("sw_lines", "squad-watch.py"), _load("sq_lines", "squad-wake.py")
+    shown = [(n, l) for n, l in _shown_everywhere(watch, wake) if not l.startswith("[squad] GOAL")]
+    assert len(shown) >= 8, shown
+    for name, line in shown:
+        assert watch.MARK.search(line), f"{name} tells the session to write a line the watcher does not read: {line}"
+        assert wake.MARK.search(line), f"{name}: squad-wake does not read {line}"
+
+
 def test_a_blocked_goal_expires_after_a_week():
     s = Session()
     s.owner("[squad] GOAL: ship the checkout feature")

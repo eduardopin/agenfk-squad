@@ -106,8 +106,6 @@ These need data more than code.
   interpreter path is found. See [Known limitations on
   Windows](docs/installation.md#known-limitations-on-windows).
 - `install.sh --uninstall` and `install.sh --dry-run`.
-- A `squad-watch doctor` command that checks hook registration and prints the
-  effective thresholds.
 - A report that turns `metrics.jsonl` into the table at the top of the
   README, for your own machine.
 - More tests around the session report (`session_context.py`); the suite

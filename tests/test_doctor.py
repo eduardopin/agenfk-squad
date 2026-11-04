@@ -160,6 +160,21 @@ def test_a_hook_under_another_matcher_warns_and_does_not_fail():
     assert ("hooks", "squad-watch.py on PreToolUse") in problems(checks, doc.WARN), data
 
 
+def test_a_hook_under_an_empty_or_missing_matcher_counts_as_star():
+    base, home, config = wired()
+    settings_path = os.path.join(config, "settings.json")
+    with open(settings_path, encoding="utf-8") as fh:
+        settings = json.load(fh)
+    settings["hooks"]["PreToolUse"][0]["matcher"] = ""          # the manifest says "*"
+    settings["hooks"]["PostToolUse"][0].pop("matcher")
+    settings["hooks"]["Stop"][0]["matcher"] = "*"               # the manifest says none
+    with open(settings_path, "w", encoding="utf-8") as fh:
+        json.dump(settings, fh)
+    data, checks = as_json(doctor(base, home, config, "--json"))
+    assert [p for p in problems(checks, doc.WARN) if p[0] == "hooks"] == [], data
+    assert checks["hooks"]["status"] == doc.OK, checks["hooks"]
+
+
 def test_a_settings_file_that_is_not_json_fails_the_hooks_and_is_left_alone():
     base, home, config = wired()
     settings_path = os.path.join(config, "settings.json")

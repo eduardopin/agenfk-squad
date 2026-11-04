@@ -568,6 +568,10 @@ def test_the_cap_closes_an_implicit_goal_too():
         s.reply("Next step: the next file.")
         verdicts.append(carried(s.stop()))
     assert verdicts == [True, False, False, False], verdicts
+    s.owner("next request")                             # only the owner reopens the implicit hold
+    s.edit()
+    s.reply("Next step: the next file.")
+    assert carried(s.stop())
 
 
 def test_an_offer_about_an_issue_or_a_commit_is_not_a_delivery():

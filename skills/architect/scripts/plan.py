@@ -66,18 +66,44 @@ def empty_result():
 # ZWNJ (U+200C) and ZWJ (U+200D) stay allowed: real scripts and emoji need them.
 UNSAFE_CATEGORIES = {"Cc", "Cf", "Cs", "Zl", "Zp"}
 ALLOWED_FORMAT = {0x200C, 0x200D}
+# Outside Cf, these still draw nothing: the Hangul fillers, the blank braille pattern, the combining
+# grapheme joiner and the Khmer inherent vowels.
+INVISIBLE = {0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x2800, 0x3164, 0xFFA0}
 
 
 def unsafe_char(char):
-    return unicodedata.category(char) in UNSAFE_CATEGORIES and ord(char) not in ALLOWED_FORMAT
+    return (
+        unicodedata.category(char) in UNSAFE_CATEGORIES and ord(char) not in ALLOWED_FORMAT
+    ) or ord(char) in INVISIBLE or reserved_ignorable(char)
+
+
+def reserved_ignorable(char):
+    """Code points that Unicode reserves as default-ignorable (invisible once assigned): U+2065, U+FFF0-FFF8
+    and U+E0000-E0FFF outside the variation selectors (the assigned tags there are Cf and refused anyway)."""
+    code = ord(char)
+    return code == 0x2065 or 0xFFF0 <= code <= 0xFFF8 or (0xE0000 <= code <= 0xE0FFF and not variation_selector(char))
+
+
+def variation_selector(char):
+    code = ord(char)
+    return 0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF or 0x180B <= code <= 0x180D or code == 0x180F
+
+
+def visible(char):
+    return not char.isspace() and ord(char) not in ALLOWED_FORMAT and not unsafe_char(char) and not variation_selector(char)
 
 
 def is_text(value):
-    return (
-        isinstance(value, str)
-        and bool(value.strip())
-        and not any(unsafe_char(char) for char in value)
-    )
+    """A string with at least one visible character and nothing that hides, reorders or breaks text.
+    A variation selector only picks the glyph of the visible character right before it."""
+    if not isinstance(value, str):
+        return False
+    previous = None
+    for char in value:
+        if unsafe_char(char) or (variation_selector(char) and not (previous and visible(previous))):
+            return False
+        previous = char
+    return any(visible(char) for char in value)
 
 
 def validate_text(value, field, errors, identifier=False):

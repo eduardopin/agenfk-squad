@@ -229,6 +229,35 @@ class PlannerBehavior(unittest.TestCase):
             result = build_plan(plan(task("A", title="Family" + character + "plan")))
             self.assertTrue(result["valid"], repr(character))
 
+    def test_invisible_letters_and_symbols_are_refused_in_titles(self):
+        # Outside Cf, some letters, marks and symbols still draw nothing: the Hangul fillers, the blank
+        # braille pattern, the combining grapheme joiner, the Khmer inherent vowels.
+        # Unassigned default-ignorable code points (U+E0000-E0FFF outside the variation selectors, U+2065, U+FFF0-FFF8)
+        # are refused too: they become invisible characters once Unicode assigns them.
+        for character in ["\u3164", "\u115f", "\u1160", "\uffa0", "\u2800", "\u034f", "\u17b4", "\u17b5",
+                          "\u2065", "\ufff0", "\ufff8", "\U000e0000", "\U000e0002", "\U000e001f", "\U000e0080",
+                          "\U000e01f0", "\U000e0fff"]:
+            result = build_plan(plan(task("A", title="Family" + character + "plan")))
+            self.assertFalse(result["valid"], repr(character))
+            self.assertTrue(any("title" in error for error in result["errors"]), (repr(character), result["errors"]))
+
+    def test_variation_selectors_need_a_visible_base(self):
+        # A variation selector picks the glyph of the character before it ("\u2764\ufe0f", "1\ufe0f\u20e3"); without one,
+        # or stacked, it is invisible text.
+        for title in ["Love \u2764\ufe0f", "Keycap 1\ufe0f\u20e3", "Pride \U0001f3f3\ufe0f\u200d\U0001f308", "Han \u845b\U000e0100",
+                      "Mongol \u182d\u180b", "Mongol \u182d\u180c", "Mongol \u182d\u180d", "Mongol \u182d\u180f"]:
+            result = build_plan(plan(task("A", title=title)))
+            self.assertTrue(result["valid"], (repr(title), result["errors"]))
+        for title in ["\ufe0fPlan", "Plan \ufe0f", "Plan\u2764\ufe0f\ufe0f", "Plan\u200d\ufe0f", "\U000e0100", "Plan \u180b", "Plan \u180f", "\u180cPlan"]:
+            result = build_plan(plan(task("A", title=title)))
+            self.assertFalse(result["valid"], repr(title))
+
+    def test_a_title_of_only_invisible_characters_is_empty(self):
+        for title in ["\u200d", "\u200c\u200d", " \u200d ", "\u200d\u3164"]:
+            result = build_plan(plan(task("A", title=title)))
+            self.assertFalse(result["valid"], repr(title))
+            self.assertTrue(any("title" in error for error in result["errors"]), (repr(title), result["errors"]))
+
     def test_utf8_stdout_reconfigures_a_cp1252_stream(self):
         raw = io.BytesIO()
         stream = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")

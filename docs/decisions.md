@@ -64,8 +64,9 @@ symbolic link inside the store.
 
 ## The command
 
-`install.sh` links it as `~/.local/bin/squad-decisions`. Run it inside the
-repository.
+`install.sh` links it as `~/.local/bin/squad-decisions`; on Windows,
+`install.ps1` writes `%USERPROFILE%\.local\bin\squad-decisions.cmd`, the same
+kind of shim as `squad-turn.cmd`. Run it inside the repository.
 
 | Command | What it does |
 |---|---|
@@ -103,7 +104,8 @@ repository, when the store cannot be read, and on input that is not a JSON
 object. It never fails the session: any error ends with exit code 0 and no
 output. A decision file that cannot be read or has no frontmatter is skipped.
 
-The entry is in `hooks/manifest.json`, so `get.sh` registers it; by hand:
+The entry is in `hooks/manifest.json`, so `get.sh` and `get.ps1` register it,
+and `install.sh` and `install.ps1` link the file it runs; by hand:
 
 ```json
 "SessionStart": [{"hooks": [{"type": "command", "command": "python3 ~/.claude/hooks/squad-decisions.py", "timeout": 5}]}]

@@ -105,7 +105,7 @@ if missing:
     sys.exit(0)
 
 # 1. motion-figma.mjs: node tests, with a floor.
-p = subprocess.run(["node", "--test", "motion-figma.test.mjs"], capture_output=True, text=True,
+p = subprocess.run(["node", "--test", "--test-reporter=tap", "motion-figma.test.mjs"], capture_output=True, text=True,
                    cwd=os.path.join(SKILL, "scripts"))
 m = re.search(r"^# pass (\d+)", p.stdout, re.M)
 passed = int(m.group(1)) if m else 0

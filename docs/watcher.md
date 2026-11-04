@@ -595,11 +595,18 @@ opens and on each CARRY ON hold: the open cards at the bottom of the goal's tree
 minutes (`live_subs`). With two or more open cards and nothing running the verdict
 is FAN OUT, and the watcher says so: on the UserPromptSubmit that opened the goal,
 and as `[squad-watch] CARRY ON + FAN OUT:` on a hold, ahead of the usual exits.
+Cards in BLOCKED, PAUSED, TRASHED or IDEAS are not open work, as in parallel-plan's
+waves, and a parked card takes its children out with it. Every card the goal names
+is read (up to 10), in parallel, with 6 seconds for AgEnFK as the only bound. If the
+deadline cuts the read short the order still goes out but says "read N of the M named
+cards" and the goal is not marked fanned, so the rest is ordered at a later hold.
 The order names the cards, tells the session to run parallel-plan's waves and
-dispatch wave 1 in one message (at most 6 fronts, one worktree each). AgEnFK gets 6
-seconds at most, and any failure (no AgEnFK, no `fleet.py`) means no order, never a
-broken hook. Implicit goals carry no cards and are never fanned out; a BLOCKED or
-released goal is not either.
+dispatch wave 1 in one message (at most 6 fronts, one worktree each). Any failure
+(no AgEnFK, no `fleet.py`) means no order, never a broken hook. A check that finds
+nothing to order is remembered on the goal (`fan_checked`) for 5 minutes (`FAN_CHECK`),
+so a dead AgEnFK costs one lookup per window, not one per event. No order goes out
+within 5 minutes (`DENIED_QUIET`) of a denied dispatch either. Implicit goals carry
+no cards and are never fanned out; a BLOCKED or released goal is not either.
 
 - `skills/architect/scripts/fleet.py [--json]` is the survey: one row per live main
   session with its goal, open cards, running sub-sessions and verdict.
@@ -609,7 +616,11 @@ released goal is not either.
   prints how to do that by hand.
 - squad-wake wakes an idle session whose goal is still open once it is past
   `SQUAD_WAKE_AGE`, instead of leaving it as an old conversation, and the wake text
-  carries the goal and the FAN OUT order.
+  carries the goal and the FAN OUT order. A wake keeps the same brake: no order
+  within `DENIED_QUIET` of a denied dispatch, and the order is recorded on the wake
+  state (`fan_goal`, the goal's `ts`) so a later wake does not repeat it.
+- `fleet.py` reads the session state under `$HOME/.claude/squad/watch`, where the
+  hooks write it, whatever `CLAUDE_CONFIG_DIR` says.
 
 ## Compacting before the cache goes cold
 

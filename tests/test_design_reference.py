@@ -445,6 +445,22 @@ def test_css_usage_names_the_roles_of_an_unknown_vocabulary():
     assert r["accent"] == "#0369a1", "the link gives the accent when there is no primary: %s" % r
 
 
+# 5e. The dark value of a role found by its use resolves against the light and the dark tokens together:
+# a dark token may point at one only the light theme defines, and a name both define takes the dark value.
+# Resolving against the dark tokens alone, or the light ones alone, turns this red. The literal revert of
+# #43 (`{**global_light, **global_dark}` in place of global_both) builds the same mapping and cannot.
+def test_dark_value_of_a_css_usage_role_resolves_against_both_themes():
+    voc = project({"src/globals.css": """
+:root { --sea: #06141d; --abyss: #020202; --quill: #dce8ec; --glow: #aaaaaa; }
+.dark { --sea: var(--abyss); --quill: var(--glow); --glow: #eeeeee; }
+body { background-color: var(--sea); color: var(--quill); }
+"""})
+    a = finding(voc)
+    assert a["roles"]["bg"] == "#06141d" and a["roles"]["fg"] == "#dce8ec", a["roles"]
+    assert a["dark"].get("bg") == "#020202", "a dark token that points at a light-only one: %s" % a["dark"]
+    assert a["dark"].get("fg") == "#eeeeee", "a name both themes define takes the dark value: %s" % a["dark"]
+
+
 # 5d. A hostile value in the repository does not escape the piece's <style> block
 def test_hostile_values_never_reach_the_css():
     hostile = project({
@@ -571,7 +587,7 @@ def scales_linearly(make, n, limit, flag="--json"):
     loaded machine the quadratic sweep reaches the budget first, which is why the budget line fails too."""
     small = min(sweep_took(_many(n // 10, make), limit, flag)[2] for _ in range(3))
     out, _, big = sweep_took(_many(n, make), limit * 4, flag)
-    assert "the sweep stopped at the limit" not in out, (
+    assert sw.LIMIT not in out, (
         f"{n} files hit the sweep's own budget ({big:.1f}s CPU where measured): slower than linear")
     bound = max(limit, SCALE_RATIO * small)
     assert big < bound, f"{n} files took {big:.1f}s, {n // 10} took {small:.1f}s (CPU where measured): more than {bound:.1f}s"
@@ -773,7 +789,9 @@ def test_thousands_of_token_files_are_swept_fast():
 
 
 # 5u. Each conflict line was looked up in the conflicts list: 5500 files that disagree on the nine roles
-# (about 50,000 lines) took 10 s or more. A set answers the lookup; the list keeps the order.
+# (about 50,000 lines) took about 8.5 s and stopped at the sweep's own 8 s budget, with 40,000 of the
+# lines (about 16 s with no budget; the set takes about 1.4 s). A set answers the lookup; the list keeps
+# the order.
 def test_thousands_of_conflicting_files_are_swept_fast():
     roles = ("background", "card", "foreground", "muted-foreground", "primary", "border")
     out = scales_linearly(lambda i: ":root{" + "".join(f"--{r}:#{(i * 9 + s) % 0xffffff:06x};"
@@ -806,25 +824,82 @@ def test_the_roles_stop_at_the_time_budget():
     assert sw._budget["deadline"] == float("inf"), "sweep() restores the budget it found"
 
 
+SUMMARY_BASE = {"verdict": "project", "system": "x", "evidence": ["a.css"], "fonts": ["Inter"],
+                "dark": {"bg": "#000"}, "spec": ["DESIGN.md"], "components": ["Radix"], "storybook": True,
+                "figma": ["https://www.figma.com/file/k/x"], "roles": {"bg": "#fff", "accent": "#0f766e"}}
+ROLE_CONFLICTS = [f"accent: a.css says #{i}{i}{i}, b{i}.css says #000; a.css wins (same level, the shallowest wins)"
+                  for i in range(3)]
+
+
+def partial_lines():
+    """The skipped and the limit lines as sweep() writes them, so a reworded message is tested as it ships."""
+    root = project({"t.css": TOKENS, "u.css": TOKENS})
+    real = sw.css_tokens
+
+    def broken(text, usage):
+        raise TypeError("a parser that breaks")
+    sw.css_tokens = broken
+    try:
+        skipped_line = sw.sweep(root)["conflicts"][0]
+    finally:
+        sw.css_tokens = real
+    before = sw.MAX_FILES
+    sw.MAX_FILES = 1
+    try:
+        limit_line = sw.sweep(root)["conflicts"][-1]
+    finally:
+        sw.MAX_FILES = before
+    assert skipped_line == "t.css" + sw.SKIPPED + "TypeError", skipped_line
+    assert limit_line.startswith(sw.LIMIT), limit_line
+    return skipped_line, limit_line
+
+
 # 5w. The summary printed conflicts[:3] inside its 8 lines: a skipped file or the limit could vanish behind
-# other conflicts or behind the other lines, with no word that the --json lists more.
+# other conflicts or behind the other lines, with no word that the --json lists more. The two lines come
+# from sweep() itself: a message reworded away from SKIPPED or LIMIT stops being found, and this goes red.
 def test_summary_never_hides_a_partial_sweep():
-    base = {"verdict": "project", "system": "x", "evidence": ["a.css"], "fonts": ["Inter"],
-            "dark": {"bg": "#000"}, "spec": ["DESIGN.md"], "components": ["Radix"], "storybook": True,
-            "figma": ["https://www.figma.com/file/k/x"], "roles": {"bg": "#fff", "accent": "#0f766e"}}
-    roles = [f"accent: a.css says #{i}{i}{i}, b{i}.css says #000; a.css wins (same level, the shallowest wins)"
-             for i in range(3)]
-    limit = "the sweep stopped at the limit (6000 files or 8s): run it at the root of the piece's workspace"
-    for conflicts in (["x.css skipped: TypeError"] + roles + [limit], roles + ["y.css skipped: ValueError"]):
-        out = sw.summary(dict(base, conflicts=conflicts)).splitlines()
+    skipped_line, limit = partial_lines()
+    other = skipped_line.replace("t.css", "y.css").replace("TypeError", "ValueError")
+    for conflicts in ([skipped_line] + ROLE_CONFLICTS + [limit], ROLE_CONFLICTS + [other]):
+        out = sw.summary(dict(SUMMARY_BASE, conflicts=conflicts)).splitlines()
         assert len(out) <= 8, out
-        partial = [c for c in conflicts if "skipped" in c or c == limit]
+        partial = [c for c in conflicts if c in (skipped_line, other, limit)]
         for c in partial:
             assert "Conflict: " + c + "." in out, f"{c!r} is not in the summary:\n" + "\n".join(out)
-        assert f"Conflicts: {len(conflicts)} in all, 2 shown; --json lists every one." == out[-1], out[-1]
+        assert f"Conflicts: {len(conflicts)} in all, 2 shown; --json lists every one." == out[-2], out[-2]
     # Up to three conflicts, the summary is the one it was: every line, no count.
-    out = sw.summary(dict(base, conflicts=roles[:2], spec=[], components=[], storybook=False, figma=[]))
-    assert out.splitlines()[-2:] == ["Conflict: " + c + "." for c in roles[:2]], out
+    out = sw.summary(dict(SUMMARY_BASE, conflicts=ROLE_CONFLICTS[:2], spec=[], components=[], storybook=False,
+                          figma=[]))
+    assert out.splitlines()[-2:] == ["Conflict: " + c + "." for c in ROLE_CONFLICTS[:2]], out
+
+
+# 5y. Past 8 lines the summary cut Spec, Components and Figma with no word: about half of the summaries
+# with conflicts changed. Now a closing line says how many lines the --json has that the text does not.
+def test_summary_says_how_many_lines_it_cut():
+    cases = [dict(SUMMARY_BASE, conflicts=c) for c in ([], ROLE_CONFLICTS[:1], ROLE_CONFLICTS, ROLE_CONFLICTS * 2)]
+    cases.append(dict(SUMMARY_BASE, conflicts=ROLE_CONFLICTS, verdict="neutral"))
+    cut = 0
+    for case in cases:
+        out = sw.summary(case).splitlines()
+        before = sw.SUMMARY_LINES
+        sw.SUMMARY_LINES = 100
+        try:
+            whole = sw.summary(case).splitlines()
+        finally:
+            sw.SUMMARY_LINES = before
+        assert len(out) <= 8, out
+        if whole == out:
+            assert not out[-1].endswith("lines in --json."), out
+            continue
+        cut += 1
+        n = len(whole) - (len(out) - 1)
+        assert out[-1] == f"+{n} lines in --json.", f"{n} lines cut, closing line {out[-1]!r}"
+        assert all(line in whole for line in out[:-1]), out
+        assert [c for c in whole if c.startswith("Conflict")] == [c for c in out if c.startswith("Conflict")], (
+            "the conflicts keep their place", out)
+    assert cut == 3, f"{cut} of the cases were cut: the fixture no longer reaches the limit"
+    # Exactly 8 lines fit: nothing is cut, no closing line.
+    assert len(sw.summary(dict(SUMMARY_BASE, conflicts=[])).splitlines()) == 8
 
 
 # 5x. In the ordinary trees the tests build and in this repository, no file is skipped.
@@ -834,7 +909,7 @@ def test_no_file_is_skipped_in_ordinary_trees():
                       "DESIGN.md": "# Acme\n- background: #fff\n"}), ROOT]
     for root in trees:
         a = finding(root)
-        assert not [c for c in a["conflicts"] if " skipped: " in c], (root, a["conflicts"])
+        assert not [c for c in a["conflicts"] if sw.SKIPPED in c], (root, a["conflicts"])
         assert "skipped" not in run(root)[1], root
 
 

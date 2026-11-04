@@ -35,6 +35,12 @@ MAX_KEYS = 10000          # keys read from one JS object literal
 MAX_SPEC_CHARS = 256_000  # text of a written spec that goes through the regexes
 MAX_VALUE = 200           # a value that goes into the <style>; longer than this is neither colour nor font
 MAX_NAME = 200            # a token name longer than this names no role: it is not stripped down to one
+SUMMARY_LINES = 8         # the text summary; --json has everything
+
+# The two conflict lines that say the finding is partial. The summary finds them by these strings, and
+# the tests build them from the same names: a reworded message cannot drop out of the summary unnoticed.
+SKIPPED = " skipped: "                       # "<file> skipped: <error>"
+LIMIT = "the sweep stopped at the limit"     # "<LIMIT> (<files> files or <s>s): ..."
 
 ROLES = ["bg", "surface", "fg", "fg-2", "accent", "border",
          "font-display", "font-body", "font-mono"]
@@ -892,7 +898,7 @@ def _sweep(root):
                 figma += RE_FIGMA.findall(read(path, real_root))
         # A hostile file does not bring the sweep down.
         except (RecursionError, ValueError, MemoryError, TypeError, AttributeError) as error:
-            conflicts.append(f"{rel(root, path)} skipped: {type(error).__name__}")
+            conflicts.append(f"{rel(root, path)}{SKIPPED}{type(error).__name__}")
         except OutOfTime:
             truncated = True
             break
@@ -984,7 +990,7 @@ def _sweep(root):
     else:
         system = None
     if truncated or _budget["hit"]:
-        conflicts.append(f"the sweep stopped at the limit ({MAX_FILES} files or {MAX_SECONDS:.0f}s): "
+        conflicts.append(f"{LIMIT} ({MAX_FILES} files or {MAX_SECONDS:.0f}s): "
                          "run it at the root of the piece's workspace")
 
     return {
@@ -1080,14 +1086,21 @@ def summary(finding):
     # A skipped file or the limit say the finding is partial: they go first, past three conflicts a count
     # says how many the --json lists, and the conflicts keep their place inside the 8 lines.
     def partial(c):
-        return " skipped: " in c or c.startswith("the sweep stopped at the limit")
+        return SKIPPED in c or c.startswith(LIMIT)
     conflicts = finding["conflicts"]
     ordered = [c for c in conflicts if partial(c)] + [c for c in conflicts if not partial(c)]
     shown = ordered if len(ordered) <= 3 else ordered[:2]
     tail = ["Conflict: " + c + "." for c in shown]
     if len(ordered) > len(shown):
         tail.append(f"Conflicts: {len(ordered)} in all, {len(shown)} shown; --json lists every one.")
-    return "\n".join(lines[:8 - len(tail)] + tail)
+    # Lines that do not fit are cut from the end (Figma, Components, Spec, ...), and a closing line says
+    # so. It takes a slot of its own, so it always counts at least two.
+    room = SUMMARY_LINES - len(tail)
+    if len(lines) > room:
+        kept = lines[:room - 1]
+        tail.append(f"+{len(lines) - len(kept)} lines in --json.")
+        lines = kept
+    return "\n".join(lines + tail)
 
 
 def main(argv):

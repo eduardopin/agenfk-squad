@@ -563,13 +563,16 @@ def timed(files, limit, flag="--css"):
 
 
 def scales_linearly(make, n, limit, flag="--json"):
-    """A sweep of n files may take at most SCALE_RATIO times the fastest of three sweeps of n/10, or `limit`
-    seconds, whichever is larger, in the child's CPU time (wall clock on Windows, which has no rusage). A
-    wall-clock bound alone measured the runner (a Windows leg took 5.1 s against 5; a loaded machine more). Measured here: the linear sweep runs 3 to 10 times its n/10, and each quadratic loop #43
-    removed runs 11 to 40 times; the callers' exact counts catch what the ratio lets through, because a slow
-    sweep stops at its own budget and returns fewer items."""
+    """A sweep of n files fails when it hits the sweep's own time budget (MAX_SECONDS: the sweep stops and
+    says so), or when it takes more than SCALE_RATIO times the fastest of three sweeps of n/10, or `limit`
+    seconds, whichever is larger. Time is the child's CPU (wall clock on Windows, which has no rusage). A
+    wall-clock bound alone measured the runner (a Windows leg took 5.1 s against 5). Measured here: the
+    linear sweep runs 3 to 12 times its n/10, each quadratic loop #43 removed 11 to 46 times; on a heavily
+    loaded machine the quadratic sweep reaches the budget first, which is why the budget line fails too."""
     small = min(sweep_took(_many(n // 10, make), limit, flag)[2] for _ in range(3))
     out, _, big = sweep_took(_many(n, make), limit * 4, flag)
+    assert "the sweep stopped at the limit" not in out, (
+        f"{n} files hit the sweep's own budget ({big:.1f}s CPU where measured): slower than linear")
     bound = max(limit, SCALE_RATIO * small)
     assert big < bound, f"{n} files took {big:.1f}s, {n // 10} took {small:.1f}s (CPU where measured): more than {bound:.1f}s"
     return out

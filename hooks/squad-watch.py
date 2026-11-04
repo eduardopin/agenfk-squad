@@ -869,11 +869,24 @@ def remember_review(p, key):
 
 
 def kill_tree(proc):
-    try:
-        if WINDOWS:
+    """Kill the child and what it started, and never wait on its pipe again."""
+    if WINDOWS:
+        # agenfk is a .cmd shim: cmd.exe -> node -> ... TerminateProcess ends cmd.exe alone and leaves the rest
+        # holding the pipe; taskkill /T walks the tree while its parents are still there to walk.
+        try:
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2, creationflags=0x08000000)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
             proc.kill()
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)   # start_new_session: its children go with it
+        except OSError:
+            pass
+        # no close(): communicate() reads the pipe in a daemon thread that holds the file's lock until EOF,
+        # and close() would wait for it (30 s with a grandchild that escaped the kill). The thread is abandoned.
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)   # start_new_session: its children go with it
     except OSError:
         pass
     try:

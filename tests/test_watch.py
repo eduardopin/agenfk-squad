@@ -1721,17 +1721,26 @@ def test_review_gate_fails_open_and_says_why():
     assert gate_log(h)[-2]["decision"] == "allow", gate_log(h)[-2]
     last = gate_log(h)[-1]
     assert (last["card"], last["decision"]) == (CARD_B, "deny") and "one card per call" in last["why"], last
-    if os.name != "nt":
-        with open(os.path.join(h, "agenfk-kid")) as fh:
-            kid = int(fh.read())
-        for _ in range(50):
+    with open(os.path.join(h, "agenfk-kid")) as fh:
+        kid = int(fh.read())
+
+    def alive():
+        if os.name != "nt":
             try:
                 os.kill(kid, 0)
             except OSError:
-                break
-            time.sleep(0.1)
-        else:
-            raise AssertionError(f"the stub's child {kid} outlived the timeout")
+                return False
+            return True
+        # not os.kill: on Windows it is TerminateProcess, and would do the hook's job for it
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {kid}", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True).stdout
+        return f'"{kid}"' in out
+    for _ in range(50):
+        if not alive():
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"the stub's child {kid} outlived the timeout")
 
 
 def test_an_id_agenfk_fails_on_does_not_open_the_gate_for_the_next_card():
@@ -1804,8 +1813,9 @@ def test_stale_state_is_cleaned_with_a_folder_in_it():
     assert os.path.exists(os.path.join(folder, f"{sid}.b1.json"))      # the sub-session has a state file to drop
     stale = []
 
-    def stale_file():
-        path = os.path.join(folder, f"0000{len(stale):04d}-dead.a{len(stale)}.json")
+    def stale_file():                     # names on both sides of "reviews": NTFS lists by name, and a session id
+        n = len(stale)                    # (hex) would always come before the folder there
+        path = os.path.join(folder, f"{'0000' if n % 2 else 'zzzz'}{n:04d}-dead.a{n}.json")
         with open(path, "w") as fh:
             fh.write("{}")
         os.utime(path, (old, old))
@@ -1813,9 +1823,9 @@ def test_stale_state_is_cleaned_with_a_folder_in_it():
 
     def after_folder():                   # stale files the cleanup lists after the folder: the ones it used to keep
         names = os.listdir(folder)
-        return [n for n in names[names.index("reviews") + 1:] if n.startswith("0000")]
+        return [n for n in names[names.index("reviews") + 1:] if "-dead.a" in n]
     for _ in range(20):                   # files before and after the folder: listing order is the filesystem's
-        stale_file()                      # (tmpfs: newest first; ext4: by hash)
+        stale_file()                      # (tmpfs: newest first; ext4: by hash; NTFS: by name)
     os.makedirs(os.path.join(folder, "reviews"))
     os.utime(os.path.join(folder, "reviews"), (old, old))
     while len(stale) < 40 or (not after_folder() and len(stale) < 200):

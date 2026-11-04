@@ -435,6 +435,36 @@ def test_two_releases_in_a_row_close_an_explicit_goal():
     assert not s.state().get("goal"), s.state()
 
 
+def test_done_is_refused_for_a_card_named_by_its_eight_character_prefix():
+    s = Session(statuses={"51d1c739": "IN_PROGRESS"})
+    s.owner("[squad] GOAL: ship checkout, card 51d1c739")
+    s.edit()
+    s.reply("[squad] DONE: all done")
+    assert "DONE refused: card 51d1c739" in s.stop()
+
+
+def test_a_date_or_a_word_is_not_taken_for_a_card_prefix():
+    s = Session(statuses={"20261104": "IN_PROGRESS", "deadbeef": "IN_PROGRESS"})
+    s.owner("[squad] GOAL: ship checkout by 20261104, no deadbeef")
+    s.edit()
+    s.reply("[squad] DONE: all done")
+    assert s.stop() == "nothing"
+
+
+def test_a_prefix_and_its_full_id_are_one_card():
+    s = Session(statuses={CARD: "IN_PROGRESS"})
+    s.owner(f"[squad] GOAL: ship checkout, card {CARD[:8]} ({CARD})")
+    assert s.state()["goal"]["cards"] == [CARD]
+
+
+def test_an_external_id_is_not_looked_up_so_the_goal_carries_the_agenfk_id():
+    s = Session(statuses={"INFRA-419": "IN_PROGRESS"})
+    s.owner("[squad] GOAL: ship checkout, INFRA-419")
+    s.edit()
+    s.reply("[squad] DONE: all done")
+    assert s.stop() == "nothing"
+
+
 def test_done_check_stays_inside_the_hook_timeout():
     import time as _t
     cards = [f"{i:08x}-2222-3333-4444-555555555555" for i in range(8)]

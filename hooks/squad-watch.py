@@ -1980,6 +1980,10 @@ QUOTE = re.compile(r"(?m)^\s*>.*$")
 
 
 AGENFK_ID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+# The squad names a card by its 8-character prefix too (`agenfk get` resolves it). Needs a digit and a
+# letter, so a date (20261104) or a word is not a card; a commit sha that gets through is looked up, found
+# unknown and counts as closed. External ids (INFRA-419) are not looked up: the goal carries the AgEnFK id.
+CARD_PREFIX = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{8}\b(?!-)")
 CLOSED_CARD = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
 CARRY_CARDS = 4        # goal cards looked up at DONE, in parallel, inside the hook's 10 s
 CARRY_EXITS = ("Before you call anything the owner's, do every part you can do yourself: push, open or reopen "
@@ -2006,9 +2010,17 @@ def goal_text(text):
     return "".join(c for c in str(text) if c.isprintable()).strip()[:400]
 
 
+def goal_cards(text):
+    """The AgEnFK cards a goal names: full ids and 8-character prefixes, a prefix of a full id listed once."""
+    full = list(dict.fromkeys(AGENFK_ID.findall(text)))
+    stems = [c for c in dict.fromkeys(CARD_PREFIX.findall(AGENFK_ID.sub(" ", text)))
+             if not any(f.startswith(c) for f in full)]
+    return (full + stems)[:10]
+
+
 def new_goal(text, source):
     now = time.time()
-    return {"text": goal_text(text), "source": source, "cards": AGENFK_ID.findall(text)[:10],
+    return {"text": goal_text(text), "source": source, "cards": goal_cards(text),
             "holds": 0, "idle": 0, "ts": now, "progress_ts": now}
 
 

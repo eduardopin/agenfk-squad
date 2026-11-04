@@ -1,0 +1,1500 @@
+{
+  "schema_version": 1,
+  "project": "Hypothetical example: work-order bootstrap in one staging environment",
+  "assumptions": [
+    "TEACHING EXAMPLE, HYPOTHETICAL AND NOT EXECUTED. All contracts are draft; all tasks are todo; PRs are planned; observed_evidence is empty. No access, resource, PR, merge, apply or test is declared done.",
+    "Slice: first internal staging of a work-order application with API, web, login through an existing IdP, operator and technician roles, open/list/update/complete and synthetic attachments. The demonstration uses only test data.",
+    "Complete inventory only for the directly managed objects and the declared external dependencies of this slice. It is not a complete inventory of the AWS account. ENIs, transient tasks, backups and other objects managed internally by the services are derived effects, not independent resources of this list.",
+    "Out of the slice: production, HA, multi-region, tenant onboarding, payments, email/SMS, creation of directory/users, malware pipeline for real files, Kubernetes, new domain/ALB/VPC, landing zone, new runner and migration of an existing database. Including any item requires revising scope, resources, risks and estimates.",
+    "Illustrative target AWS + Terraform + GitHub Actions. Replace example/orders-service with the real authorized repository. The repository is assumed to already exist, with an existing merge policy; creating the repository is not a hidden step.",
+    "One staging, one service replica and one Single-AZ RDS instance are lab assumptions. Quantities are per environment; external_*_bundle rows represent an identified external capability, not a count of its physical objects. Do not add software capabilities to billable resources as if they were the same unit.",
+    "Network, HTTPS ingress, cluster, state backend, IdP/client, private runner, OIDC provider and bootstrap identity are assumptions for DISCOVERY to verify. If they fail, block the dependent actions and revise the plan; do not fill observed_evidence with suppositions.",
+    "The first apply uses existing identity and backend; only afterwards does the new OIDC role enable delivery. This order avoids depending on the very role/pipeline that is yet to be created. Do not disable controls to solve bootstrap.",
+    "Four real workers are modeled: worker-api, worker-web, worker-platform and worker-delivery-qa. The global limit is four, and each owner runs only one task at a time. CI and QA share capacity; there are no five implicit workers.",
+    "Review capacity is shared through the reviewer:shared lock and consumes one of the same workers. API, web, platform and delivery authors review areas of another owner; the scenarios written by the main APP reviewer have a separate review in QA-REVIEW.",
+    "Foundation and runtime use separate roots, directories and state keys in the same backend. Each apply acquires the real lock of its state. The base can be applied/verified without waiting for API or web; runtime can only be applied with a verified digest and schema.",
+    "The four PRs represent grouped capabilities, not one PR per resource. PR-01 includes several resources; PR-02 brings together the flow and its tests/migration; PR-03 enables delivery; PR-04 integrates runtime. Authoring, review, merge, apply and proof of the result appear separately when they change readiness.",
+    "Each minute range is a teaching guess, not a measurement or commitment. likely is used by plan.py; optimistic/conservative are scenarios, not statistical intervals. They include continuous work, but not unpredictable external queues, missing access, incidents, rejections or rework.",
+    "The conditional forecast assumes a satisfactory discovery, authorized access/budget and real completion of CONTRACT-REVIEW. contract_gates allow simulating the scenario without changing draft/todo, granting authorization or making tasks dispatchable in the real snapshot.",
+    "Price, region, sizing, retention, IDs, ARNs, OIDC subjects, runners and repository paths must be verified at execution. No fictitious price or identifier is evidence of availability.",
+    "The administrative secret managed by RDS stays restricted to bootstrap. APP-SECRET is only metadata in the foundation; SCHEMA-APPLY creates the restricted user and the initial version of the secret, before RUNTIME-APPLY. The value does not enter the state or the evidence.",
+    "API and web make up a single artifact to limit the infrastructure. REPOSITORY and RELEASE-IMAGE are configuration/artifact scopes; their quantity must not be read as the cost of a new account or of another environment.",
+    "API, web and QA work in independent worktrees. APP-ASSEMBLE brings the commits together in one branch and tests the set locally before APP-REVIEW; this consolidation belongs to the same PR-02 and does not replace E2E in staging.",
+    "BASE-PLAN produces a real plan before BASE-REVIEW and BASE-MERGE. The later apply confirms that the integrated content, inputs and state match the reviewed plan; material differences require reconciliation and updated evidence, without redundant approval of unchanged content."
+  ],
+  "task_estimates": [
+    {
+      "task_id": "DISCOVERY",
+      "optimistic_minutes": 20,
+      "likely_minutes": 35,
+      "conservative_minutes": 70
+    },
+    {
+      "task_id": "CONTRACT-DRAFT",
+      "optimistic_minutes": 30,
+      "likely_minutes": 50,
+      "conservative_minutes": 90
+    },
+    {
+      "task_id": "CONTRACT-REVIEW",
+      "optimistic_minutes": 15,
+      "likely_minutes": 25,
+      "conservative_minutes": 50
+    },
+    {
+      "task_id": "BASE-AUTHOR",
+      "optimistic_minutes": 45,
+      "likely_minutes": 70,
+      "conservative_minutes": 120
+    },
+    {
+      "task_id": "BASE-REVIEW",
+      "optimistic_minutes": 15,
+      "likely_minutes": 25,
+      "conservative_minutes": 45
+    },
+    {
+      "task_id": "BASE-MERGE",
+      "optimistic_minutes": 5,
+      "likely_minutes": 10,
+      "conservative_minutes": 20
+    },
+    {
+      "task_id": "BASE-PLAN",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 40
+    },
+    {
+      "task_id": "BASE-APPLY",
+      "optimistic_minutes": 20,
+      "likely_minutes": 35,
+      "conservative_minutes": 70
+    },
+    {
+      "task_id": "BASE-VERIFY",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 40
+    },
+    {
+      "task_id": "API-AUTHOR",
+      "optimistic_minutes": 90,
+      "likely_minutes": 150,
+      "conservative_minutes": 240
+    },
+    {
+      "task_id": "WEB-AUTHOR",
+      "optimistic_minutes": 70,
+      "likely_minutes": 120,
+      "conservative_minutes": 200
+    },
+    {
+      "task_id": "CI-AUTHOR",
+      "optimistic_minutes": 25,
+      "likely_minutes": 45,
+      "conservative_minutes": 80
+    },
+    {
+      "task_id": "QA-AUTHOR",
+      "optimistic_minutes": 20,
+      "likely_minutes": 35,
+      "conservative_minutes": 60
+    },
+    {
+      "task_id": "QA-REVIEW",
+      "optimistic_minutes": 10,
+      "likely_minutes": 15,
+      "conservative_minutes": 30
+    },
+    {
+      "task_id": "RUNTIME-AUTHOR",
+      "optimistic_minutes": 35,
+      "likely_minutes": 60,
+      "conservative_minutes": 100
+    },
+    {
+      "task_id": "CI-REVIEW",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 35
+    },
+    {
+      "task_id": "CI-MERGE",
+      "optimistic_minutes": 5,
+      "likely_minutes": 10,
+      "conservative_minutes": 20
+    },
+    {
+      "task_id": "CI-ACTIVATE",
+      "optimistic_minutes": 10,
+      "likely_minutes": 15,
+      "conservative_minutes": 30
+    },
+    {
+      "task_id": "CI-VERIFY",
+      "optimistic_minutes": 10,
+      "likely_minutes": 15,
+      "conservative_minutes": 30
+    },
+    {
+      "task_id": "APP-ASSEMBLE",
+      "optimistic_minutes": 15,
+      "likely_minutes": 30,
+      "conservative_minutes": 60
+    },
+    {
+      "task_id": "APP-REVIEW",
+      "optimistic_minutes": 15,
+      "likely_minutes": 30,
+      "conservative_minutes": 60
+    },
+    {
+      "task_id": "APP-MERGE",
+      "optimistic_minutes": 5,
+      "likely_minutes": 10,
+      "conservative_minutes": 20
+    },
+    {
+      "task_id": "BUILD-PUBLISH",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 40
+    },
+    {
+      "task_id": "IMAGE-VERIFY",
+      "optimistic_minutes": 5,
+      "likely_minutes": 10,
+      "conservative_minutes": 20
+    },
+    {
+      "task_id": "RUNTIME-REVIEW",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 40
+    },
+    {
+      "task_id": "RUNTIME-MERGE",
+      "optimistic_minutes": 5,
+      "likely_minutes": 10,
+      "conservative_minutes": 20
+    },
+    {
+      "task_id": "RUNTIME-PLAN",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 35
+    },
+    {
+      "task_id": "SCHEMA-APPLY",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 40
+    },
+    {
+      "task_id": "SCHEMA-VERIFY",
+      "optimistic_minutes": 10,
+      "likely_minutes": 15,
+      "conservative_minutes": 30
+    },
+    {
+      "task_id": "RUNTIME-APPLY",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 45
+    },
+    {
+      "task_id": "RUNTIME-VERIFY",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 35
+    },
+    {
+      "task_id": "E2E-VERIFY",
+      "optimistic_minutes": 20,
+      "likely_minutes": 35,
+      "conservative_minutes": 60
+    },
+    {
+      "task_id": "RELEASE-REVIEW",
+      "optimistic_minutes": 10,
+      "likely_minutes": 20,
+      "conservative_minutes": 35
+    }
+  ],
+  "contract_gates": [
+    {
+      "contract_id": "API",
+      "task_ids": [
+        "CONTRACT-REVIEW"
+      ],
+      "condition": "Only simulate the release after the real review of this contract, the recording of evidence and the resolution of the assumptions; keep draft/todo in the initial snapshot. The forecast neither executes nor authorizes the transition."
+    },
+    {
+      "contract_id": "DATA",
+      "task_ids": [
+        "CONTRACT-REVIEW"
+      ],
+      "condition": "Only simulate the release after the real review of this contract, the recording of evidence and the resolution of the assumptions; keep draft/todo in the initial snapshot. The forecast neither executes nor authorizes the transition."
+    },
+    {
+      "contract_id": "RUNTIME",
+      "task_ids": [
+        "CONTRACT-REVIEW"
+      ],
+      "condition": "Only simulate the release after the real review of this contract, the recording of evidence and the resolution of the assumptions; keep draft/todo in the initial snapshot. The forecast neither executes nor authorizes the transition."
+    }
+  ],
+  "pull_requests": [
+    {
+      "id": "PR-01",
+      "title": "Create the staging platform base in one coherent change",
+      "owner": "worker-platform",
+      "reviewer": "worker-delivery-qa",
+      "repository": "example/orders-service",
+      "state": "planned",
+      "url": null,
+      "evidence": [],
+      "task_ids": [
+        "BASE-AUTHOR",
+        "BASE-PLAN",
+        "BASE-REVIEW",
+        "BASE-MERGE"
+      ]
+    },
+    {
+      "id": "PR-02",
+      "title": "Deliver the first work-order flow with API, web, migration and tests",
+      "owner": "worker-api",
+      "reviewer": "worker-delivery-qa",
+      "repository": "example/orders-service",
+      "state": "planned",
+      "url": null,
+      "evidence": [],
+      "task_ids": [
+        "API-AUTHOR",
+        "WEB-AUTHOR",
+        "QA-AUTHOR",
+        "QA-REVIEW",
+        "APP-ASSEMBLE",
+        "APP-REVIEW",
+        "APP-MERGE"
+      ]
+    },
+    {
+      "id": "PR-03",
+      "title": "Prepare build, identity and reproducible delivery by digest",
+      "owner": "worker-delivery-qa",
+      "reviewer": "worker-api",
+      "repository": "example/orders-service",
+      "state": "planned",
+      "url": null,
+      "evidence": [],
+      "task_ids": [
+        "CI-AUTHOR",
+        "CI-REVIEW",
+        "CI-MERGE"
+      ]
+    },
+    {
+      "id": "PR-04",
+      "title": "Add runtime, routing and observability for the approved contract",
+      "owner": "worker-platform",
+      "reviewer": "worker-api",
+      "repository": "example/orders-service",
+      "state": "planned",
+      "url": null,
+      "evidence": [],
+      "task_ids": [
+        "RUNTIME-AUTHOR",
+        "RUNTIME-REVIEW",
+        "RUNTIME-MERGE"
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "id": "EXISTING-REPO",
+      "name": "Target GitHub repository already created",
+      "kind": "external_github_repository",
+      "action": "reuse",
+      "environment": "shared",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: example/orders-service is a fictitious identifier; replace it with the existing authorized repo. Creating a repo is not in this slice.",
+      "expected_evidence": [
+        "Real URL, owner, default branch and checks observed; no URL is declared to exist in this example"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-VPC",
+      "name": "VPC approved for staging",
+      "kind": "external_aws_vpc",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: The network is administered outside this scope and its ID must be confirmed.",
+      "expected_evidence": [
+        "Account, region, VPC ID and owner observed"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-SUBNETS",
+      "name": "Private subnets in two AZs",
+      "kind": "external_aws_subnet",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 2,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [
+        "EXISTING-VPC"
+      ],
+      "justification": "ASSUMPTION TO VERIFY: Two subnets already exist; no subnets or routes are created in this plan.",
+      "expected_evidence": [
+        "Two IDs and distinct AZs, routes, DNS and address range verified"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-EGRESS",
+      "name": "Egress contract and routes already managed",
+      "kind": "external_network_capability_bundle",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [
+        "EXISTING-SUBNETS"
+      ],
+      "justification": "ASSUMPTION TO VERIFY: An external bundle provides reach to ECR, logs, secrets and IdP; specific NAT/endpoints must be inventoried by discovery, outside the creation scope of this slice.",
+      "expected_evidence": [
+        "Network paths and attributed costs; proof of reach to the required services"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-INGRESS",
+      "name": "Existing HTTPS ingress: ALB, listener, certificate and DNS",
+      "kind": "external_https_ingress_bundle",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [
+        "EXISTING-VPC"
+      ],
+      "justification": "ASSUMPTION TO VERIFY: Reuse an externally administered HTTPS capability; confirm the four components and a free route. Do not create a new ALB, certificate or domain.",
+      "expected_evidence": [
+        "ALB/listener ARNs, valid certificate, observed DNS and an available listener rule priority"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-CLUSTER",
+      "name": "Existing ECS cluster",
+      "kind": "external_aws_ecs_cluster",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: A Fargate-compatible cluster exists; its capacity and region must be confirmed.",
+      "expected_evidence": [
+        "Cluster ARN, region and capacity configuration observed"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-STATE",
+      "name": "Existing Terraform backend with locking",
+      "kind": "external_terraform_backend_bundle",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: The backend and its encryption/locking are administered outside the slice; use two state keys, foundation and runtime.",
+      "expected_evidence": [
+        "Backend location and configuration, two isolated keys, a safe access test and the lock mechanism confirmed"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-BOOTSTRAP",
+      "name": "Authorized identity for the first bootstrap",
+      "kind": "external_bootstrap_identity",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: An existing identity applies the foundation before the CI role is created. If absent, stop the applies and revise the plan.",
+      "expected_evidence": [
+        "Assumed identity, authorization scope, account, region and budget confirmed"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-GITHUB-OIDC",
+      "name": "GitHub IAM OIDC provider already registered",
+      "kind": "external_aws_iam_oidc_provider",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: The provider exists in the account; verify the issuer, the audience and the real subject format of the repository.",
+      "expected_evidence": [
+        "ARN and trust configuration observed; subject format confirmed without exposing a token"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-RUNNER",
+      "name": "Private runner authorized for plan and migration",
+      "kind": "external_private_runner",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [
+        "EXISTING-SUBNETS",
+        "EXISTING-EGRESS",
+        "EXISTING-BOOTSTRAP"
+      ],
+      "justification": "ASSUMPTION TO VERIFY: An isolated runner already reaches AWS services and the DB private network. Its provisioning is outside the slice.",
+      "expected_evidence": [
+        "Runner, isolation, backend access and network path to the DB demonstrable"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-IDP",
+      "name": "IdP and client registration of the staging application",
+      "kind": "external_oidc_authentication_bundle",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: Issuer, audience, web client and callbacks are already approved; directory creation or user registration does not belong to the slice.",
+      "expected_evidence": [
+        "Issuer/audience, callbacks and synthetic users authorized for the two roles observed"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXISTING-ALERTS",
+      "name": "Existing operational destination for staging alerts",
+      "kind": "external_notification_destination",
+      "action": "reuse",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [],
+      "provision_task_ids": [],
+      "verify_task_ids": [
+        "DISCOVERY"
+      ],
+      "depends_on": [],
+      "justification": "ASSUMPTION TO VERIFY: A notification route already has an owner; do not register recipients or send unauthorized messages.",
+      "expected_evidence": [
+        "Destination ARN/configuration and owner confirmed; distinguish notification configuration from a send test"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "REGISTRY",
+      "name": "Application ECR repository",
+      "kind": "aws_ecr_repository",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-BOOTSTRAP",
+        "EXISTING-STATE"
+      ],
+      "justification": "Receive images identified by digest before activating the runtime.",
+      "expected_evidence": [
+        "ARN, access policy, retention and publishing target verified"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "DEPLOY-ROLE",
+      "name": "OIDC role for staging delivery",
+      "kind": "aws_iam_role",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-GITHUB-OIDC",
+        "EXISTING-REPO"
+      ],
+      "justification": "Allow CI to use a short-lived identity after bootstrap.",
+      "expected_evidence": [
+        "ARN and trust policy restricted to the real repo/environment"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "DEPLOY-POLICY",
+      "name": "Inline policy of the delivery role",
+      "kind": "aws_iam_role_policy",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "DEPLOY-ROLE",
+        "REGISTRY"
+      ],
+      "justification": "Restrict publish, deploy and access actions to the planned resources/states.",
+      "expected_evidence": [
+        "Effective document and positive/negative scope checks"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXECUTION-ROLE",
+      "name": "ECS task execution role",
+      "kind": "aws_iam_role",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [],
+      "justification": "Allow the runtime to pull the image, read the application secret and send logs.",
+      "expected_evidence": [
+        "ARN and ECS trust principal verified"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "EXECUTION-POLICY",
+      "name": "ECS execution inline policy",
+      "kind": "aws_iam_role_policy",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "EXECUTION-ROLE",
+        "REGISTRY",
+        "APP-SECRET",
+        "APP-LOGS"
+      ],
+      "justification": "Grant access only to the required artifacts, logs and application secret.",
+      "expected_evidence": [
+        "Restricted policy; the runtime does not receive the DB administrative secret"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-ROLE",
+      "name": "Application role for attachments",
+      "kind": "aws_iam_role",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [],
+      "justification": "Separate the process identity from the execution identity.",
+      "expected_evidence": [
+        "ARN and ECS trust verified"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-POLICY",
+      "name": "Inline policy for attachment access",
+      "kind": "aws_iam_role_policy",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "APP-ROLE",
+        "ATTACHMENTS-BUCKET"
+      ],
+      "justification": "Restrict application operations to the planned bucket/prefixes and actions.",
+      "expected_evidence": [
+        "Effective policy and absence of generic access to buckets or secrets"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ATTACHMENTS-BUCKET",
+      "name": "Private bucket for synthetic attachments",
+      "kind": "aws_s3_bucket",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [],
+      "justification": "Store the attachments of the test slice.",
+      "expected_evidence": [
+        "Observed name/ARN and ownership configured"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ATTACHMENTS-PUBLIC-BLOCK",
+      "name": "Bucket public access block",
+      "kind": "aws_s3_bucket_public_access_block",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "ATTACHMENTS-BUCKET"
+      ],
+      "justification": "Prevent accidental public access.",
+      "expected_evidence": [
+        "Four public access blocks enabled"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ATTACHMENTS-ENCRYPTION",
+      "name": "Bucket encryption configuration",
+      "kind": "aws_s3_bucket_server_side_encryption_configuration",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "ATTACHMENTS-BUCKET"
+      ],
+      "justification": "Define explicit default encryption.",
+      "expected_evidence": [
+        "SSE configuration chosen and observed; no new implicit key in this slice"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ATTACHMENTS-TLS",
+      "name": "Bucket TLS policy",
+      "kind": "aws_s3_bucket_policy",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "ATTACHMENTS-BUCKET"
+      ],
+      "justification": "Require secure transport without granting public read.",
+      "expected_evidence": [
+        "Transport policy and private access validated"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ATTACHMENTS-CORS",
+      "name": "Restricted CORS for browser attachments",
+      "kind": "aws_s3_bucket_cors_configuration",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "ATTACHMENTS-BUCKET",
+        "EXISTING-INGRESS"
+      ],
+      "justification": "Allow only the origin, methods and headers required by signed upload.",
+      "expected_evidence": [
+        "Exact staging origin, minimal methods and no improper wildcard"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ATTACHMENTS-LIFECYCLE",
+      "name": "Retention of synthetic staging attachments",
+      "kind": "aws_s3_bucket_lifecycle_configuration",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "ATTACHMENTS-BUCKET"
+      ],
+      "justification": "Apply the approved retention only to the fixtures prefix; do not include real data.",
+      "expected_evidence": [
+        "Rule and test prefix reviewed; duration is a scope input"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-SG",
+      "name": "Service security group",
+      "kind": "aws_security_group",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-VPC",
+        "EXISTING-INGRESS"
+      ],
+      "justification": "Allow traffic from the ingress source and the required egress.",
+      "expected_evidence": [
+        "Effective rules and authorized source identified"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "DB-SG",
+      "name": "DB security group",
+      "kind": "aws_security_group",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-VPC",
+        "APP-SG",
+        "EXISTING-RUNNER"
+      ],
+      "justification": "Allow PostgreSQL only from the runtime and from the network identity of the migration runner.",
+      "expected_evidence": [
+        "Source/port of the rules and absence of public access"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "DB-SUBNET-GROUP",
+      "name": "RDS subnet group",
+      "kind": "aws_db_subnet_group",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-SUBNETS"
+      ],
+      "justification": "Associate RDS with the existing private network.",
+      "expected_evidence": [
+        "The group references the two verified subnets"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "DB",
+      "name": "Staging RDS PostgreSQL instance",
+      "kind": "aws_db_instance",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "DB-SUBNET-GROUP",
+        "DB-SG"
+      ],
+      "justification": "Provide a Single-AZ instance for the lab with explicitly sized class, storage, backup and cost.",
+      "expected_evidence": [
+        "Instance available, encryption, private access and inputs observed; does not prove the business schema"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "DB-ADMIN-SECRET",
+      "name": "Administrative secret managed by RDS",
+      "kind": "aws_rds_managed_secret",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [
+        "DB"
+      ],
+      "justification": "Reuse the RDS managed mechanism for bootstrap and migration; restrict administrative access.",
+      "expected_evidence": [
+        "Reference to the managed secret and restricted authorization; value never attached to evidence"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-SECRET",
+      "name": "Metadata of the application credential secret",
+      "kind": "aws_secretsmanager_secret",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [],
+      "justification": "Prepare the ARN before the runtime; the initial value is only created in the migration.",
+      "expected_evidence": [
+        "Secret exists, access restricted, without claiming it holds a usable credential"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-LOGS",
+      "name": "Service log group",
+      "kind": "aws_cloudwatch_log_group",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-01"
+      ],
+      "provision_task_ids": [
+        "BASE-APPLY"
+      ],
+      "verify_task_ids": [
+        "BASE-VERIFY"
+      ],
+      "depends_on": [],
+      "justification": "Make logs available with a defined retention before starting the application.",
+      "expected_evidence": [
+        "Log group, retention and permissions; log arrival will be verified in the runtime"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "GITHUB-ENVIRONMENT",
+      "name": "GitHub staging environment",
+      "kind": "github_environment",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-delivery-qa",
+      "pr_ids": [
+        "PR-03"
+      ],
+      "provision_task_ids": [
+        "CI-ACTIVATE"
+      ],
+      "verify_task_ids": [
+        "CI-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-REPO",
+        "DEPLOY-ROLE"
+      ],
+      "justification": "Associate the target with the identity context and the applicable controls.",
+      "expected_evidence": [
+        "Environment observed and OIDC claims compatible"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "PIPELINES",
+      "name": "CI and delivery workflows",
+      "kind": "github_workflow",
+      "action": "create",
+      "environment": "repository",
+      "quantity": 2,
+      "owner": "worker-delivery-qa",
+      "pr_ids": [
+        "PR-03"
+      ],
+      "provision_task_ids": [
+        "CI-ACTIVATE"
+      ],
+      "verify_task_ids": [
+        "CI-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-REPO",
+        "GITHUB-ENVIRONMENT",
+        "DEPLOY-POLICY"
+      ],
+      "justification": "Activate two versioned workflows after the merge and verify their identity before the release build.",
+      "expected_evidence": [
+        "Paths and SHA of two workflows, smoke run and permissions observed"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "RELEASE-IMAGE",
+      "name": "Candidate OCI image of API and web",
+      "kind": "oci_release_image",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-delivery-qa",
+      "pr_ids": [
+        "PR-02",
+        "PR-03"
+      ],
+      "provision_task_ids": [
+        "BUILD-PUBLISH"
+      ],
+      "verify_task_ids": [
+        "IMAGE-VERIFY"
+      ],
+      "depends_on": [
+        "REGISTRY",
+        "PIPELINES"
+      ],
+      "justification": "Publish one artifact per release that can be promoted by digest.",
+      "expected_evidence": [
+        "Digest, source commit and artifact smoke test"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-SCHEMA",
+      "name": "Orders schema and tables",
+      "kind": "postgresql_application_schema",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-api",
+      "pr_ids": [
+        "PR-02"
+      ],
+      "provision_task_ids": [
+        "SCHEMA-APPLY"
+      ],
+      "verify_task_ids": [
+        "SCHEMA-VERIFY"
+      ],
+      "depends_on": [
+        "DB",
+        "DB-ADMIN-SECRET",
+        "RELEASE-IMAGE"
+      ],
+      "justification": "Apply the first version of the data structure with a traceable migration.",
+      "expected_evidence": [
+        "Migration version and integrity checks with fixtures"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "DB-APP-USER",
+      "name": "Restricted application user in the DB",
+      "kind": "postgresql_application_role",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-api",
+      "pr_ids": [
+        "PR-02"
+      ],
+      "provision_task_ids": [
+        "SCHEMA-APPLY"
+      ],
+      "verify_task_ids": [
+        "SCHEMA-VERIFY"
+      ],
+      "depends_on": [
+        "APP-SCHEMA"
+      ],
+      "justification": "Separate application and administration credentials.",
+      "expected_evidence": [
+        "Positive/negative permissions and owner of the structures observed"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-SECRET-VERSION",
+      "name": "Initial version of the restricted credential",
+      "kind": "aws_secretsmanager_secret_version",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-api",
+      "pr_ids": [
+        "PR-02"
+      ],
+      "provision_task_ids": [
+        "SCHEMA-APPLY"
+      ],
+      "verify_task_ids": [
+        "SCHEMA-VERIFY"
+      ],
+      "depends_on": [
+        "APP-SECRET",
+        "DB-APP-USER"
+      ],
+      "justification": "Store the credential generated at bootstrap without plaintext in IaC/state or logs.",
+      "expected_evidence": [
+        "Version ID and confirmation of a connection with the restricted role; never record the value"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "TARGET-GROUP",
+      "name": "Application target group",
+      "kind": "aws_lb_target_group",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-04"
+      ],
+      "provision_task_ids": [
+        "RUNTIME-APPLY"
+      ],
+      "verify_task_ids": [
+        "RUNTIME-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-VPC"
+      ],
+      "justification": "Integrate Fargate tasks with the existing ingress.",
+      "expected_evidence": [
+        "Target group, port and healthcheck match the contract"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "LISTENER-RULE",
+      "name": "Staging routing rule",
+      "kind": "aws_lb_listener_rule",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-04"
+      ],
+      "provision_task_ids": [
+        "RUNTIME-APPLY"
+      ],
+      "verify_task_ids": [
+        "RUNTIME-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-INGRESS",
+        "TARGET-GROUP"
+      ],
+      "justification": "Route only the reserved host/path without replacing other routes.",
+      "expected_evidence": [
+        "Rule and priority observed, including preservation of the existing routes"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "TASK-DEFINITION",
+      "name": "Task definition with digest and secret refs",
+      "kind": "aws_ecs_task_definition",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-04"
+      ],
+      "provision_task_ids": [
+        "RUNTIME-APPLY"
+      ],
+      "verify_task_ids": [
+        "RUNTIME-VERIFY"
+      ],
+      "depends_on": [
+        "RELEASE-IMAGE",
+        "EXECUTION-POLICY",
+        "APP-POLICY",
+        "APP-SECRET-VERSION",
+        "APP-LOGS"
+      ],
+      "justification": "Pin runtime, artifact, identities, configuration and resources.",
+      "expected_evidence": [
+        "Revision, digest, roles and secret refs checked"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ECS-SERVICE",
+      "name": "Fargate service with one staging replica",
+      "kind": "aws_ecs_service",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-04"
+      ],
+      "provision_task_ids": [
+        "RUNTIME-APPLY"
+      ],
+      "verify_task_ids": [
+        "RUNTIME-VERIFY"
+      ],
+      "depends_on": [
+        "EXISTING-CLUSTER",
+        "EXISTING-SUBNETS",
+        "EXISTING-EGRESS",
+        "APP-SG",
+        "TASK-DEFINITION",
+        "TARGET-GROUP"
+      ],
+      "justification": "Keep one replica of the test service; high availability and scaling are not part of the slice.",
+      "expected_evidence": [
+        "Service stabilized, real digest and healthy target"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "ALARMS",
+      "name": "Target unavailability and error alarms",
+      "kind": "aws_cloudwatch_metric_alarm",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 2,
+      "owner": "worker-platform",
+      "pr_ids": [
+        "PR-04"
+      ],
+      "provision_task_ids": [
+        "RUNTIME-APPLY"
+      ],
+      "verify_task_ids": [
+        "RUNTIME-VERIFY"
+      ],
+      "depends_on": [
+        "TARGET-GROUP",
+        "ECS-SERVICE",
+        "EXISTING-ALERTS"
+      ],
+      "justification": "Observe two relevant signals with a defined threshold and missing-data handling.",
+      "expected_evidence": [
+        "Two configurations, dimensions and destination observed; notification test only if authorized"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-API",
+      "name": "Orders API capability deployed",
+      "kind": "application_capability",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-api",
+      "pr_ids": [
+        "PR-02"
+      ],
+      "provision_task_ids": [
+        "RUNTIME-APPLY"
+      ],
+      "verify_task_ids": [
+        "E2E-VERIFY"
+      ],
+      "depends_on": [
+        "ECS-SERVICE",
+        "APP-SCHEMA",
+        "DB-APP-USER",
+        "EXISTING-IDP",
+        "ATTACHMENTS-CORS",
+        "ATTACHMENTS-PUBLIC-BLOCK",
+        "ATTACHMENTS-TLS",
+        "ATTACHMENTS-ENCRYPTION"
+      ],
+      "justification": "Prove the flow in the real runtime, beyond publishing code.",
+      "expected_evidence": [
+        "Results of the flow, denied access and real persistence with synthetic data"
+      ],
+      "observed_evidence": []
+    },
+    {
+      "id": "APP-WEB",
+      "name": "Web capability deployed in the API artifact",
+      "kind": "application_capability",
+      "action": "create",
+      "environment": "staging",
+      "quantity": 1,
+      "owner": "worker-web",
+      "pr_ids": [
+        "PR-02"
+      ],
+      "provision_task_ids": [
+        "RUNTIME-APPLY"
+      ],
+      "verify_task_ids": [
+        "E2E-VERIFY"
+      ],
+      "depends_on": [
+        "APP-API",
+        "LISTENER-RULE"
+      ],
+      "justification": "Expose the interface of the first flow using the same artifact and ingress.",
+      "expected_evidence": [
+        "Real navigation and complete orders flow without mocks"
+      ],
+      "observed_evidence": []
+    }
+  ],
+  "milestones": [
+    {
+      "id": "M-CONTRACTS",
+      "title": "Contracts reviewed; a state update still requires evidence",
+      "task_ids": [
+        "CONTRACT-REVIEW"
+      ]
+    },
+    {
+      "id": "M-BASE",
+      "title": "Staging base verifiable before the application is complete",
+      "task_ids": [
+        "BASE-VERIFY"
+      ]
+    },
+    {
+      "id": "M-SOURCE",
+      "title": "Integrated source and CI enabled",
+      "task_ids": [
+        "APP-MERGE",
+        "CI-VERIFY"
+      ]
+    },
+    {
+      "id": "M-IMAGE",
+      "title": "Candidate artifact identified by digest",
+      "task_ids": [
+        "IMAGE-VERIFY"
+      ]
+    },
+    {
+      "id": "M-STAGING",
+      "title": "Real flow verified in staging",
+      "task_ids": [
+        "E2E-VERIFY"
+      ]
+    },
+    {
+      "id": "M-EVIDENCE",
+      "title": "Slice readiness with evidence and limitations",
+      "task_ids": [
+        "RELEASE-REVIEW"
+      ]
+    }
+  ]
+}

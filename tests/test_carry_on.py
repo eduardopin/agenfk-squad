@@ -517,6 +517,17 @@ def test_reaching_the_cap_closes_the_goal():
     assert not s.state().get("goal"), s.state()
 
 
+def test_the_cap_closes_an_implicit_goal_too():
+    s = Session(env={"SQUAD_CARRY_CAP": "1"})
+    s.owner("ship it")
+    verdicts = []
+    for _ in range(4):
+        s.edit()
+        s.reply("Next step: the next file.")
+        verdicts.append(carried(s.stop()))
+    assert verdicts == [True, False, False, False], verdicts
+
+
 def test_an_offer_about_an_issue_or_a_commit_is_not_a_delivery():
     for text in ("The failure comes from issue 12 upstream.\nShall I explain the issue in more detail?",
                  "That branch has 3 commits. Want me to look at the commit message?"):

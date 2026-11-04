@@ -2059,6 +2059,7 @@ def carry_prompt(st, text, session=""):
     because the owner's new request decides what comes next. An explicit goal with no
     progress for CARRY_AGE has expired: the owner moved on."""
     st.pop("closed_goal", None)           # the owner speaks: a closed goal may be opened again
+    st.pop("closed_implicit", None)
     m = GOAL.search(text)
     if m:
         st["goal"] = new_goal(m.group(1), "owner")
@@ -2226,7 +2227,7 @@ def carry_on(p, path, st):
 
     if goal is None or goal.get("source") == "implicit":
         # an implicit goal lives only while replies keep handing work back
-        if not hands_back(last, lambda: worked_since(scanned)):
+        if st.get("closed_implicit") or not hands_back(last, lambda: worked_since(scanned)):
             keep(None)
             return False
         goal = goal or new_goal("", "implicit")
@@ -2250,6 +2251,8 @@ def carry_on(p, path, st):
         goal["releases"] = goal.get("releases", 0) + 1
         if goal.get("holds", 0) >= CARRY_CAP:
             why += ", so the goal is closed"
+            if goal.get("source") == "implicit":      # it has no text to close by: close the kind until the owner speaks
+                st["closed_implicit"] = True
             st["closed_goal"], goal = goal.get("text"), None
         elif goal["releases"] >= 2 and goal.get("source") != "implicit":
             why += "; released twice in a row without progress, so the goal is closed"

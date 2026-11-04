@@ -277,16 +277,22 @@ KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "{", "!"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
 ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # The path before agenfk stops at a separator: `\S*/` scanned to the end of the line from every `;` (64 KB of
-# `;a` took 3 s), and this fallback is what runs on a command shlex cannot read.
-VERIFY_LOOSE = re.compile(r"(?:^|[;&|(\n])\s*(?:[^\s;&|(]*/)?agenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")
+# `;a` took 3 s), and this fallback is what runs on a command shlex cannot read. Blanks after the separator
+# are spaces and tabs only: with `\s*` every newline of a run scanned the rest of the run (24,000 took 10 s).
+VERIFY_LOOSE = re.compile(r"(?:^|[;&|(\n])[ \t]*(?:[^\s;&|(]*/)?agenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")
 VERIFY_TAIL = re.compile(r"\bagenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")   # past PARSE_MAX: anywhere, loosely
+# Past PARSE_MAX, every `agenfk ... verify` with no separator between them counts as a verify (see
+# verify_mentions): blanks and continuations folded first, then only these words and separators are visited.
+FOLD = re.compile(r"(?:[ \t]|\\\n)+")
+MENTION_WORDS = re.compile(r"[\n;&|]|\bagenfk\b|\bverify\b")
+MENTION_SPAN = 300     # characters, after folding, from agenfk to its verify (options, a path, an --evidence value)
 
 
 TURN = os.path.join(BASE, "turn")
 SEALS = os.path.join(BASE, "seals")
 TURN_HOLD = env_int("SQUAD_TURN_HOLD", 120)    # seconds: a turn held longer than this died with its merge call
 INTENT_TTL = 3600      # seconds an intent from `squad-turn request` stays listed
-AT = r"(?:^|[;&|(\n])\s*"                 # command position, for the squad-turn CLI only
+AT = r"(?:^|[;&|(\n])[ \t]*"              # command position, for the squad-turn CLI only (a newline is a separator)
 # The merge patterns match ANYWHERE in the text (bash -c, ssh, eval, xargs, watch...):
 # only spans proven to be data are blanked out first, see merge_text().
 PR_MERGE = re.compile(r"\bgh(?:[ \t]+[^\s;&|]+)*?[ \t]+pr\s+merge\b((?:[ \t]+-[^\s;&|]+)*[ \t]+(?:#?(\d+)\b|\S*/pull/(\d+)))?")
@@ -301,7 +307,9 @@ LITERAL_DIR = re.compile(r"[A-Za-z0-9._/~+,@%=-]+")
 # Git Bash on Windows: C:/work/repo, or /c/work/repo. A backslash path is not literal: bash reads \ as an escape.
 WIN_DIR = re.compile(r"[A-Za-z]:/[A-Za-z0-9._/~+,@%=-]*")
 MSYS_DRIVE = re.compile(r"/([A-Za-z])(?=/|$)")
-TURN_CLI = re.compile(AT + r"(?:\S*/)?squad-turn(?:\.py)?\s+(request|release|status)\b(?:\s+#?(\d+))?")
+# The path stops at a separator, as in VERIFY_LOOSE: `\S*/` scanned to the end of the line from every `;`
+# (100 KB of `;a` took 9.6 s, before either guard ran).
+TURN_CLI = re.compile(AT + r"(?:[^\s;&|(]*/)?squad-turn(?:\.py)?\s+(request|release|status)\b(?:\s+#?(\d+))?")
 # What merge_text() may treat as data. Anything else on the line, or any doubt, counts as code.
 OPAQUE = re.compile(r"\$[({'\[]|`|[<>]\(|<<")      # substitutions, ANSI-C quotes, heredocs
 REDIR_OK = re.compile(r"(?:\d*|&)>(?:&\d|>?[ \t]*/dev/null)(?=[\s;&|]|$)")
@@ -1001,6 +1009,9 @@ def verify_ids(cmd, depth=0):
     try:
         lx = shlex.shlex(flat, posix=True, punctuation_chars=";&|()")
         lx.whitespace_split = True
+        # no comments: the lines are joined with " ; " first, so a `#` line would swallow every line after it
+        # (`# note\nagenfk verify <id>` read as nothing). A `#` word is read as a word: stricter, never looser.
+        lx.commenters = ""
         toks = list(lx)
     except ValueError:
         return [m.group(1) for m in VERIFY_LOOSE.finditer(cmd)] or None
@@ -1055,35 +1066,52 @@ def verify_ids(cmd, depth=0):
     return ids
 
 
+def verify_mentions(cmd):
+    """How many times the command says `agenfk ... verify`: the two words with no separator between
+    them and at most MENTION_SPAN characters apart, once blanks and line continuations are folded.
+    It counts every verify the parser reads (options, quotes, a path, a wrapper before it) and text
+    that only names one. Linear: one pass over the folded text."""
+    n, last = 0, None
+    for m in MENTION_WORDS.finditer(FOLD.sub(" ", cmd)):
+        w = m.group()
+        if w == "agenfk":
+            last = m.end()
+        elif w == "verify":
+            if last is not None and m.start() - last <= MENTION_SPAN:
+                n, last = n + 1, None
+        else:
+            last = None                   # a separator: the next verify needs an agenfk of its own
+    return n
+
+
 def review_check(p, card, wait=AGENFK_WAIT, answered=False):
     """(denial or "", how, note). how: "" when agenfk was not asked; "answered" when agenfk
     ran, including a non-zero exit or output it cannot read for this id (that id fails open,
     logged); "broken" when agenfk could not be run (fails open, logged, note says why);
     "unchecked" when the card needed agenfk and was not checked: no time left (`wait` under
     0.5 s, or 0 after agenfk broke for an earlier card), or agenfk answered for an earlier card
-    of this call and then broke on this one (note says which).
+    of this call and then broke on this one (note says which). Only a later card of a call can
+    be unchecked, and a recorded dispatch does not change that.
 
     A reviewer dispatch counts for the step the card is on only when it is newer than the card's
     entry into that step: a second review step, or the same step again after FIX_FIRST, needs a
-    dispatch of its own. When agenfk cannot say when the card entered the step (no history, or
-    agenfk not asked or broken), any dispatch recorded in the memory window counts, as it did
+    dispatch of its own. When agenfk cannot say when the first card of a call entered the step
+    (no history, or agenfk broken), any dispatch recorded in the memory window counts, as it did
     before the entry time was read: a record is the best evidence left, and it fails open."""
     if not CARD_ID.fullmatch(card):
         review_log(p, card, "", "allow", "not a card id")   # `$ID`, `--`: never handed to agenfk
         return "", "", ""
-    seen = [e["ts"] for _, d in review_files(card) for e in d["dispatches"]]
     if wait < 0.5:
-        if seen:
-            review_log(p, card, "", "allow", "agenfk not asked (no time left in this call); "
-                                              "a reviewer dispatch is recorded for the card")
-            return "", "", ""
+        # never the first card of a call (it gets AGENFK_WAIT): a record does not let a later one through,
+        # since the record alone does not say which step it was for
         return "", "unchecked", ""
+    seen = [e["ts"] for _, d in review_files(card) for e in d["dispatches"]]
     step, entered, why, broken = card_step(card, str(p.get("cwd") or ""), wait)
+    if step is None and broken and answered:
+        return "", "unchecked", why       # agenfk works in this call: one card per call, never let through
     if step is None and seen:
         review_log(p, card, "", "allow", f"{why}; a reviewer dispatch is recorded for the card")
         return "", "broken" if broken else "answered", why
-    if step is None and broken and answered:
-        return "", "unchecked", why       # agenfk works in this call: one card per call, never let through
     if step is None:
         review_log(p, card, "", "allow", why)       # fail open: a broken agenfk must not hold the flow
         return "", "broken" if broken else "answered", why
@@ -1170,7 +1198,7 @@ def text_blanked(cmd):
     out = list(cmd)
     for words in cmds:
         names = [w[2] for w in words]
-        name = os.path.basename(names[0])
+        name = names[0]                   # the bare name only: `./agenfk`, `/tmp/x/git` are any program
         k = 1
         while k < len(names) and names[k].startswith("-"):
             k += 2 if names[k] in ("-C", "-c", "-R", "--repo") else 1
@@ -1222,6 +1250,7 @@ def writes_reviews(p):
     try:
         lx = shlex.shlex(cmd.replace("\\\n", " ").replace("\n", " ; "), posix=True, punctuation_chars=True)
         lx.whitespace_split = True
+        lx.commenters = ""                # as in verify_ids: a `#` line must not hide the lines after it
         toks = list(lx)
     except ValueError:
         return True                       # a command naming the records that cannot be read does not pass
@@ -1256,12 +1285,26 @@ def review_gate(p):
             return False                  # the hot path: every Bash call of the main session
         cards = verify_ids(cmd[:PARSE_MAX])
         if len(cmd) > PARSE_MAX:
-            # past the cap the command is only searched for `agenfk verify <id>` anywhere (linear): padding
-            # does not hide a verify, and a mention past the cap is asked about like a command would be
+            # past the cap the rest is only searched for `agenfk verify <id>` (linear), and a mention past
+            # the cap is asked about like a command would be. Padding can still hide the id from both (an
+            # option or a quote before it, a quote cut open at the cap), so every `agenfk ... verify` in the
+            # whole command must be matched by a card id read: a verify whose card was not read is denied
             tail = [m.group(1) for m in VERIFY_TAIL.finditer(cmd, max(PARSE_MAX - 256, 0))]
+            read, said = (cards or []) + tail, verify_mentions(cmd)
             review_log(p, "", "", "cut", f"command of {len(cmd)} characters: the first {PARSE_MAX} parsed, "
                                          f"the rest searched for `agenfk verify <id>` ({len(tail)} found)")
-            cards = (cards or []) + tail if cards is not None or tail else None
+            if said > len(set(read)):
+                review_log(p, "", "", "deny", f"over {PARSE_MAX} characters: `agenfk ... verify` {said} times, "
+                                              f"{len(set(read))} card ids read")
+                deny(f"[squad-watch] VERIFY NOT READ: this command has {len(cmd)} characters, more than the "
+                     f"{PARSE_MAX} the watcher reads word by word inside the hook's time, and it says "
+                     f"`agenfk ... verify` {said} time(s) where only {len(set(read))} card id(s) could be read. "
+                     "A verify whose card is not known is not let past a review step. Where the work "
+                     "continues: run `agenfk verify <id>` on its own, with a short --evidence (a long one goes "
+                     "in a file the evidence points to); if the command only mentions verify in text, shorten "
+                     "that text.")
+                return True
+            cards = read
         if cards is None:
             review_log(p, "", "", "allow", "command not readable")
             return False

@@ -29,8 +29,14 @@ M = 1_000_000
 _HOMES = []
 
 
-def home():
-    h = tempfile.mkdtemp(prefix="watch-")
+def home(short=False):
+    """A throwaway HOME. short: under a short directory whatever TMPDIR is, for a test whose budget
+    counts the length of a path under HOME (a TMPDIR over ~90 characters broke the compact text's)."""
+    root = None
+    if short and len(tempfile.gettempdir()) > 24:
+        root = next((d for d in ("/tmp", os.environ.get("SystemRoot", "C:\\Windows")[:3] + "Temp")
+                     if os.path.isdir(d) and os.access(d, os.W_OK)), None)
+    h = tempfile.mkdtemp(prefix="watch-", dir=root)
     _HOMES.append(h)
     return h
 
@@ -972,7 +978,7 @@ def test_the_compact_text_fits_one_line_of_760_characters():
                  "UNKNOWN", "check git status and the card"):
         assert must in t, must
     # through the Stop: the scheduled text, with the real (absolute) briefs path of this HOME
-    h = home()
+    h = home(short=True)
     sid = "c0c0c0c0-0010-4aaa-8aaa-aaaaaaaaaaaa"
     tr = os.path.join(h, f"{sid}.jsonl")
     with open(tr, "w") as fh:
@@ -1798,10 +1804,14 @@ def test_an_id_agenfk_fails_on_does_not_open_the_gate_for_the_next_card():
     rows = gate_log(h)[-2:]
     assert (rows[0]["card"], rows[0]["decision"]) == (CARD_B, "allow"), rows
     assert (rows[1]["card"], rows[1]["decision"]) == (CARD_A, "deny"), rows
-    # what needs no agenfk still passes after it: a card with a reviewer, a word that is not an id
+    # what needs no agenfk still passes after it: a word that is not an id. A card with a reviewer record
+    # no longer does (8354de87 review): the record does not say which step it was for, so a later card
+    # needs agenfk like any other; as the first card of a call it still fails open on the record
     reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
-    assert verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_B} && agenfk verify {CARD_A} && agenfk verify "$X"') \
-        == "nothing"
+    assert verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_B} && agenfk verify "$X"') == "nothing"
+    out = verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_B} && agenfk verify {CARD_A} && agenfk verify "$X"')
+    assert "ONE CARD PER CALL" in out and CARD_A in out and "agenfk not found" in out, out
+    assert verify(h, sid, CARD_A, no_stub, f'agenfk verify {CARD_A} && agenfk verify "$X"') == "nothing"
 
 
 def test_review_memory_expires_and_the_owner_lets_one_card_through_once():
@@ -2148,6 +2158,142 @@ def test_a_megabyte_command_is_read_inside_the_hook_budget():
     assert w.verify_ids(";a" * 32_768 + "'") is None
     assert time.time() - t0 < 1, time.time() - t0
     assert w.verify_ids(f"x; /usr/bin/agenfk verify {CARD_A} '") == [CARD_A]   # a path before agenfk still reads
+
+
+def test_a_padded_verify_past_the_cap_is_not_let_through():
+    """8354de87 review: past the 64 KB cap the rest of a command was only searched for the plain
+    `agenfk verify <id>`, so an option or a quote before the id, a continuation, a quote cut open at the
+    cap or a run of blanks across it let a verify through unchecked (beta denied every one). Each
+    `agenfk ... verify` in the whole command must now be matched by a card id that was read."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "REVIEW", CARD_B: "TEST"})
+    sid = "abcdef12-0231"
+    w = watch_module()
+    pad = "word " * 16_000                                            # 80 KB inside one quoted argument
+    lead = "true " + "a" * (w.PARSE_MAX - 400) + "; agenfk"           # agenfk well before the cap...
+    for cmd in (f'true "{pad}"; agenfk verify --evidence ok {CARD_A}',
+                f'true "{pad}"; agenfk verify "{CARD_A}"',
+                f'true "{pad}"; agenfk verify \\\n{CARD_A}',
+                f'agenfk verify --evidence "{pad}" {CARD_A}',
+                lead + " " * 500 + f"verify {CARD_A}",                # ...and its verify past it
+                # a card that was read does not cover one that was not
+                f'agenfk verify {CARD_B}; true "{pad}"; agenfk verify --evidence ok {CARD_A}'):
+        assert len(cmd) > w.PARSE_MAX
+        calls = len(stub_calls(h))
+        t0 = time.time()
+        out = verify(h, sid, CARD_A, env, cmd)
+        assert time.time() - t0 < 5
+        assert "VERIFY NOT READ" in out and "run `agenfk verify <id>` on its own" in out, (cmd[-80:], out[:300])
+        assert len(stub_calls(h)) == calls                            # decided without asking agenfk
+        last = gate_log(h)[-1]
+        assert last["decision"] == "deny" and "card ids read" in last["why"], last
+    # what was let through before still is: a verify whose id is read, past the cap or before it
+    assert verify(h, sid, CARD_B, env, f'agenfk verify {CARD_B} --evidence "{pad}"') == "nothing"
+    assert verify(h, sid, CARD_B, env, f'true "{pad}"; agenfk verify {CARD_B} --evidence ok') == "nothing"
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env, f'true "{pad}"; agenfk verify {CARD_A}')
+    assert verify(h, sid, CARD_B, env, f'true "{pad}"; agenfk get {CARD_B} | grep verify') == "nothing"
+    assert w.verify_mentions(f"agenfk get x; verify; agenfk  \\\n --x verify y | agenfk\nverify") == 1
+
+
+def test_newline_and_separator_runs_are_read_in_linear_time():
+    r"""8354de87 review: VERIFY_LOOSE took `\s*` after a separator, so every newline of a run scanned the
+    rest of it (24,000 newlines in a heredoc shlex cannot read: 10.3 s). TURN_CLI had the `\S*/` the
+    verify fallback lost earlier: 100 KB of `;a` took 9.6 s in turn_kind, before either guard ran."""
+    w = watch_module()
+    cmd = "cat <<'EOF' >x\ndon't" + "\n" * 24_000 + f"EOF\nagenfk verify {CARD_A}"
+    t0 = time.time()
+    assert w.verify_ids(cmd) == [CARD_A]                              # the fallback: shlex fails on don't
+    assert time.time() - t0 < 2, time.time() - t0
+    t0 = time.time()
+    assert w.turn_kind({"tool_name": "Bash", "tool_input": {"command": ";a" * 50_000}}) is None
+    assert time.time() - t0 < 2, time.time() - t0
+    t0 = time.time()
+    assert w.turn_kind({"tool_name": "Bash", "tool_input": {"command": "\n" * 50_000 + "x"}}) is None
+    assert time.time() - t0 < 2, time.time() - t0
+    for cmd, verb in (("x; ~/.claude/bin/squad-turn request 12", "request"), ("\n\n  squad-turn.py status", "status"),
+                      ("cd x && /opt/s/squad-turn release", "release")):
+        assert w.turn_kind({"tool_name": "Bash", "tool_input": {"command": cmd}})[:2] == ("cli", verb), cmd
+    assert w.verify_ids(f"x\n\n\t /usr/bin/agenfk verify {CARD_A} '") == [CARD_A]
+
+
+def test_a_comment_line_does_not_hide_a_verify_or_a_write():
+    """8354de87 review (on beta too): the lines were joined with " ; " before shlex read them, and
+    shlex drops everything after a `#`, so a comment line hid every line after it from the review gate
+    and from the record guard."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "REVIEW"})
+    sid = "abcdef12-0241"
+    rec = "~/.claude/squad/reviews"
+
+    def bash(cmd):
+        return said(run(h, "PreToolUse", sid, "", {"tool_name": "Bash", "tool_input": {"command": cmd}}, env))
+    for cmd in (f"# note\nagenfk verify {CARD_A}", f"echo hi # note\nagenfk verify {CARD_A} --evidence ok"):
+        out = bash(cmd)
+        assert "REVIEW REQUIRED" in out and CARD_A in out, (cmd, out)
+    for cmd in (f"# x\ncp x {rec}/F.json", f"cat {rec}/F.json # x\ntouch {rec}/F.json"):
+        out = bash(cmd)
+        assert "REVIEW RECORD" in out, (cmd, out)
+    # a comment that only comments still reads as nothing to stop
+    assert bash(f"# agenfk verify {CARD_A}") == "nothing"
+    assert bash(f"cat {rec}/F.json # just reading") == "nothing"
+
+
+def test_only_the_bare_git_gh_and_agenfk_have_text_values():
+    """8354de87 review: the text exemption keyed on the basename, so `./agenfk comment <id> "<records>"`
+    or `/tmp/x/git commit -m <records>` (any program under that name) wrote the records unchecked."""
+    h = home()
+    env, _ = fake_agenfk(h, {CARD_A: "TEST"})
+    sid = "abcdef12-0251"
+    rec = "~/.claude/squad/reviews"
+
+    def bash(cmd):
+        return said(run(h, "PreToolUse", sid, "", {"tool_name": "Bash", "tool_input": {"command": cmd}}, env))
+    for cmd in (f'./agenfk comment {CARD_A} "{rec}/{CARD_A}.json"', f'/tmp/x/git commit -m "{rec}/F.json"',
+                f'bin/gh pr create --body "{rec}/F.json"', f'/tmp/agenfk verify {CARD_A} --evidence "{rec}/F.json"'):
+        out = bash(cmd)
+        assert "REVIEW RECORD" in out, (cmd, out)
+    for cmd in (f'agenfk comment {CARD_A} "{rec}/{CARD_A}.json"', f'git commit -m "{rec}/F.json"'):
+        assert bash(cmd) == "nothing", cmd
+
+
+def test_a_record_does_not_let_a_later_card_of_the_call_through_unchecked():
+    """8354de87 review: once the hook's 7 s were spent, or agenfk broke on a card after the first, a
+    later card with any reviewer record passed without its step being read, so a dispatch made for an
+    earlier step unlocked the next one. Only the first card of a call may fail open."""
+    h = home()
+    tests = [f"33333333-0000-4000-8000-00000000000{i}" for i in range(1, 4)]
+    env, _ = fake_agenfk(h, dict({c: "TEST" for c in tests}, **{CARD_A: "REVIEW"}))
+    sid = "abcdef12-0261"
+    reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
+    move(h, CARD_A, "ADVERSARIAL")                                    # the record is for REVIEW, not this step
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)          # control: the stale record does not count
+    cases = (("slow", tests[:1], "could not be asked"),               # agenfk broke on the first card
+             ("delay:2.4", tests[:2], "then failed for this one"))    # answered twice, then out of time on CARD_A
+    for mode, before, why in cases:
+        stub_mode(h, mode)
+        t0 = time.time()
+        out = verify(h, sid, CARD_A, env, " && ".join(f"agenfk verify {c}" for c in before + [CARD_A]),
+                     {"cwd": ROOT})
+        assert time.time() - t0 < 9.5
+        assert "ONE CARD PER CALL" in out and CARD_A in out and why in out, (mode, out)
+        last = gate_log(h)[-1]
+        assert (last["card"], last["decision"]) == (CARD_A, "deny") and "one card per call" in last["why"], last
+    stub_mode(h, "slow")
+    assert verify(h, sid, CARD_A, env, extra={"cwd": ROOT}) == "nothing"   # the first card still fails open
+    # no time left for a later card (`wait` under 0.5 s): unchecked, record or not. Called directly: through
+    # the hook this needs agenfk to answer three cards within 0.5 s of the 7 s budget, too tight to time
+    saved = os.environ.get("HOME"), os.environ.get("USERPROFILE")
+    os.environ["HOME"] = os.environ["USERPROFILE"] = h
+    try:
+        w = watch_module()
+    finally:
+        for key, value in zip(("HOME", "USERPROFILE"), saved):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    assert w.review_files(CARD_A), w.REVIEWS                         # the record is there
+    assert w.review_check({"session_id": sid, "cwd": ROOT}, CARD_A, 0.2, True) == ("", "unchecked", "")
 
 if __name__ == "__main__":
     # every test runs, so one failure does not hide the others; the exit code is 1 when any failed

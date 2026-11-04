@@ -286,7 +286,8 @@ a file (`>`, `>&`, `&>`), while `2>&1` and `>/dev/null` do. Naming the folder
 only as text is not a write: the message of `git commit` (`-m`, `--message`),
 the body or title of `gh pr` and `gh issue`, the content of
 `agenfk comment <id> ...` and the `--evidence`, `--check-note`,
-`--description` and `--title` of `agenfk`. That holds only on a line the
+`--description` and `--title` of `agenfk`, called by those bare names
+(`./agenfk` or `/tmp/x/git` can be any program). That holds only on a line the
 watcher reads word by word: a substitution, a heredoc, a subshell or a
 redirection into a file anywhere on it makes every mention count, and so does
 working inside the folder. A command over 64 KB that names the folder outside
@@ -299,19 +300,29 @@ An error or unreadable output is about that one id, so the watcher still asks
 about every other card in the call; an id that does not exist does not open
 the gate for the card after it. When `agenfk` itself cannot be run, only the
 first card the call asks about passes; the ones after it are denied with
-`ONE CARD PER CALL`. The reason is logged to
-`~/.claude/squad/review-gate.jsonl`. When the card has a recorded reviewer
-dispatch and `agenfk` cannot say when it entered its step (it is missing,
-broken, out of time for this call, or prints no history), that dispatch counts,
-as every record did before the entry time was read, and the pass is logged. A
+`ONE CARD PER CALL`, and so are the ones the 7 seconds run out on and the
+ones `agenfk` stops answering for after it answered for an earlier card, with
+or without a recorded reviewer dispatch. The reason is logged to
+`~/.claude/squad/review-gate.jsonl`. When the first card of a call has a
+recorded reviewer dispatch and `agenfk` cannot say when it entered its step
+(it is missing, broken, or prints no history), that dispatch counts, as every
+record did before the entry time was read, and the pass is logged. A
 slow `agenfk` is killed together with its children (on Windows with
 `%SystemRoot%\System32\taskkill.exe`, by its full path, so a `taskkill.exe`
 in the repository is never the one run). The 7 seconds include the up to 2
 seconds that kill takes, so the hook stays well inside its 10-second budget.
 Only the first 64 KB of a command are parsed (the parser slows down faster
 than the command grows: 1.1 MB took 22 seconds); past that, the rest is only
-searched for `agenfk verify <id>`, so padding does not hide one, and the cut
-is a row in the log. The
+searched for the plain `agenfk verify <id>`, and the cut is a row in the log.
+Padding can still hide the id from both readings (an option or a quote before
+it, a continuation, a quote the cut leaves open), so in a command over 64 KB
+every `agenfk ... verify` (the two words with no `;`, `&`, `|` or newline
+between them) must be matched by a card id that was read. When fewer ids were
+read than verifies named, the call is denied with `VERIFY NOT READ`, without
+asking `agenfk`: run `agenfk verify <id>` on its own, with a short
+`--evidence`. Text that only names a verify counts too, so a huge command
+that mentions one is denied as well. A `#` comment line does not hide the
+lines after it from the gate or from the record guard. The
 reasoning is the same as for the rest of the watcher: a broken board must not
 freeze every session that advances a card. The cost is that the gate does not
 hold while `agenfk` is broken, and the log is where that shows up.

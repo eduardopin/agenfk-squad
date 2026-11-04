@@ -57,6 +57,7 @@ for d in "$SQUAD"/skills/*/ "$SQUAD"/skills/vendor/*/; do
 done
 link "$SQUAD/CLAUDE.md" "$CLAUDE/CLAUDE.md" || rc=1
 link "$SQUAD/hooks/squad-router.py" "$CLAUDE/hooks/squad-router.py" || rc=1
+link "$SQUAD/hooks/squad-decisions.py" "$CLAUDE/hooks/squad-decisions.py" || rc=1
 link "$SQUAD/hooks/squad-watch.py" "$CLAUDE/hooks/squad-watch.py" || rc=1
 link "$SQUAD/hooks/squad-switch.py" "$CLAUDE/hooks/squad-switch.py" || rc=1
 link "$SQUAD/hooks/squad-turn.py" "$CLAUDE/hooks/squad-turn.py" || rc=1
@@ -65,6 +66,7 @@ link "$SQUAD/hooks/squad-wake.py" "$CLAUDE/hooks/squad-wake.py" || rc=1
 mkdir -p "$HOME/.local/bin"       # the merge queue is called by name: `squad-turn request`
 link "$SQUAD/hooks/squad-turn.py" "$HOME/.local/bin/squad-turn" || rc=1
 link "$SQUAD/hooks/squad-seal.py" "$HOME/.local/bin/squad-seal" || rc=1
+link "$SQUAD/hooks/squad-decisions.py" "$HOME/.local/bin/squad-decisions" || rc=1   # project decisions, every worktree
 
 # squad-wake: a scan every 2 min that calls back a session that stopped without
 # delivering and unsticks a stuck switch or pickup. It needs a clock outside the
@@ -164,6 +166,7 @@ echo
 echo "New agents and skills only show up in sessions started after this step."
 echo "Hooks in settings.json (see docs/installation.md): squad-router.py on UserPromptSubmit;"
 echo "squad-watch.py on PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, Stop, PreCompact and UserPromptSubmit."
+echo "squad-decisions.py on SessionStart: the index of the project's active decisions (docs/decisions.md)."
 echo "Register PostToolUseFailure too: without it, a merge that fails holds the merge turn until"
 echo "it expires (SQUAD_TURN_HOLD, 120 s)."
 echo "Changed in the merge turn: SQUAD_TURN_IDLE, SQUAD_TURN_MAX and SQUAD_TURN_CLAIM were removed;"

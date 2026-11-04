@@ -419,10 +419,14 @@ directory if you want it gone.
   (`skills/board-heartbeat`), the heavy review (`hooks/squad-review.py`), the
   merge seal (`hooks/squad-seal.py`, `git config squad.seal`), and the
   scripts of the cloud-resource pricing guard, the design bridge, the
-  pull-request skill and the writing skill, and the Chrome export of the
-  presentation skill (its deck checks do run there, under Git Bash). Their
+  pull-request skill and the writing skill. Their
   tests say so and exit 0 on Windows. Leave the
   seal off there.
+- **Not yet verified on Windows, tests running:** the Chrome export of the
+  presentation skill. Under Git Bash it hands Chrome Windows paths
+  (`C:\...`, `file:///C:/...`) and its tests run on the Windows CI, which fails
+  without a Chrome rather than skip; until a green Windows run, export from
+  Linux, macOS or WSL.
 - **Paths in a Bash command.** The merge turn follows `cd C:/work/repo` and
   `cd /c/work/repo`, the forms Git Bash takes. A backslash path
   (`cd C:\work\repo`) is not followed, because bash reads the backslash as an

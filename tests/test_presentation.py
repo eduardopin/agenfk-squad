@@ -13,10 +13,12 @@ also check the skill for names that must not be published (a project, a
 customer, a person), list them in SQUAD_PRIVATE_TERMS, comma-separated. The
 list lives in your environment, never in the repository.
 
-On Windows the script runs under Git Bash: the gates that need no Chrome run
-there too; the Chrome export is not verified on Windows, so its tests SKIP.
+On Windows the script runs under Git Bash and every test runs there too; the
+browser is also looked for in the default Windows install folders, as the
+export script does.
 """
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -29,6 +31,9 @@ TEMPLATE = os.path.join(SKILL, "templates", "deck.html")
 SCRIPT = os.path.join(SKILL, "scripts", "export-deck.sh")
 MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 WINDOWS = os.name == "nt"
+# Where Chrome for Windows installs, per machine and per user; the export script
+# reads the same variables under Git Bash.
+WINDOWS_CHROME_DIRS = ("PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "LOCALAPPDATA")
 
 
 def find_bash():
@@ -82,14 +87,22 @@ def chrome():
         p = shutil.which(c)
         if p:
             return p
-    return MAC_CHROME if os.access(MAC_CHROME, os.X_OK) else None
+    if os.access(MAC_CHROME, os.X_OK):
+        return MAC_CHROME
+    if WINDOWS:
+        for var in WINDOWS_CHROME_DIRS:
+            base = os.environ.get(var)
+            c = base and os.path.join(base, "Google", "Chrome", "Application", "chrome.exe")
+            if c and os.path.isfile(c):
+                return c
+    return None
 
 
 def export(*args, env=None):
     e = dict(os.environ)
     e.pop("CHROME", None)
     e.update(env or {})
-    return subprocess.run([BASH, SCRIPT, *args], capture_output=True, text=True, env=e, timeout=300)
+    return subprocess.run([BASH, SCRIPT, *args], capture_output=True, text=True, encoding="utf-8", errors="replace", env=e, timeout=300)
 
 
 def said(r):
@@ -300,8 +313,128 @@ def test_missing_chrome_fails_with_a_clear_message():
         names = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
         if any(shutil.which(c, path=path) for c in names):
             return  # a browser sits beside the tools; the PATH case cannot be shown here
-        r = export(TEMPLATE, "--measure", env={"PATH": path})
+        # the Windows install folders point nowhere, or the script would find a Chrome there
+        nowhere = {var: os.path.join(tmp, "nowhere") for var in WINDOWS_CHROME_DIRS}
+        r = export(TEMPLATE, "--measure", env={"PATH": path, **nowhere})
         assert r.returncode == 2 and "no Chrome found" in r.stderr and "--chrome" in r.stderr, said(r)
+    finally:
+        shutil.rmtree(tmp)
+
+
+# Stands in for Git Bash's cygpath off Windows: the POSIX root plays drive C:.
+FAKE_CYGPATH = r"""#!/usr/bin/env bash
+mode=$1; shift
+abs=0; [ "${1:-}" = -a ] && { abs=1; shift; }
+p=$1
+case "$mode" in
+  -u) case "$p" in [A-Za-z]:*) p=${p#?:} ;; esac; printf '%s\n' "$p" | tr '\\' / ;;
+  -m|-w)
+    case "$p" in /*) ;; *) [ "$abs" -eq 1 ] && p="$PWD/$p" ;; esac
+    case "$p" in /*) p="C:$p" ;; esac
+    if [ "$mode" = -w ]; then printf '%s\n' "$p" | tr / '\\'; else printf '%s\n' "$p"; fi ;;
+  *) echo "fake cygpath: $mode is not faked" >&2; exit 2 ;;
+esac
+"""
+
+# Stands in for Chrome: logs its arguments and each page's <base>, answers the
+# measurement and writes the PDF and PNG it is asked for. It opens what it is
+# handed through cygpath -u, so a path Chrome for Windows could not open fails.
+FAKE_CHROME = r"""#!/usr/bin/env bash
+log="@LOG@"
+printf '%s\n' "$@" >> "$log"
+for a in "$@"; do
+  case "$a" in
+    file://*) u=${a#file://}; case "$u" in /[A-Za-z]:*) u=${u#/} ;; esac
+              f=$(cygpath -u "$u"); grep -o '<base href="[^"]*"' "$f" >> "$log" || true ;;
+  esac
+done
+for a in "$@"; do
+  case "$a" in
+    --dump-dom) echo '<pre>MEASURE 1280x720 @MEASURED@ END</pre>' ;;
+    --print-to-pdf=*) f=$(cygpath -u "${a#*=}"); for s in @IDS@; do echo '/Type /Page'; done > "$f" ;;
+    --screenshot=*) f=$(cygpath -u "${a#*=}"); echo png > "$f" ;;
+  esac
+done
+"""
+
+
+def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
+    """Chrome for Windows cannot open /c/... or /tmp/...: under Git Bash the script
+    hands it C:\\... files and file:///C:/... URLs, and finds it in the Windows
+    install folders. Off Windows, uname, cygpath and Chrome are faked, so this
+    runs on any system; on Windows the real uname and cygpath answer. Off Windows
+    it also shows that a cygpath alone, without a Git Bash uname, changes nothing."""
+    ids = slides(read(TEMPLATE))
+    tmp = tempfile.mkdtemp(prefix="presentation-")
+    try:
+        def write(path, text):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            os.chmod(path, 0o755)
+            return path
+        log = os.path.join(tmp, "chrome.log")
+        fake_chrome = FAKE_CHROME.replace("@LOG@", log.replace("\\", "/")) \
+            .replace("@MEASURED@", " ".join(f"{s}=0" for s in ids)).replace("@IDS@", " ".join(ids))
+        nowhere = {var: os.path.join(tmp, "nowhere") for var in WINDOWS_CHROME_DIRS}
+
+        def run(env, *chrome_arg):
+            if os.path.exists(log):
+                os.remove(log)
+            out = os.path.join(tmp, "out")
+            shutil.rmtree(out, ignore_errors=True)
+            pdf, pngs = os.path.join(out, "deck.pdf"), os.path.join(out, "png")
+            r = export(TEMPLATE, "--pdf", pdf, "--png-dir", pngs, *chrome_arg, env=env)
+            assert r.returncode == 0, said(r)
+            assert pages(pdf) == len(ids) and len(os.listdir(pngs)) == len(ids), said(r)
+            lines = read(log).splitlines()
+            urls = [a for a in lines if a.startswith("file:")]
+            assert len(urls) == len(ids) + 2, urls  # the measurement, the PDF, one per slide
+            bases = [a for a in lines if a.startswith("<base href=")]
+            assert len(bases) == len(ids) + 1, bases  # the PDF and the slides carry the deck's <base>
+            files = {k: [a[len(k):] for a in lines if a.startswith(k)]
+                     for k in ("--user-data-dir=", "--print-to-pdf=", "--screenshot=")}
+            assert [len(v) for v in files.values()] == [len(ids) + 2, 1, len(ids)], files
+            return pdf, urls, bases, files
+
+        if WINDOWS:
+            chrome_bin = write(os.path.join(tmp, "fake-chrome"), fake_chrome)
+            git_bash_env, chrome_arg = None, ("--chrome", chrome_bin)
+        else:
+            # A PATH with the fakes and only the tools the script and the fakes use,
+            # so no real browser on this machine is found before the fake one.
+            tools = os.path.join(tmp, "tools")
+            os.makedirs(tools)
+            for t in ("bash", "env", "grep", "sed", "awk", "wc", "tr", "cut", "head", "cat",
+                      "mkdir", "mktemp", "rm", "dirname", "basename"):
+                assert shutil.which(t), f"{t} is not on the PATH"
+                os.symlink(shutil.which(t), os.path.join(tools, t))
+            fakes = os.path.join(tmp, "fakes")
+            write(os.path.join(fakes, "cygpath"), FAKE_CYGPATH)
+            uname = write(os.path.join(fakes, "uname"), "#!/usr/bin/env bash\necho MINGW64_NT-10.0-20348\n")
+            # where Chrome for Windows installs per user; nothing on the PATH
+            apps = os.path.join(tmp, "apps")
+            write(os.path.join(apps, "Google", "Chrome", "Application", "chrome.exe"), fake_chrome)
+            path = os.pathsep.join([fakes, tools])
+            git_bash_env = {"PATH": path, **nowhere, "LOCALAPPDATA": "C:" + apps}
+            chrome_arg = ()
+
+        pdf, urls, bases, files = run(git_bash_env, *chrome_arg)
+        bad = [u for u in urls if not re.match(r"file:///[A-Za-z]:/[^\\]+$", u)]
+        assert not bad, f"Chrome got URLs that are not file:///C:/...: {bad}"
+        bad = [b for b in bases if not re.match(r'<base href="file:///[A-Za-z]:/[^\\"]+/templates/"$', b)]
+        assert not bad, f"the deck's <base> is not file:///C:/.../: {bad}"
+        bad = [f for v in files.values() for f in v if not re.match(r"[A-Za-z]:\\", f)]
+        assert not bad, f"Chrome got file paths that are not C:\\...: {bad}"
+
+        if not WINDOWS:
+            # The same cygpath with a Linux uname: paths go to Chrome as they are.
+            write(uname, "#!/usr/bin/env bash\necho Linux\n")
+            pdf, urls, bases, files = run({"PATH": path}, "--chrome",
+                                          os.path.join(apps, "Google", "Chrome", "Application", "chrome.exe"))
+            assert all(u.startswith("file:///") and not re.match(r"file:///[A-Za-z]:", u) for u in urls), urls
+            assert files["--print-to-pdf="] == [pdf], files
+            assert all(f.startswith(tmp + "/") for f in files["--screenshot="]), files
     finally:
         shutil.rmtree(tmp)
 
@@ -310,10 +443,11 @@ def test_missing_chrome_fails_with_a_clear_message():
 
 def needs_chrome(fn):
     def run():
-        if WINDOWS:
-            # the script hands Chrome file:// URLs of Git Bash paths; not verified on Windows
-            raise Skip("the Chrome export is not verified on Windows (see the skill, section 6)")
         if not chrome():
+            # The Windows CI legs are where the Windows export is proven; a runner
+            # without Chrome there would turn that proof into a quiet SKIP.
+            assert not (WINDOWS and os.environ.get("GITHUB_ACTIONS") == "true"), \
+                "no Chrome on the Windows CI runner: the Windows export would go unproven"
             raise Skip("no Chrome (set $CHROME or put google-chrome/chromium on the PATH)")
         fn()
     run.__name__ = fn.__name__
@@ -368,8 +502,8 @@ def test_any_arrow_changes_slide_and_the_rails_agree():
         deck = variant(tmp, "probe.html", lambda h: h.replace("</body>", KEY_PROBE + "</body>"))
         r = subprocess.run([chrome(), "--headless", "--disable-gpu", "--no-first-run",
                             f"--user-data-dir={tmp}/profile", "--window-size=1440,830",
-                            "--virtual-time-budget=5000", "--dump-dom", "file://" + deck + "#2"],
-                           capture_output=True, text=True, timeout=120)
+                            "--virtual-time-budget=5000", "--dump-dom", pathlib.Path(deck).as_uri() + "#2"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         m = re.search(r"<pre id=\"probe\">PROBE (.*?) END</pre>", r.stdout)
         assert m, "the probe did not run: " + r.stdout[-300:]
         n = len(slides(read(TEMPLATE)))

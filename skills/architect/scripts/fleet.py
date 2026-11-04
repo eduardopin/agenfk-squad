@@ -32,6 +32,8 @@ HOME = os.path.expanduser("~")
 STATE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude"), "squad", "watch")
 AGENFK = os.environ.get("SQUAD_AGENFK") or "agenfk"
 CLOSED = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
+# not open work: parked cards and ideas wait for the owner, as parallel-plan's waves.py takes them
+PARKED = {"BLOCKED", "PAUSED", "TRASHED", "IDEAS"}
 LIVE = 600             # seconds: a sub-session touched within this is running
 FAN_MIN = 2            # open cards that make a goal worth fanning out
 MAX_CARDS = 4          # goal cards read per session
@@ -78,9 +80,11 @@ def open_leaves(cards, agenfk=None, deadline=6.0):
             children.setdefault(it["parentId"], []).append(it)
 
     def is_open(it):
-        return str(it.get("status") or "").upper() not in CLOSED and bool(it.get("status"))
+        return str(it.get("status") or "").upper() not in CLOSED | PARKED and bool(it.get("status"))
 
     def walk(it):
+        if str(it.get("status") or "").upper() in PARKED:
+            return                      # a parked card takes its whole subtree out, as waves.py does
         kids = [k for k in children.get(it["id"], []) if is_open(k)]
         if not kids:
             if is_open(it):

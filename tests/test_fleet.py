@@ -120,6 +120,20 @@ def test_open_leaves_are_the_unfinished_cards_at_the_bottom_of_the_goal():
     assert fleet.open_leaves([S1], fake_agenfk(h)) == []
 
 
+def test_open_leaves_skip_paused_blocked_trashed_and_ideas_cards_and_their_children():
+    h = W.home()
+    fleet = module(FLEET, "fleet_t1")
+    def card(n, status, parent=EPIC):
+        return {"id": f"{n}1000000-0000-4000-8000-000000000000", "type": "TASK", "status": status,
+                "title": status, "parentId": parent, "projectId": PROJECT}
+    paused, idea, todo, blocked, trashed = (card(n, s) for n, s in
+                                            enumerate(("PAUSED", "IDEAS", "TODO", "BLOCKED", "TRASHED"), 1))
+    under_paused = card(6, "TODO", paused["id"])               # a paused parent keeps its children out too
+    items = [ITEMS[0], paused, idea, todo, blocked, trashed, under_paused]
+    leaves = fleet.open_leaves([EPIC], fake_agenfk(h, items))
+    assert [c["id"] for c in leaves] == [todo["id"]], leaves
+
+
 def test_open_leaves_fail_open_when_agenfk_does_not_answer():
     fleet = module(FLEET, "fleet_b")
     assert fleet.open_leaves([EPIC], f"{sys.executable} -c 'import sys; sys.exit(1)'") == []

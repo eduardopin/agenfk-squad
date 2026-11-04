@@ -218,15 +218,20 @@ On every `PreToolUse` of the **main session**, a Bash call that runs
 (`validate_progress`, and the deprecated `review_changes` and `test_changes`),
 is checked:
 
-1. The watcher reads the card's step with `agenfk get <id> --json`, in the
-   call's directory, with a 3-second timeout per card and 7 seconds for every
-   card in the call. Only something shaped like an id (a letter or digit, then
+1. The watcher reads the card's step, and when the card last moved into it
+   (the `history` of moves), with `agenfk get <id> --json`, in the call's
+   directory, with a 3-second timeout per card and 7 seconds for every card in
+   the call. Only something shaped like an id (a letter or digit, then
    letters, digits, `_` and `-`) is handed to `agenfk`. Anything else, such as
    `$ID` or `--`, passes and is logged.
 2. If the step is one of `SQUAD_REVIEW_STEPS` (default
    `REVIEW,ADVERSARIAL,HEAVY_REVIEW`) and no reviewer dispatch for that card
-   has been recorded in the last `SQUAD_REVIEW_MEMORY_DAYS` (14), the call is
-   denied with `REVIEW REQUIRED`.
+   has been recorded **since the card entered that step** (and within the
+   last `SQUAD_REVIEW_MEMORY_DAYS`, 14), the call is denied with
+   `REVIEW REQUIRED`. One dispatch unlocks one review step: the next review
+   step, and the same step again after FIX_FIRST sent the card back and it
+   returned, each need a dispatch of their own. A reviewer dispatched before
+   the card entered the step does not count for it either.
 3. The way forward is in the message: dispatch the verifier (the project's own
    reviewer agent if it has one) in a clean context, with the card id and the
    branch in the brief, never the implementer's narrative. When it returns
@@ -265,14 +270,27 @@ it still counts. The record is kept per card, outside any one session's
 state, in `~/.claude/squad/reviews/<card>.json`. It is not under `watch/`,
 because everything that reads that folder takes its entries for sessions.
 Records older than `SQUAD_REVIEW_MEMORY_DAYS` are ignored, and their files are
-removed the next time a reviewer is dispatched. Once a card has a record, the
-watcher does not call `agenfk` for it at all. Only the watcher writes there: a
+removed the next time a reviewer is dispatched. Each dispatch is kept with its
+time, and the gate compares that time with the card's entry into its step, so
+`agenfk` is asked even when the card has a record. A record holds no step: the
+records written before the step was checked are read as they are, and a
+dispatch in one of them counts for the step the card was on when it was made,
+not for the steps after it. Nothing is migrated and nobody is locked out: a new
+dispatch always unlocks the step. Only the watcher writes there: a
 `Write`, `Edit` or `MultiEdit` into that folder, or a Bash command that names
 it and does more than read it (`cat`, `ls`, `jq`, `grep` and the like), is
 denied with `REVIEW RECORD`, in any session or sub-session. Commands that can
 also write a file (`sort -o`, `uniq`, `tree -o`, `less`, `more`) do not count
 as reading, and neither do `find` with a writing action nor a redirection into
-a file (`>`, `>&`, `&>`), while `2>&1` and `>/dev/null` do.
+a file (`>`, `>&`, `&>`), while `2>&1` and `>/dev/null` do. Naming the folder
+only as text is not a write: the message of `git commit` (`-m`, `--message`),
+the body or title of `gh pr` and `gh issue`, the content of
+`agenfk comment <id> ...` and the `--evidence`, `--check-note`,
+`--description` and `--title` of `agenfk`. That holds only on a line the
+watcher reads word by word: a substitution, a heredoc, a subshell or a
+redirection into a file anywhere on it makes every mention count, and so does
+working inside the folder. A command over 64 KB that names the folder outside
+such text is denied, because it cannot be read in the hook's time.
 
 **It fails open, on purpose.** If `agenfk` is missing, cannot start, takes
 longer than 3 seconds, exits with an error for the card, or prints something
@@ -282,9 +300,18 @@ about every other card in the call; an id that does not exist does not open
 the gate for the card after it. When `agenfk` itself cannot be run, only the
 first card the call asks about passes; the ones after it are denied with
 `ONE CARD PER CALL`. The reason is logged to
-`~/.claude/squad/review-gate.jsonl`. A slow `agenfk` is killed
-together with its children, so the hook stays well inside its 10-second
-budget. The
+`~/.claude/squad/review-gate.jsonl`. When the card has a recorded reviewer
+dispatch and `agenfk` cannot say when it entered its step (it is missing,
+broken, out of time for this call, or prints no history), that dispatch counts,
+as every record did before the entry time was read, and the pass is logged. A
+slow `agenfk` is killed together with its children (on Windows with
+`%SystemRoot%\System32\taskkill.exe`, by its full path, so a `taskkill.exe`
+in the repository is never the one run). The 7 seconds include the up to 2
+seconds that kill takes, so the hook stays well inside its 10-second budget.
+Only the first 64 KB of a command are parsed (the parser slows down faster
+than the command grows: 1.1 MB took 22 seconds); past that, the rest is only
+searched for `agenfk verify <id>`, so padding does not hide one, and the cut
+is a row in the log. The
 reasoning is the same as for the rest of the watcher: a broken board must not
 freeze every session that advances a card. The cost is that the gate does not
 hold while `agenfk` is broken, and the log is where that shows up.
@@ -594,7 +621,8 @@ python3 skills/session-context/scripts/session_context.py --tasks
 
 The review gate logs to its own file, `~/.claude/squad/review-gate.jsonl`.
 It writes one line per denial, per pass it let through without a reviewer
-(fail-open, with the reason) and per owner override. It stops growing at
+(fail-open, with the reason), per owner override, and per command cut at
+64 KB for parsing (`"decision": "cut"`). It stops growing at
 200 KB: past that, new rows are dropped, so delete or rotate it to keep
 logging. It is kept out of `metrics.jsonl`, which the report reads as one row
 per sub-session.

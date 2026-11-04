@@ -266,6 +266,65 @@ def test_the_handoff_search_ends_at_the_top_of_the_tree():
     assert result[0] == (None, None), result
 
 
+
+def test_taskkill_is_called_by_its_full_path_and_inside_its_time():
+    """A bare `taskkill` is looked up in the current directory first on Windows, and the hook runs in
+    the session's repository. Proven on both platforms by catching the call kill_tree() makes."""
+    import ntpath
+    assert sw.taskkill_exe({"SystemRoot": "D:\\WINNT"}) == "D:\\WINNT\\System32\\taskkill.exe"
+    assert sw.taskkill_exe({}) == "C:\\Windows\\System32\\taskkill.exe"
+    if WINDOWS:
+        assert sw.taskkill_exe() == ntpath.join(os.environ["SystemRoot"], "System32", "taskkill.exe")
+    calls, killed = [], []
+
+    class Proc:
+        pid = 4242
+
+        def kill(self):
+            killed.append(True)
+    real_run, real_windows = sw.subprocess.run, sw.WINDOWS
+    sw.subprocess.run = lambda args, **kw: calls.append((args, kw))
+    sw.WINDOWS = True
+    try:
+        sw.kill_tree(Proc())
+    finally:
+        sw.subprocess.run, sw.WINDOWS = real_run, real_windows
+    (args, kw), = calls
+    assert ntpath.isabs(args[0]) and args[0].lower().endswith("\\system32\\taskkill.exe"), args
+    assert args[1:] == ["/T", "/F", "/PID", "4242"] and kw["timeout"] == sw.KILL_WAIT, (args, kw)
+    assert killed
+
+
+def test_the_kill_of_a_slow_agenfk_fits_in_the_gate_budget_on_windows():
+    """f93d1785 review: a card asked with the time left (up to 3 s) and then killed by taskkill (up to
+    2 s more) could end at 9 s of the 10 s hook. The waits now leave KILL_WAIT inside AGENFK_TOTAL.
+    The clock is simulated: two cards answer in 2.4 s each and the third would time out."""
+    import types
+    clock, cards, asked, denied = [1_000_000.0], ["c-1", "c-2", "c-3"], [], []
+
+    def card_step(card, cwd, wait=sw.AGENFK_WAIT):
+        asked.append((card, wait))
+        if wait < 0.5:
+            return None, None, "no time left in the hook's budget", True
+        if card == "c-3":                 # times out, then taskkill (Windows) ends its tree
+            clock[0] += wait + (sw.KILL_WAIT if sw.WINDOWS else 0)
+            return None, None, f"agenfk get took more than {wait:.1f} s", True
+        clock[0] += min(wait, 2.4)
+        return "TEST", None, "", False
+    saved = (sw.card_step, sw.time, sw.WINDOWS, sw.deny)
+    sw.card_step, sw.WINDOWS = card_step, True
+    sw.time = types.SimpleNamespace(time=lambda: clock[0], strftime=time.strftime, localtime=time.localtime)
+    sw.deny = denied.append
+    try:
+        start = clock[0]
+        sw.review_gate({"tool_name": "Bash", "session_id": "s", "cwd": "",
+                        "tool_input": {"command": " && ".join(f"agenfk verify {c}" for c in cards)}})
+    finally:
+        sw.card_step, sw.time, sw.WINDOWS, sw.deny = saved
+    assert clock[0] - start <= sw.AGENFK_TOTAL, (clock[0] - start, asked)
+    assert sw.AGENFK_TOTAL + 1 < 10                                   # the interpreter's start fits in the rest
+    assert denied and "ONE CARD PER CALL" in denied[0], (denied, asked)     # c-3, left unasked, is not let through
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

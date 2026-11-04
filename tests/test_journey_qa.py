@@ -40,7 +40,9 @@ def node_version():
 
 NODE_MAJOR = node_version()
 NODE_REASON = "node >= 20 not found on PATH"
-# Passing Node tests in tests/journey_qa/ today (36 in core, 6 in driver); a lower count means one was lost.
+# Node tests in tests/journey_qa/ today (36 in core, 6 in driver); a lower count means one was lost. A test may
+# skip itself where the system cannot do what it needs (symlinks on Windows without Developer Mode), so passed and
+# skipped count together.
 NODE_TESTS_FLOOR = 42
 
 
@@ -190,8 +192,10 @@ class NodeSide(unittest.TestCase):
                            capture_output=True, encoding="utf-8", errors="replace", timeout=600)
         self.assertEqual(r.returncode, 0, r.stdout[-3000:] + r.stderr[-1000:])
         passed = re.search(r"^# pass (\d+)", r.stdout, re.M)
+        skipped = re.search(r"^# skipped (\d+)", r.stdout, re.M)
         self.assertIsNotNone(passed)
-        self.assertGreaterEqual(int(passed.group(1)), NODE_TESTS_FLOOR, "fewer Node tests passed than exist")
+        ran = int(passed.group(1)) + (int(skipped.group(1)) if skipped else 0)
+        self.assertGreaterEqual(ran, NODE_TESTS_FLOOR, "fewer Node tests ran than exist")
 
 
 if __name__ == "__main__":

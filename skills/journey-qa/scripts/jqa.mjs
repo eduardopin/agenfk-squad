@@ -430,7 +430,7 @@ const HELP = {
 Run
   init --product ID [--out DIR] [--journey ID]     prepares the directory (templates, ledger, trace)
   doctor [--quick]                                 checks Node, Playwright and the browser
-  setup [--chromium] [--dry-run]                   installs playwright-core in the per-user runtime (the only network call)
+  setup [--chromium] [--dry-run]                   installs playwright-core in the per-user runtime (downloads from npm)
   browser start --allow ORIGIN [--headed] [--browser chrome|chromium|msedge] [--cdp URL]
   browser actor add ID [--role observer] [--mobile] [--max-actions N]
   browser handshake --actor ID [--url URL]         checks capabilities and writes session-binding.json

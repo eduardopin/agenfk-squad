@@ -532,17 +532,53 @@ def test_colour_that_fetches_a_url_never_reaches_the_css():
         assert sw.looks_like_color(v), v
 
 
-def timed(files, limit, flag="--css"):
+def children_cpu():
+    """CPU seconds used by finished child processes, or None where the OS does not say (Windows)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
+def sweep_took(files, limit, flag="--css"):
+    """The sweep's output, its wall-clock seconds and its CPU seconds (wall clock where there is no rusage)."""
     root = project(files)
-    t = time.monotonic()
+    t, cpu = time.monotonic(), children_cpu()
     try:
         code, out, err = run(root, flag, timeout=limit * 5)
     except subprocess.TimeoutExpired:
         raise AssertionError(f"still running after {limit * 5}s")
     took = time.monotonic() - t
+    used = children_cpu()
     assert code == 0 and "Traceback" not in err, err[-300:]
+    return out, took, (used - cpu if cpu is not None else took)
+
+
+def timed(files, limit, flag="--css"):
+    out, took, _ = sweep_took(files, limit, flag)
     assert took < limit, f"{took:.1f}s >= {limit}s"
     return out
+
+
+def scales_linearly(make, n, limit, flag="--json"):
+    """A sweep of n files fails when it hits the sweep's own time budget (MAX_SECONDS: the sweep stops and
+    says so), or when it takes more than SCALE_RATIO times the fastest of three sweeps of n/10, or `limit`
+    seconds, whichever is larger. Time is the child's CPU (wall clock on Windows, which has no rusage). A
+    wall-clock bound alone measured the runner (a Windows leg took 5.1 s against 5). Measured here: the
+    linear sweep runs 3 to 12 times its n/10, each quadratic loop #43 removed 11 to 46 times; on a heavily
+    loaded machine the quadratic sweep reaches the budget first, which is why the budget line fails too."""
+    small = min(sweep_took(_many(n // 10, make), limit, flag)[2] for _ in range(3))
+    out, _, big = sweep_took(_many(n, make), limit * 4, flag)
+    assert "the sweep stopped at the limit" not in out, (
+        f"{n} files hit the sweep's own budget ({big:.1f}s CPU where measured): slower than linear")
+    bound = max(limit, SCALE_RATIO * small)
+    assert big < bound, f"{n} files took {big:.1f}s, {n // 10} took {small:.1f}s (CPU where measured): more than {bound:.1f}s"
+    return out
+
+
+SCALE_RATIO = 15
 
 
 # 5i. A var() that points at itself k times was k**9 calls; a fan-out chain was an exponential string
@@ -727,9 +763,9 @@ def _many(n, body):
 # 5t. roles_of copied every global token once per source, light and dark: 2000 token files of 100 tokens
 # took 16 s or more.
 def test_thousands_of_token_files_are_swept_fast():
-    out = timed(_many(2000, lambda i: ":root{--background:#fff;--foreground:#111;--primary:#0f766e;"
-                      + "".join(f"--x{i}-{k}:#abc;" for k in range(100)) + "} .dark{--background:#000}"),
-                5, "--json")
+    out = scales_linearly(lambda i: ":root{--background:#fff;--foreground:#111;--primary:#0f766e;"
+                          + "".join(f"--x{i}-{k}:#abc;" for k in range(100)) + "} .dark{--background:#000}",
+                          2000, 5)
     a = json.loads(out)
     assert a["roles"]["accent"] == "#0f766e" and len(a["tokens"]) == 3 + 2000 * 100, len(a["tokens"])
     assert a["dark"] == {"bg": "#000"}, a["dark"]
@@ -740,10 +776,10 @@ def test_thousands_of_token_files_are_swept_fast():
 # (about 50,000 lines) took 10 s or more. A set answers the lookup; the list keeps the order.
 def test_thousands_of_conflicting_files_are_swept_fast():
     roles = ("background", "card", "foreground", "muted-foreground", "primary", "border")
-    out = timed(_many(5500, lambda i: ":root{" + "".join(f"--{r}:#{(i * 9 + s) % 0xffffff:06x};"
-                                                         for s, r in enumerate(roles))
-                      + f"--font-display:D{i},serif;--font-body:B{i},sans-serif;--font-mono:M{i},monospace}}"),
-                5, "--json")
+    out = scales_linearly(lambda i: ":root{" + "".join(f"--{r}:#{(i * 9 + s) % 0xffffff:06x};"
+                                                     for s, r in enumerate(roles))
+                          + f"--font-display:D{i},serif;--font-body:B{i},sans-serif;--font-mono:M{i},monospace}}",
+                          5500, 5)
     conflicts = json.loads(out)["conflicts"]
     assert len(conflicts) == 9 * 5499 and len(set(conflicts)) == len(conflicts), len(conflicts)
     assert conflicts[0].startswith("bg: p00/t0000.css says #000000, p00/t0001.css says #000009;"), conflicts[0]

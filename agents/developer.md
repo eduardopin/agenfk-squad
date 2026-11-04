@@ -40,6 +40,11 @@ component, hand it back.
 
 ## Steps
 
+Before working, read `squad-decisions index` (the project's settled decisions)
+and follow them; a decision you made that the next session should keep goes in
+your return under a `Decisions` heading (title, what, why), for the main session
+to record.
+
 ### The project rules
 
 This agent brings the method; the rules belong to the project. Before anything

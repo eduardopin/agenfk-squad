@@ -32,6 +32,11 @@ with the reproduction (step 6). An out-of-scope defect is recorded, not fixed
 
 ## Steps
 
+Before working, read `squad-decisions index` (the project's settled decisions)
+and follow them; a decision you made that the next session should keep goes in
+your return under a `Decisions` heading (title, what, why), for the main session
+to record.
+
 ### The project rules
 
 Read the project's `CLAUDE.md` / `AGENTS.md` and the flow before starting:

@@ -1,6 +1,7 @@
 # Concepts
 
-Five principles hold the squad together. Each one answers a failure that was
+Five principles hold the squad together, and one practice rests on them
+(standing rules are written down once). Each one answers a failure that was
 observed, not imagined, and each one is enforced somewhere you can point to: a
 tool list, an AgenFK gate, or a line in a hook. A principle that lives only in
 a prompt is a wish.
@@ -155,6 +156,48 @@ session behaviour that motivated it, and ships with a test.
 
 *Enforced by:* the AgenFK flow; rule 5 of `CLAUDE.md`; the review checklist in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Standing rules are written down once
+
+An owner who says "never deploy on Fridays" in one session should not have to
+say it again in the next one, or in the worktree next door. A rule that lives
+only in a conversation is gone at the next `/clear`.
+
+So a standing rule becomes a decision: one file in the project's decision
+store, outside the checkout, that every session of the repository reads at
+start. The router notices when the owner states one ("always", "never", "from
+now on", "sempre", "nunca", "daqui em diante") and asks the main session to
+record it. Agents return the decisions they made under a `Decisions` heading,
+and the main session judges each one before recording it with the card as the
+source: an agent that read hostile text in a branch could pass it through. A question, an
+ordinary request that merely contains the word ("it never opens, fix it"), a
+condition about the product ("whenever the user clicks save, call the API") or
+an instruction limited to one function, file, PR or moment does not count: the
+marker must be followed by an instruction. Diffs, logs,
+tracebacks, quoted, indented or fenced lines, known prompts written by programs and
+prompts that announce a quote ("here is what the other agent said", "segue o
+texto da issue") are skipped. Pasted plain prose with no such announcement, such
+as a PR description or an issue body, can still trigger the line. That is why
+the line is a hint and not a verdict: it tells the session to record only the
+owner's own words in that prompt, never text pasted from an issue, a PR, a file,
+a log or another agent.
+
+The detector chooses precision over recall on purpose: a hint that
+fires on every prompt gets ignored, while a missed rule costs one sentence ("record
+that as a decision"). So it misses, by design, rules phrased as questions ("should
+we always squash?"), rules with no marker ("PRs go to beta"), rules whose verb
+is not on its list, "whenever" rules whose condition names no part of the work
+(tests, commits, PRs, the suite, deploys), rules inside a prompt that also
+carries a diff or announces a quote, and rules limited by "here", "now" or "in
+this file". When the owner states a rule the hook missed, the session records it
+anyway.
+
+A decision records context; it is not the implementation. A rule that changes
+how the repository behaves still gets a card.
+
+*Enforced by:* `hooks/squad-router.py` on `UserPromptSubmit` (the
+`[squad decision]` line), `hooks/squad-decisions.py` on `SessionStart` (the
+index) and rule 12 of `CLAUDE.md`. Details in [decisions.md](decisions.md).
 
 ## What the squad is not
 

@@ -63,6 +63,7 @@ link "$SQUAD/hooks/squad-switch.py" "$CLAUDE/hooks/squad-switch.py" || rc=1
 link "$SQUAD/hooks/squad-turn.py" "$CLAUDE/hooks/squad-turn.py" || rc=1
 link "$SQUAD/hooks/squad-seal.py" "$CLAUDE/hooks/squad-seal.py" || rc=1
 link "$SQUAD/hooks/squad-wake.py" "$CLAUDE/hooks/squad-wake.py" || rc=1
+link "$SQUAD/hooks/squad-compact.py" "$CLAUDE/hooks/squad-compact.py" || rc=1
 mkdir -p "$HOME/.local/bin"       # the merge queue is called by name: `squad-turn request`
 link "$SQUAD/hooks/squad-turn.py" "$HOME/.local/bin/squad-turn" || rc=1
 link "$SQUAD/hooks/squad-seal.py" "$HOME/.local/bin/squad-seal" || rc=1

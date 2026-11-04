@@ -186,6 +186,40 @@ before writing the handoff; a timeout never blocks the compaction.
 You can adopt the squad in stages. The agents and skills work without any
 hook. The router works without the watcher. The watcher works without herdr.
 
+## Check the install
+
+A half-installed squad fails silently: a hook missing from `settings.json`
+simply never runs. From the clone you installed, run the doctor:
+
+```bash
+python3 scripts/squad_doctor.py            # one line per check: ok, WARN or FAIL, and the fix
+python3 scripts/squad_doctor.py --json     # the same results as JSON
+```
+
+It reads and never writes, not even a `__pycache__`. It checks, in this order:
+
+| Check | FAIL when | WARN when |
+|---|---|---|
+| `python` | this interpreter is older than 3.10 | |
+| `agenfk` | | `agenfk` is not on PATH, or `agenfk health` does not answer or prints a `FAILED` / "potential issue" line (server down: it still exits 0) |
+| `links` | an agent, skill, `CLAUDE.md` or manifest hook is missing from `${CLAUDE_CONFIG_DIR:-~/.claude}`, is a real file, or links somewhere other than this clone | a copy `install.ps1` marked as its own no longer matches the clone |
+| `hooks` | a hook from `hooks/manifest.json` is not registered in `settings.json` for one of its events, is registered with a matcher that is not a string, or `settings.json` cannot be read (not JSON, a dangling link, a symlink loop) | it is registered under another matcher than the manifest's (no matcher, `""` and `"*"` count as the same one) |
+| `squad-turn` | the merge-queue command is not on PATH, or `~/.local/bin/squad-turn` is a dangling link | it runs a `squad-turn.py` from another clone |
+| `herdr` | | herdr is not on PATH (the owner switches the session after a handoff) |
+| `project` | | there is no `.agenfk/project.json` from here up (pass `--project DIR` to look elsewhere), or it has no `projectId` |
+| `thresholds` | | a numeric `SQUAD_*` variable holds something that is not a number or that the watcher clamps (the line shows the value it really uses), or `SQUAD_WATCH=0` / `SQUAD_TURN=0` turns the watcher or the merge queue off |
+
+The `thresholds` lines list every `SQUAD_*` variable `hooks/squad-watch.py`
+reads, with the value your shell gives it and whether that is the default
+(`SQUAD_WINDOW=0` reads as auto: the model's window). The fix lines quote
+their paths, so they paste as they are. The
+hooks run in Claude Code's environment, so a variable exported only in this
+shell does not reach them.
+
+The exit code is 0 when no check fails, 1 otherwise; a WARN alone keeps it at
+0. Pass `--config DIR` to check a config dir other than
+`${CLAUDE_CONFIG_DIR:-~/.claude}`.
+
 ## Check it
 
 Start a **new** Claude Code session (agents, skills and hooks are read at
@@ -341,7 +375,10 @@ you installed by hand: `git pull`, then `install.ps1` again, as in the previous 
 ```
 
 `-Uninstall` removes the squad's entries from `settings.json` (and nobody
-else's), the links into the clone, the `squad-turn.cmd` and
+else's: the one exception is an empty list on an event the hook manifest
+names, which an older install could leave behind; it goes only when uninstall
+removed a squad entry from the file, and an empty list on any other event
+stays), the links into the clone, the `squad-turn.cmd` and
 `squad-decisions.cmd` shims, and the marked copies that you did not edit (an
 edited copy is kept, with a warning); the clone stays. `-Purge` deletes the
 clone too, unless it has local changes: then it refuses and you delete it by
@@ -399,10 +436,15 @@ directory if you want it gone.
   (`skills/board-heartbeat`), the heavy review (`hooks/squad-review.py`), the
   merge seal (`hooks/squad-seal.py`, `git config squad.seal`), and the
   scripts of the cloud-resource pricing guard, the design bridge, the
-  pull-request skill and the writing skill, and the Chrome export of the
-  presentation skill (its deck checks do run there, under Git Bash). Their
+  pull-request skill and the writing skill, and the blind trials of
+  `skills/skill-trial` (they need bubblewrap). Their
   tests say so and exit 0 on Windows. Leave the
   seal off there.
+- **Not yet verified on Windows, tests running:** the Chrome export of the
+  presentation skill. Under Git Bash it hands Chrome Windows paths
+  (`C:\...`, `file:///C:/...`) and its tests run on the Windows CI, which fails
+  without a Chrome rather than skip; until a green Windows run, export from
+  Linux, macOS or WSL.
 - **Paths in a Bash command.** The merge turn follows `cd C:/work/repo` and
   `cd /c/work/repo`, the forms Git Bash takes. A backslash path
   (`cd C:\work\repo`) is not followed, because bash reads the backslash as an

@@ -16,6 +16,7 @@ measured. `SQUAD_WATCH=0` turns it off.
 - [The soft stop](#the-soft-stop)
 - [The session switch](#the-session-switch)
 - [Waking a stopped session](#waking-a-stopped-session)
+- [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)
 - [The merge queue](#the-merge-queue)
 - [Metrics](#metrics)
 
@@ -28,8 +29,8 @@ measured. `SQUAD_WATCH=0` turns it off.
 | `PostToolUseFailure` | A tool call failed: if it was the merge that held the merge turn, gives the turn back at once instead of waiting for `SQUAD_TURN_HOLD` to expire. |
 | `SubagentStop` | Writes the sub-session's metrics to `metrics.jsonl` and leaves a note for the parent when the sub-session ended badly. |
 | `UserPromptSubmit` | Delivers pending notes to the main session. |
-| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). |
-| `PreCompact` | Main session, `/compact` or auto-compact: before the conversation is summarized, writes the same minimal handoff to `~/.claude/squad/handoffs/<session>-compact.md`. It prints nothing, so it never blocks the compaction, and it never switches the session. |
+| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). Main session outside handoff, with a large context: schedules a `/compact` just before the prompt cache goes cold (see [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)). |
+| `PreCompact` | Main session, `/compact` or auto-compact: before the conversation is summarized, writes the same minimal handoff to `~/.claude/squad/handoffs/<session>-compact.md`. It prints nothing, so it never blocks the compaction, and it never switches the session. A compaction the watcher ordered is labelled as such in that handoff. |
 
 Reading the transcript is incremental: the watcher keeps a byte offset per
 session and parses only whole lines added since the last look, so it costs the
@@ -77,57 +78,60 @@ Rule 1 is the wall. Rule 2 is the interesting one.
 A high reread share with a small context is the cache doing its job, not
 waste. So rule 2 only applies above a floor.
 
-A fixed floor is still wrong. Picture a session that has just loaded 500k
+A fixed floor is still wrong. Picture a session that has just loaded 600k
 tokens of context and done almost nothing with it. Its reread share is high
 (it has produced little, so most of its spend is re-reading), and its context
-is at 70% of the window. Cutting it now throws away what it just paid to load.
+is at 60% of the window. Cutting it now throws away what it just paid to load.
 
 So the floor **weighs the burn**. With `window` the session's context window:
 
 ```
-floor_pct = 90 − (90 − 70) × min(1, burn_pct / 50)
+floor_pct = 90 − (90 − 50) × min(1, burn_pct / 50)
 floor     = max(2 × SQUAD_CTX_BASE, window × floor_pct / 100)
 ```
 
-where 90 is `SQUAD_CTX_PCT`, 70 is `SQUAD_REREAD_FLOOR` and the
+where 90 is `SQUAD_CTX_PCT`, the first 50 is `SQUAD_REREAD_FLOOR` and the
 divisor 50 is `SQUAD_BURN_FULL`. In words: the floor starts at 90% of the
 window for a session that has burned nothing, and falls in a straight line to
-70% once the session has burned half its budget.
+50% once the session has burned half its budget.
 
 For a 1M window and a 20M budget:
 
 | Burn so far | `burn_pct` | Floor |
 |---|---|---|
 | 0 | 0% | 900k (90%) |
-| 2M | 10% | 860k (86%) |
-| 5M | 25% | 800k (80%) |
-| 8M | 40% | 740k (74%) |
-| 10M or more | ≥ 50% | 700k (70%) |
+| 2M | 10% | 820k (82%) |
+| 5M | 25% | 700k (70%) |
+| 8M | 40% | 580k (58%) |
+| 10M or more | ≥ 50% | 500k (50%) |
 
 Until October 2026 these were 80% and 50%: the handoff went out early enough
-to interrupt work that was still paying for itself.
+to interrupt work that was still paying for itself. From then until November
+2026 the lowest floor was 70%, and no main session ever reached it: live
+sessions rereading 74–87% of their spend, the largest at 672k with 143% burn,
+were never ordered to hand off.
 
 ### Worked examples
 
-**A. Just loaded, barely used.** Context 700k, burn 2M (10%), reread share 70%.
-Floor is 860k. Context is below the floor, so rule 2 does not fire. Rule 1
-does not fire either (700k < 900k). The session keeps working. It gets at most
+**A. Just loaded, barely used.** Context 600k, burn 2M (10%), reread share 70%.
+Floor is 820k. Context is below the floor, so rule 2 does not fire. Rule 1
+does not fire either (600k < 900k). The session keeps working. It gets at most
 an informational notice, which is not an order to stop.
 
-**B. Same context, long session.** Context 700k, burn 11M (55%), reread share 68%.
-Floor is 700k. Context ≥ floor and share ≥ 60%: `PROACTIVE HANDOFF`. Each
-further turn costs a toll of 70k weighted tokens. A restart costs
-1.25 × 40k + 10k = 60k, and saves 0.1 × (700k − 40k) = 66k per turn, so the
-fresh session pays for itself in 60 / 66 ≈ 0.9 turns.
+**B. Same context, long session.** Context 600k, burn 11M (55%), reread share 68%.
+Floor is 500k. Context ≥ floor and share ≥ 60%: `PROACTIVE HANDOFF`. Each
+further turn costs a toll of 60k weighted tokens. A restart costs
+1.25 × 40k + 10k = 60k, and saves 0.1 × (600k − 40k) = 56k per turn, so the
+fresh session pays for itself in 60 / 56 ≈ 1.1 turns.
 
-**C. Productive session, low reread.** Context 820k, burn 12M, reread share 41%.
+**C. Productive session, low reread.** Context 820k, burn 12M (60%), reread share 41%.
 Share is under 60%, so rule 2 does not fire. Context is under 900k, so rule 1
 does not fire. The session continues, even though it is large: it is still
 producing more than it re-reads.
 
 **D. The wall.** Context 910k, any burn, any share. Rule 1: `PROACTIVE HANDOFF`.
 
-The cut therefore always falls between 70% and 90% of the window. Above 70%
+The cut therefore always falls between 50% and 90% of the window. Above 50%
 without the arithmetic closing, the session receives only an informational
 notice.
 
@@ -361,6 +365,75 @@ timer not enabled). `systemctl --user disable --now
 squad-wake.timer` stops it. Without a systemd user manager for your `HOME`
 (macOS, a container) the installer prints the line to run every 2 minutes from
 cron or launchd. Windows is not covered yet.
+
+## Compacting before the cache goes cold
+
+A session that stopped with a large context still has its prompt cache warm
+for a while: 1 hour or 5 minutes after its last request, depending on the
+cache the session uses. Compacting while the cache is warm reads the context
+at 0.1 of the price. A minute after it goes cold, the next message writes the
+whole context again (1.25x on the 5-minute cache, 2x on the 1-hour one).
+
+So, on the `Stop` of a main session outside handoff, with context at or above
+`SQUAD_COMPACT_MIN` (150000), the watcher schedules `hooks/squad-compact.py`
+as a detached process, due `SQUAD_COMPACT_BEFORE` seconds (120) before the
+cache of the last request goes cold. The TTL is read from the transcript (the
+`cache_creation` split of the last responses); `SQUAD_CACHE_TTL` overrides it.
+With no TTL in the transcript nothing is scheduled: there is no telling when
+the cache goes cold. The job is
+`~/.claude/squad/compact/<session>.json`; every `Stop` reschedules it, and the
+old process leaves on its own.
+
+At the due time it sends one line to the pane, `/compact` followed by what the
+summary must keep, in order: the owner's request verbatim and what was
+decided, cards, repository, branch, worktree, PRs and merge-queue position,
+decisions and why, DONE with evidence and REMAINING with the next step,
+background tasks still open, traps already found. It adds, if there are
+any, the absolute path of the denied briefs, and the owner's last request as
+the watcher recorded it.
+
+The line is at most 760 characters, counted in UTF-16 units, `/compact `
+included. Claude Code turns any prompt longer than 800 characters into a paste
+(`<pasted_content>`), and a pasted `/compact` does not run: it becomes an
+ordinary message to the model. The 40 characters of margin cover a count in
+bytes for accented text. The fixed instructions are short; the briefs path goes
+in whole or not at all; the owner's request takes what is left, cut with an
+ellipsis.
+
+It sends it only if all of this still holds:
+
+- the job is still the one it was launched for;
+- the transcript has no request after the scheduled one (the cache was renewed);
+- the pane hosts the same session, idle;
+- the watcher's state for the session exists and is readable (missing or
+  corrupt is doubt);
+- the session is not at handoff level or switching (no `switched`, no switch
+  claim, no scheduled switch wait), the owner did not ask to stop or pause,
+  and no earlier `/compact` arrived in this session as a message;
+- the job's text is one line starting with `/compact`, at most 760 characters;
+- the transcript is readable.
+
+Any doubt means not compacting. Before sending, it records
+`~/.claude/squad/compact/<session>.sent` (request id and time): the
+`PreCompact` handoff that follows says the watcher ordered the compaction, not
+that the session stopped without a handoff, and the same request is never
+compacted twice.
+
+Sent is not done. It counts as compacted only when a `compact_boundary` with
+the `manual` trigger shows up in the transcript after the point of sending,
+within `SQUAD_COMPACT_CONFIRM` seconds (600). A `/compact` that runs as a
+command never reaches `UserPromptSubmit`; if the watcher sees its own text
+there, bare or wrapped in `<pasted_content>`, it was a message: the prompt is
+not recorded as the owner's request, the session is marked, squad-compact logs
+a failure and no `/compact` is scheduled again in that session. When it did
+not compact (herdr refused, it arrived as a message, no boundary in time) the
+`.sent` record is removed; the job is removed whenever squad-compact ends,
+unless a newer `Stop` already rescheduled it. After a confirmed compaction the
+`.sent` record stays: it is what keeps the same request from being compacted
+twice. Each decision goes to `~/.claude/squad/compactions.log`.
+
+It needs a herdr pane (`HERDR_PANE_ID`) and a Claude Code transcript.
+`SQUAD_COMPACT=0` turns it off.
 
 ## The merge queue
 

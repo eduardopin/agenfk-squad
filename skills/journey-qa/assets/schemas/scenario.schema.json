@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:journey-qa:scenario:1",
+  "title": "Journey QA scenario",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "journey_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "product_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      },
+      "minItems": 1
+    },
+    "mandatory_rule_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      },
+      "minItems": 0
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "variants": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "end_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "async_window_seconds": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_actions": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "max_actions",
+        "max_minutes",
+        "max_retries"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "journey_id",
+    "product_id",
+    "objective",
+    "actor_ids",
+    "mandatory_rule_ids",
+    "preconditions",
+    "variants",
+    "end_conditions",
+    "async_window_seconds",
+    "budget"
+  ],
+  "additionalProperties": false
+}

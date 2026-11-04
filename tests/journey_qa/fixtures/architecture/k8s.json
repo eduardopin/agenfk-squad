@@ -1,0 +1,4 @@
+{"kind":"List","items":[
+{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"payment-worker","namespace":"checkout"},"spec":{"replicas":1,"template":{"metadata":{"labels":{"app":"payment-worker"}},"spec":{"containers":[{"name":"worker","image":"registry.example/payment-worker:latest","env":[{"name":"PROVIDER_API_KEY","value":"sk_test_123"}]}]}}}},
+{"apiVersion":"keda.sh/v1alpha1","kind":"ScaledObject","metadata":{"name":"payment-worker","namespace":"checkout"},"spec":{"scaleTargetRef":{"name":"payment-worker"},"minReplicaCount":0,"maxReplicaCount":50}}
+]}

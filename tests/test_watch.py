@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The watcher cuts the main session between 70% and 90% of the window, and only by arithmetic;
+"""The watcher cuts the main session between 50% and 90% of the window, and only by arithmetic;
 it switches the session even with a background task running.
 
 Self-checking: the exit code is the verdict. Runs in a throwaway HOME, with a
@@ -123,33 +123,34 @@ def test_the_math_is_fixed():
     def due(share, ctx, window, burn=60):
         reread = share * burn / 100 * cx.BUDGET
         return cx.handoff_math(int(reread * (1 - share) / share), 0, int(reread / 0.1), 0, ctx, window)["due"]
-    assert cx.REREAD_SHARE == 0.60 and cx.REREAD_FLOOR_PCT == 70 and cx.HANDOFF_NOW == 90
+    assert cx.REREAD_SHARE == 0.60 and cx.REREAD_FLOOR_PCT == 50 and cx.HANDOFF_NOW == 90
     assert not due(0.95, 150_000, M)        # the case that used to cut sessions at 15%
-    assert not due(0.95, 510_000, M)        # and the one that cut them at 51% (rule until October 2026)
-    assert not due(0.95, 699_000, M)
+    # lowest floor 50% since November 2026: at 70% no main session ever reached it
+    assert not due(0.95, 499_000, M) and due(0.95, 500_000, M)
     assert due(0.60, 700_000, M)
     assert not due(0.59, 890_000, M)
     assert due(0.61, 90_000, 0)             # sub-session: floor 2*CTX_BASE
     assert due(0.61, 90_000, 0, burn=1)     # ...and with no window the burn does not move the floor
-    # the floor weighs the burn: 90% of the window with zero burn, 70% with burn at 50% of the budget
+    # the floor weighs the burn: 90% of the window with zero burn, 50% with burn at 50% of the budget
     assert cx.BUDGET == 20_000_000 and cx.BURN_FULL_PCT == 50
-    assert not due(0.90, 700_000, M, burn=10)   # context 70%, burn 10%: not the time
-    assert not due(0.90, 850_000, M, burn=10) and due(0.90, 860_000, M, burn=10)
-    assert not due(0.90, 790_000, M, burn=25) and due(0.90, 800_000, M, burn=25)
-    assert due(0.90, 700_000, M, burn=80)
-    # the floor table at its boundaries: burn 0% -> 90%, 25% -> 80%, 50% and beyond -> 70%
+    assert not due(0.90, 500_000, M, burn=10)   # context 50%, burn 10%: not the time
+    assert not due(0.90, 700_000, M, burn=10)   # nor at 70%
+    assert not due(0.90, 810_000, M, burn=10) and due(0.90, 830_000, M, burn=10)   # floor 82%
+    assert not due(0.90, 690_000, M, burn=25) and due(0.90, 710_000, M, burn=25)   # floor 70%
+    assert not due(0.90, 499_000, M, burn=80) and due(0.90, 500_000, M, burn=80)   # floor 50%
+    # the floor table at its boundaries: burn 0% -> 90%, 10% -> 82%, 25% -> 70%, 50% and beyond -> 50%
     def floor(burn_pct):
         return cx.handoff_math(int(burn_pct / 100 * cx.BUDGET), 0, 0, 0, 500_000, M)["floor"]
-    assert [floor(b) for b in (0, 25, 50, 100)] == [900_000, 800_000, 700_000, 700_000]
-    assert not due(0.90, 699_000, M, burn=50) and due(0.90, 700_000, M, burn=50)
+    assert [floor(b) for b in (0, 10, 25, 50, 100)] == [900_000, 820_000, 700_000, 500_000, 500_000]
+    assert not due(0.90, 499_000, M, burn=50) and due(0.90, 500_000, M, burn=50)
 
 
-def test_cut_between_70_and_90_percent():
-    cases = [  # context, reread, what the watcher says
+def test_cut_between_50_and_90_percent():
+    cases = [  # context, reread, what the watcher says (burn 60%: floor at 50%)
         (100_000, 0.90, "nothing"), (150_000, 0.90, "nothing"), (300_000, 0.90, "nothing"),
-        (520_000, 0.90, "nothing"), (690_000, 0.90, "nothing"),
-        (700_000, 0.60, "PROACTIVE HANDOFF"), (720_000, 0.90, "PROACTIVE HANDOFF"),
-        (720_000, 0.00, "Informational only"), (850_000, 0.50, "Informational only"),
+        (490_000, 0.90, "nothing"), (499_000, 0.90, "nothing"),
+        (500_000, 0.60, "PROACTIVE HANDOFF"), (520_000, 0.90, "PROACTIVE HANDOFF"),
+        (520_000, 0.00, "Informational only"), (850_000, 0.50, "Informational only"),
         (890_000, 0.00, "Informational only"),
         (900_000, 0.00, "PROACTIVE HANDOFF"), (950_000, 0.30, "PROACTIVE HANDOFF"),
     ]
@@ -162,11 +163,12 @@ def test_cut_between_70_and_90_percent():
                                               "PROACTIVE HANDOFF": 2}[expected]
 
 
-def test_context_at_70_with_low_burn_is_not_handoff_time():
+def test_context_at_50_with_low_burn_is_not_handoff_time():
+    # lowest floor 50% since November 2026: burn 10% -> 82%, burn 25% -> 70%, burn >= 50% -> 50%
     h = home()
-    cases = [(700_000, 10, "Informational only"), (840_000, 10, "Informational only"),
-             (870_000, 10, "PROACTIVE HANDOFF"), (780_000, 25, "Informational only"),
-             (810_000, 25, "PROACTIVE HANDOFF"), (700_000, 60, "PROACTIVE HANDOFF")]
+    cases = [(550_000, 10, "Informational only"), (810_000, 10, "Informational only"),
+             (830_000, 10, "PROACTIVE HANDOFF"), (690_000, 25, "Informational only"),
+             (710_000, 25, "PROACTIVE HANDOFF"), (500_000, 60, "PROACTIVE HANDOFF")]
     for i, (ctx, burn, expected) in enumerate(cases):
         sid = f"aaaabbbb-{i:04d}"
         text = said(run(h, "PostToolUse", sid, session(h, sid, ctx, 0.9, burn)))
@@ -353,8 +355,9 @@ def dispatch(h, sid, tr, agent_type="developer", env=None):
 def test_no_slot_heavy_session_becomes_handoff_with_plan_and_switch():
     h = home()
     sid = "12345678-0003"
-    tr = session(h, sid, 550_000, 0.0)                   # 55%: no context alert at all
-    assert said(run(h, "PostToolUse", sid, tr)) == "nothing"
+    tr = session(h, sid, 550_000, 0.0)                   # 55%: only the informational notice (lowest floor 50%)
+    assert kind(said(run(h, "PostToolUse", sid, tr))) == "Informational only"
+    assert state(h, sid)["ctx_level"] == 1 and not state(h, sid).get("ordered")   # nothing ordered yet
     orchestrators(h, 6)
     out = dispatch(h, sid, tr)
     assert "DISPATCH DENIED" in out and "PLAN of the denied dispatch" in out, out
@@ -475,7 +478,10 @@ def test_notice_ahead_of_the_brake_only_for_whoever_orchestrates():
     sid = "12345678-0006"
     tr = session(h, sid, 550_000, 0.0)
     orchestrators(h, 6)
-    assert said(run(h, "PostToolUse", sid, tr)) == "nothing"     # never dispatched: not its concern
+    # 550k is past the lowest floor of 50% (informational notice, level 1); what matters
+    # here is that a session that never dispatched does not get the DISPATCH NOTICE
+    first = said(run(h, "PostToolUse", sid, tr))
+    assert kind(first) == "Informational only" and "DISPATCH NOTICE" not in first, first
     path = os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json")
     def remeasure():
         st = state(h, sid)
@@ -862,6 +868,172 @@ def test_compaction_handoff_off_with_squad_watch_0():
                  {"trigger": "manual", "custom_instructions": None}, {"SQUAD_WATCH": "0"})
     assert r.returncode == 0 and r.stdout.strip() == "", r
     assert not os.path.exists(compact_handoff(h, sid))
+
+
+def test_stop_schedules_the_compaction_and_precompact_labels_the_one_it_ordered():
+    """Outside handoff, with a large context, the Stop schedules squad-compact for just
+    before the cache goes cold; the PreCompact handoff of that compaction says the
+    watcher ordered it, never that the session stopped without a handoff."""
+    h = home()
+    sid = "c0c0c0c0-0006"
+    tr = os.path.join(h, f"{sid}.jsonl")
+    with open(tr, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
+            "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
+                      "cache_creation": {"ephemeral_5m_input_tokens": 5000}}}}) + "\n")
+    env = {"HERDR_PANE_ID": "w1:p1"}
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": "deliver card ABC-2"}, env)
+    assert run(h, "Stop", sid, tr, env=env) == ""
+    jpath = os.path.join(h, ".claude", "squad", "compact", f"{sid}.json")
+    with open(jpath, encoding="utf-8") as fh:
+        job = json.load(fh)
+    assert job["ttl"] == 300 and 170 < job["due"] - time.time() <= 180 and job["req"] == "r-last", job
+    assert job["text"].startswith("/compact ") and "\n" not in job["text"], job["text"]
+    assert 'Owner\'s last request: "deliver card ABC-2".' in job["text"], job["text"]
+    job["req"] = "rescheduled"                     # the squad-compact launched for it leaves on its own
+    with open(jpath, "w", encoding="utf-8") as fh:
+        json.dump(job, fh)
+    # the /compact line reaching the session is not the owner's request
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": job["text"] + " pause, call it a day"}, env)
+    st = state(h, sid)
+    assert st["last_prompt"] == "deliver card ABC-2" and not st["asked_stop"], st
+    # the record squad-compact leaves before sending: fresh labels the handoff, stale does not
+    sent = os.path.join(h, ".claude", "squad", "compact", f"{sid}.sent")
+    for age, trigger, ordered in ((5, "manual", True), (3600, "manual", False), (5, "auto", False)):
+        with open(sent, "w", encoding="utf-8") as fh:
+            json.dump({"req": "r-last", "ts": time.time() - age, "ctx": 300_000, "ttl": 300}, fh)
+        r = run_proc(h, "PreCompact", sid, tr, {"trigger": trigger, "custom_instructions": None}, env)
+        assert r.returncode == 0 and r.stdout.strip() == "", r
+        with open(compact_handoff(h, sid), encoding="utf-8") as fh:
+            body = fh.read()
+        label = f"The watcher ordered this compaction (squad-compact, {trigger})"
+        assert (label in body) is ordered, (age, trigger, body)
+        assert ordered or f"about to be compacted ({trigger})" in body, (age, trigger, body)
+        assert ("300k of context" in body) is ordered, body
+        assert "stopped without writing" not in body, body
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-watch.md"))
+    assert not state(h, sid).get("switched")
+    # that request was compacted: another Stop on it schedules nothing (only the .sent record
+    # stops it here: the mark the /compact line above left is dropped)
+    st = state(h, sid)
+    assert st.pop("compact_as_text"), st
+    with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json"), "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    os.remove(jpath)
+    run(h, "Stop", sid, tr, env=env)
+    assert not os.path.exists(jpath)
+    # a handoff out of turn sends the work back: that Stop is not an idle session, nothing is scheduled
+    sid = "c0c0c0c0-0007"
+    tr2 = os.path.join(h, f"{sid}.jsonl")
+    shutil.copy(tr, tr2)
+    run(h, "UserPromptSubmit", sid, tr2, {"prompt": "deliver card ABC-3"}, env)
+    write_handoff(h, tr2)
+    assert kind(said(run(h, "Stop", sid, tr2, env=env))) == "Handoff out of turn"
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "compact", f"{sid}.json"))
+
+
+def watch_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("squad_watch_under_test", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def u16(s):
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def test_the_compact_text_fits_one_line_of_760_characters():
+    """Claude Code pastes every prompt longer than 800 characters, and a pasted
+    /compact does not run: it becomes an ordinary message. The text of the first
+    port had 900+ characters of instructions alone. The ceiling is 760, with margin
+    for an accent counted in bytes; the briefs path goes in whole and absolute (the
+    Read tool takes no ~) or not at all; the owner's request takes what is left."""
+    w = watch_module()
+    assert w.COMPACT_LIMIT == 760
+    accents = "ação já é não ótima revisão coração \U0001F600\U0001F680 " * 100
+    real = "/srv/someone/.claude/squad/handoffs/" + "c0c0c0c0-0010-4aaa-8aaa-aaaaaaaaaaaa-dispatches.md"
+    longest = "/srv/someone/.claude/squad/handoffs/" + "f" * 80 + "-dispatches.md"     # safe() keeps up to 80
+    too_long = "/" + "x" * 300 + "/.claude/squad/handoffs/" + "f" * 80 + "-dispatches.md"
+    for request, briefs in (("\U0001F600" * 3000, too_long), ("p" * 400, real), ("", ""), ("ok", ""),
+                            (accents, ""), (accents, real), ("é" * 3000, ""), ("a\nb\rc" * 300, longest)):
+        t = w.compact_text(request, briefs)
+        assert u16(t) <= 760 and "\n" not in t and "\r" not in t, (u16(t), t)
+        assert t.startswith(w.COMPACT_SIGNATURE) and w.compact_own(t), t
+        assert ("Denied dispatch briefs: " + briefs + "." in t) is (bool(briefs) and briefs != too_long), t
+        assert ("Denied dispatch briefs" in t) is (bool(briefs) and briefs != too_long), t
+        assert too_long not in t and "/" + "x" * 50 not in t, t                # a cut path never goes in
+    t = w.compact_text(accents, real)
+    assert 'Owner\'s last request: "ação já' in t and t.endswith('\u2026".'), t   # cut, with an ellipsis
+    assert u16(w.compact_text("p" * 5000, "")) >= 758                       # uses the room, does not overcut
+    for must in ("owner's current request", "branch, worktree", "DONE with evidence", "background tasks",
+                 "UNKNOWN", "check git status and the card"):
+        assert must in t, must
+    # through the Stop: the scheduled text, with the real (absolute) briefs path of this HOME
+    h = home()
+    sid = "c0c0c0c0-0010-4aaa-8aaa-aaaaaaaaaaaa"
+    tr = os.path.join(h, f"{sid}.jsonl")
+    with open(tr, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
+            "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
+                      "cache_creation": {"ephemeral_1h_input_tokens": 5000}}}}) + "\n")
+    briefs = os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-dispatches.md")
+    os.makedirs(os.path.dirname(briefs), exist_ok=True)
+    open(briefs, "w").close()
+    env = {"HERDR_PANE_ID": "w1:p1"}
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": ("deliver card ABC-2 \U0001F600 ação já\n" * 30)}, env)
+    run(h, "Stop", sid, tr, env=env)
+    jpath = os.path.join(h, ".claude", "squad", "compact", f"{sid}.json")
+    with open(jpath, encoding="utf-8") as fh:
+        job = json.load(fh)
+    job["req"] = "rescheduled"                     # the squad-compact launched for it leaves on its own
+    with open(jpath, "w", encoding="utf-8") as fh:
+        json.dump(job, fh)
+    text = job["text"]
+    assert u16(text) <= 760 and "\n" not in text and "\r" not in text, (u16(text), text)
+    # absolute path, never "~/": the Read tool does not expand it (a Windows temp path may hold "RUNNER~1")
+    assert f" Denied dispatch briefs: {briefs}." in text and " Denied dispatch briefs: ~" not in text, text
+    assert 'Owner\'s last request: "deliver card ABC-2' in text and "\u2026" in text, text
+
+
+def test_the_watchers_own_compact_pasted_is_not_the_owner_and_marks_the_failure():
+    """The form the hook really receives when Claude Code pasted the /compact: wrapped
+    in <pasted_content id=...>. It is not the owner's request, not a request to stop
+    (the briefs path says "handoffs"), and it marks the session: the /compact arrived
+    as a message, so squad-compact counts it as a failure and none is scheduled again."""
+    w = watch_module()
+    h = home()
+    sid = "c0c0c0c0-0011"
+    tr = os.path.join(h, f"{sid}.jsonl")
+    with open(tr, "w") as fh:
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
+            "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
+                      "cache_creation": {"ephemeral_1h_input_tokens": 5000}}}}) + "\n")
+    env = {"HERDR_PANE_ID": "w1:p1"}
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": "open the PR of card ABC-4"}, env)
+    ours = w.compact_text("open the PR of card ABC-4", f"/srv/x/.claude/squad/handoffs/{sid}-dispatches.md")
+    old = ("/compact Summary to carry the work on without this conversation. Keep the exact values, in this "
+           "order: (1) the owner's current request ... Briefs of denied dispatches (the pending plan): "
+           f"/srv/x/.claude/squad/handoffs/{sid}-dispatches.md.")
+    for text in (ours, old):
+        for form in (f'\n\n<pasted_content id="a795">\n{text}\n</pasted_content id="a795">\n', text):
+            st = state(h, sid)
+            st.pop("compact_as_text", None)
+            with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json"), "w", encoding="utf-8") as fh:
+                json.dump(st, fh)
+            before = time.time()
+            run(h, "UserPromptSubmit", sid, tr, {"prompt": form}, env)
+            st = state(h, sid)
+            assert st["last_prompt"] == "open the PR of card ABC-4" and st["asked_stop"] is False, (form, st)
+            assert st.get("compact_as_text", 0) >= before - 1, (form, st)
+    run(h, "Stop", sid, tr, env=env)                               # it does not insist in this session
+    assert not os.path.exists(os.path.join(h, ".claude", "squad", "compact", f"{sid}.json"))
+    # a paste from the owner that only quotes a /compact is still the owner
+    run(h, "UserPromptSubmit", "c0c0c0c0-0012", tr, {"prompt": '<pasted_content id="b1">\nlog: /compact failed\n'
+                                                              '</pasted_content id="b1">\nlook at this'}, env)
+    st = state(h, "c0c0c0c0-0012")
+    assert "look at this" in st["last_prompt"] and not st.get("compact_as_text"), st
 
 
 def repo_with_gh(h):

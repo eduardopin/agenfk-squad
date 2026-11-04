@@ -1,0 +1,35 @@
+{
+  "profile_version": "1.0",
+  "product_id": "meu-produto",
+  "label": "Produto a configurar",
+  "promise": "Valor a confirmar na descoberta.",
+  "source_snapshot": [],
+  "roles": [],
+  "surfaces": [],
+  "capabilities": [],
+  "business_rules": [],
+  "value_outcomes": [],
+  "journey_intents": [],
+  "authorization": {
+    "reference": "User request: fill in the concrete scope.",
+    "allowed_environments": [],
+    "allowed_origins": [],
+    "allowed_actions": [],
+    "allowed_recipients": [],
+    "account_aliases": [],
+    "max_real_spend_minor": 0,
+    "currency": null,
+    "external_effects": "not_configured"
+  },
+  "budget": {
+    "max_actions": 60,
+    "max_minutes": 20,
+    "max_retries": 2
+  },
+  "unknowns": [
+    "URL, capabilities, rules and accounts not configured yet."
+  ],
+  "limitations": [
+    "A template is neither an authorization nor a run result."
+  ]
+}

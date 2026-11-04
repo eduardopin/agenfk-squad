@@ -69,14 +69,27 @@ is the owner's. Without the cap, a reviewer and an implementer will trade
 findings for as long as the budget lasts, which is how one card came to be
 reviewed five times.
 
+The cap limits how often a card is reviewed; the **review gate** makes sure it
+is reviewed at all. When the main session tries to advance a card that sits on
+a review step (`agenfk verify <id>`, or the MCP tools that advance a card), the
+watcher refuses with `REVIEW REQUIRED` until a reviewer has been dispatched on
+that card since it entered the step. One dispatch unlocks one review step: a
+card sent back by `FIX_FIRST` needs a new reviewer when it returns. The gate
+fails open when `agenfk` cannot answer, so a broken board does not freeze every
+session; the cost is that it does not hold meanwhile. How it reads the command,
+and the fail-open rules, are in
+[watcher.md](watcher.md#the-review-gate-no-self-approval).
+
 The same idea applies to tests: a test that only shows the code ran proves
 nothing. The `tester` writes each test against the behaviour its criterion
 names, and the `verifier` reads it for that. The flow has no round that breaks
 production code to grade the tests (owner decision, 16/10/2026).
 
-*Enforced by:* the `tools:` line of `agents/verifier.md`; the reviewer cap in
-the watcher (`SQUAD_MAX_REVIEWS`, a seventh reviewer on the same card is
-denied); the REVIEW and ADVERSARIAL steps of the flow.
+*Enforced by:* the `tools:` line of `agents/verifier.md`; the review gate in
+the watcher (`REVIEW REQUIRED`: no advancing a card past a review step until a
+reviewer has been dispatched on it); the reviewer cap (`SQUAD_MAX_REVIEWS`, a
+seventh reviewer on the same card is denied); the REVIEW and ADVERSARIAL steps
+of the flow.
 
 ## 3. Context is a budget
 
@@ -105,7 +118,8 @@ has already burned. The numbers are in [watcher.md](watcher.md#the-handoff-arith
 The same budget applies to orchestration. Sub-agents are the largest single
 cost (64% in the sample week), so there is a cap on sub-sessions per session,
 on sessions orchestrating at once, and on the context of an orchestrator that
-wants to dispatch.
+wants to dispatch. The ceilings and their defaults are in
+[watcher.md](watcher.md#the-dispatch-brake).
 
 *Enforced by:* `hooks/squad-watch.py` on `PostToolUse`, `PreToolUse` and `Stop`.
 
@@ -120,7 +134,8 @@ So each denial in this project names the next action:
 
 | Refused | Why | Where the work goes |
 |---|---|---|
-| Dispatch | Orchestrator past its context ceiling, or 40 sub-sessions used | Write a handoff holding the plan of the denied dispatch and stop; a fresh session executes it |
+| Advance a card | The card is on a review step and no reviewer was dispatched on it since it entered | Dispatch the verifier with the card id and the branch; run `agenfk verify` again with its verdict as evidence |
+| Dispatch | Orchestrator past its context ceiling, or 60 sub-sessions used | Write a handoff holding the plan of the denied dispatch and stop; a fresh session executes it |
 | Dispatch (implementation) | No orchestrator slot, session is light | Implement the card right here, without an agent |
 | Dispatch (implementation) | No orchestrator slot, session is heavy | Handoff with the implementation plan; the fresh session implements directly |
 | Dispatch (review) | No orchestrator slot | Carry on with what does not depend on the verdict; wait for `SLOT FREE` |

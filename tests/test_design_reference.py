@@ -532,17 +532,53 @@ def test_colour_that_fetches_a_url_never_reaches_the_css():
         assert sw.looks_like_color(v), v
 
 
-def timed(files, limit, flag="--css"):
+def children_cpu():
+    """CPU seconds used by finished child processes, or None where the OS does not say (Windows)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
+def sweep_took(files, limit, flag="--css"):
+    """The sweep's output, its wall-clock seconds and its CPU seconds (wall clock where there is no rusage)."""
     root = project(files)
-    t = time.monotonic()
+    t, cpu = time.monotonic(), children_cpu()
     try:
         code, out, err = run(root, flag, timeout=limit * 5)
     except subprocess.TimeoutExpired:
         raise AssertionError(f"still running after {limit * 5}s")
     took = time.monotonic() - t
+    used = children_cpu()
     assert code == 0 and "Traceback" not in err, err[-300:]
+    return out, took, (used - cpu if cpu is not None else took)
+
+
+def timed(files, limit, flag="--css"):
+    out, took, _ = sweep_took(files, limit, flag)
     assert took < limit, f"{took:.1f}s >= {limit}s"
     return out
+
+
+def scales_linearly(make, n, limit, flag="--json"):
+    """A sweep of n files fails when it hits the sweep's own time budget (MAX_SECONDS: the sweep stops and
+    says so), or when it takes more than SCALE_RATIO times the fastest of three sweeps of n/10, or `limit`
+    seconds, whichever is larger. Time is the child's CPU (wall clock on Windows, which has no rusage). A
+    wall-clock bound alone measured the runner (a Windows leg took 5.1 s against 5). Measured here: the
+    linear sweep runs 3 to 12 times its n/10, each quadratic loop #43 removed 11 to 46 times; on a heavily
+    loaded machine the quadratic sweep reaches the budget first, which is why the budget line fails too."""
+    small = min(sweep_took(_many(n // 10, make), limit, flag)[2] for _ in range(3))
+    out, _, big = sweep_took(_many(n, make), limit * 4, flag)
+    assert "the sweep stopped at the limit" not in out, (
+        f"{n} files hit the sweep's own budget ({big:.1f}s CPU where measured): slower than linear")
+    bound = max(limit, SCALE_RATIO * small)
+    assert big < bound, f"{n} files took {big:.1f}s, {n // 10} took {small:.1f}s (CPU where measured): more than {bound:.1f}s"
+    return out
+
+
+SCALE_RATIO = 15
 
 
 # 5i. A var() that points at itself k times was k**9 calls; a fan-out chain was an exponential string
@@ -696,6 +732,112 @@ def test_fifty_thousand_dependencies_are_read_fast():
     assert a["components"].count("Radix") == 1 and len(set(a["components"])) == 50_001, "no duplicate"
 
 
+# 5s. normalise_color/normalise_font stripped one prefix per pass and copied the rest: a 960 KB name of
+# repeated prefixes took 2-3 s, three such files 7 s. A name past MAX_NAME is no longer stripped.
+def test_huge_token_names_are_normalised_fast():
+    color = ":root{--" + "colors-" * 137000 + "x:#fff;--background:#fff;--foreground:#111}"
+    font = ":root{--" + "font-" * 190000 + "x: Inter, sans-serif;--background:#fff;--foreground:#111}"
+    for text in (color, font):
+        timed({f"t{i}.css": text for i in range(3)}, 2, "--json")
+    for fn, name in ((sw.normalise_color, "-default" * 120000), (sw.normalise_font, "-family" * 137000)):
+        t = time.monotonic()
+        fn(name)
+        assert time.monotonic() - t < 0.5, f"{fn.__name__} on {len(name) // 1000} KB: {time.monotonic() - t:.1f}s"
+    # Same names as before on the ordinary shapes, up to the cap.
+    for name, want in (("--color-primary", "primary"), ("--colors-primary-500", "primary"), ("--ds-bg-default", "bg"),
+                       ("--md-sys-color-on-surface", "on-surface"), ("--c-c-c-fg", "fg"), ("--base-500", "500"),
+                       ("--Palette_Text.Primary", "text-primary"), ("--" + "color-" * 32 + "accent", "accent")):
+        assert sw.normalise_color(name) == want, (name, sw.normalise_color(name))
+    for name, want in (("--font-family-display", "display"), ("--font-sans", "sans"), ("--font-family", "default"),
+                       ("--typography-body-font", "body"), ("--ds-font-mono", "mono"),
+                       ("--" + "font-" * 38 + "body", "body")):
+        assert sw.normalise_font(name) == want, (name, sw.normalise_font(name))
+    over = "--" + "color-" * 40 + "accent"
+    assert sw.normalise_color(over) == over[2:], "past MAX_NAME the name is kept whole and names no role"
+
+
+def _many(n, body):
+    return {f"p{i // 100:02d}/t{i:04d}.css": body(i) for i in range(n)}
+
+
+# 5t. roles_of copied every global token once per source, light and dark: 2000 token files of 100 tokens
+# took 16 s or more.
+def test_thousands_of_token_files_are_swept_fast():
+    out = scales_linearly(lambda i: ":root{--background:#fff;--foreground:#111;--primary:#0f766e;"
+                          + "".join(f"--x{i}-{k}:#abc;" for k in range(100)) + "} .dark{--background:#000}",
+                          2000, 5)
+    a = json.loads(out)
+    assert a["roles"]["accent"] == "#0f766e" and len(a["tokens"]) == 3 + 2000 * 100, len(a["tokens"])
+    assert a["dark"] == {"bg": "#000"}, a["dark"]
+    assert a["conflicts"] == [], a["conflicts"][:3]
+
+
+# 5u. Each conflict line was looked up in the conflicts list: 5500 files that disagree on the nine roles
+# (about 50,000 lines) took 10 s or more. A set answers the lookup; the list keeps the order.
+def test_thousands_of_conflicting_files_are_swept_fast():
+    roles = ("background", "card", "foreground", "muted-foreground", "primary", "border")
+    out = scales_linearly(lambda i: ":root{" + "".join(f"--{r}:#{(i * 9 + s) % 0xffffff:06x};"
+                                                     for s, r in enumerate(roles))
+                          + f"--font-display:D{i},serif;--font-body:B{i},sans-serif;--font-mono:M{i},monospace}}",
+                          5500, 5)
+    conflicts = json.loads(out)["conflicts"]
+    assert len(conflicts) == 9 * 5499 and len(set(conflicts)) == len(conflicts), len(conflicts)
+    assert conflicts[0].startswith("bg: p00/t0000.css says #000000, p00/t0001.css says #000009;"), conflicts[0]
+
+
+# 5v. The roles had the time budget only inside resolve(): sources of plain values never checked it, so
+# thousands of them ran past MAX_SECONDS with no "limit" line. Now the loop over the sources checks it too.
+def test_the_roles_stop_at_the_time_budget():
+    root = project({f"t{i}.css": ":root{--background:#fff;--foreground:#111;--primary:#%06x}" % i
+                    for i in range(5)})
+    calls, real = [], sw.roles_of
+
+    def slow(tokens, global_tokens):
+        calls.append(1)
+        sw._budget["deadline"] = float("-inf")   # the budget runs out during the first source
+        return real(tokens, global_tokens)
+    sw.roles_of = slow
+    try:
+        a = sw.sweep(root)
+    finally:
+        sw.roles_of = real
+    assert len(calls) == 1, f"roles_of ran for {len(calls)} sources past the budget"
+    assert any("limit" in c for c in a["conflicts"]), a["conflicts"]
+    assert sw._budget["deadline"] == float("inf"), "sweep() restores the budget it found"
+
+
+# 5w. The summary printed conflicts[:3] inside its 8 lines: a skipped file or the limit could vanish behind
+# other conflicts or behind the other lines, with no word that the --json lists more.
+def test_summary_never_hides_a_partial_sweep():
+    base = {"verdict": "project", "system": "x", "evidence": ["a.css"], "fonts": ["Inter"],
+            "dark": {"bg": "#000"}, "spec": ["DESIGN.md"], "components": ["Radix"], "storybook": True,
+            "figma": ["https://www.figma.com/file/k/x"], "roles": {"bg": "#fff", "accent": "#0f766e"}}
+    roles = [f"accent: a.css says #{i}{i}{i}, b{i}.css says #000; a.css wins (same level, the shallowest wins)"
+             for i in range(3)]
+    limit = "the sweep stopped at the limit (6000 files or 8s): run it at the root of the piece's workspace"
+    for conflicts in (["x.css skipped: TypeError"] + roles + [limit], roles + ["y.css skipped: ValueError"]):
+        out = sw.summary(dict(base, conflicts=conflicts)).splitlines()
+        assert len(out) <= 8, out
+        partial = [c for c in conflicts if "skipped" in c or c == limit]
+        for c in partial:
+            assert "Conflict: " + c + "." in out, f"{c!r} is not in the summary:\n" + "\n".join(out)
+        assert f"Conflicts: {len(conflicts)} in all, 2 shown; --json lists every one." == out[-1], out[-1]
+    # Up to three conflicts, the summary is the one it was: every line, no count.
+    out = sw.summary(dict(base, conflicts=roles[:2], spec=[], components=[], storybook=False, figma=[]))
+    assert out.splitlines()[-2:] == ["Conflict: " + c + "." for c in roles[:2]], out
+
+
+# 5x. In the ordinary trees the tests build and in this repository, no file is skipped.
+def test_no_file_is_skipped_in_ordinary_trees():
+    trees = [project(TAILWIND), project({"app/globals.css": SHADCN_GLOBALS, "components.json": "{}"}),
+             project({"tokens.css": TOKENS, "package.json": json.dumps({"name": "@acme/ui"}),
+                      "DESIGN.md": "# Acme\n- background: #fff\n"}), ROOT]
+    for root in trees:
+        a = finding(root)
+        assert not [c for c in a["conflicts"] if " skipped: " in c], (root, a["conflicts"])
+        assert "skipped" not in run(root)[1], root
+
+
 # 5g. Limits against a large repository: files and depth
 def test_file_and_depth_limits():
     many = project({f"a{i:03d}.txt": "x" for i in range(40)})
@@ -797,6 +939,21 @@ def test_skill_names_the_sweep_and_every_reference_it_points_to():
                 "references/identity-and-pieces.md", "references/quality-floor.md"):
         for ref in re.findall(r"`((?:references|scripts)/[\w.-]+)", read(os.path.join(SKILL, doc))):
             assert os.path.exists(os.path.join(SKILL, ref)), f"{doc} names {ref}, which does not exist"
+
+
+def test_build_list_is_not_swallowed_by_the_companion_subsection():
+    """The Build bullets (stack, native, cloud diagram, real content...) open section 4; the product UI
+    companion is its own ### after them, with no bullet of the Build list inside it."""
+    md = read(os.path.join(SKILL, "SKILL.md"))
+    build = re.search(r"(?ms)^## 4\. Build\n(.*?)^## 5\.", md)
+    assert build, "SKILL.md has a '## 4. Build' section followed by '## 5.'"
+    head, *subs = re.split(r"(?m)^### ", build.group(1))
+    for bullet in ("- Stack and components:", "- Native mobile:", "- A cloud or infrastructure architecture",
+                   "- Real content from the start:", "- Copy is design material:", "- CSS:", "- Browser surfaces"):
+        assert re.search(r"(?m)^" + re.escape(bullet), head), f"{bullet!r} is not in Build before any ###"
+    companion = [s for s in subs if s.startswith("Product UI execution companion\n")]
+    assert len(companion) == 1, [s.splitlines()[0] for s in subs]
+    assert not re.search(r"(?m)^- ", companion[0]), "a bullet sits under the companion subsection"
 
 
 def test_no_private_context_and_no_portuguese_prose_in_the_skill():

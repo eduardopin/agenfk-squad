@@ -105,27 +105,6 @@ To generate the complete system in DTCG + CSS/Tailwind: `sumi:tokens`.
 
 ## 4. Build
 
-### Product UI execution companion
-
-For native or responsive product UI, use the available `mobile-design-studio`
-skill as the **one** optional design companion: small implementation units,
-mobile ergonomics (touch targets, safe areas, keyboard, text scaling, back),
-state/recovery checks and platform evidence. `design-reference` remains the
-single design-direction source: reuse its approved brief, tokens and
-components; do not run a second branding/direction process or create
-duplicate token files. Read only the companion reference needed for the
-current unit. It is not the route for decks, art, posters or cloud diagrams;
-those keep their dedicated skills.
-
-Resolve the companion's directory from the selected skill's original inventory
-path, never from a generated prompt cache or an assumed `~/.claude`
-installation. If the companion is absent or manual-only, do not advertise or
-auto-load it; continue with the project method. Project skills and mandatory
-platform/Figma prerequisites (e.g. the Expo overview, React Native and Figma
-design-to-code/use) still apply; they are not optional competing design
-directions. Keep the two-design-skill ceiling: this method plus one
-companion, never an extra Sumi/UI style stack.
-
 - Stack and components: the project's. shadcn/Tailwind →
   `references/tokens-and-components.md` and the live docs through `context7`;
   a design coming from Figma → `figma:figma-design-to-code` (MCP) or the
@@ -147,6 +126,27 @@ companion, never an extra Sumi/UI style stack.
 - Browser surfaces are design too: text selection, caret, scrollbar, focus,
   underline offset, tabular numerals. Theme them from the palette — it is the
   cheapest sign that the page was *built*.
+
+### Product UI execution companion
+
+For native or responsive product UI, use the available `mobile-design-studio`
+skill as the **one** optional design companion: small implementation units,
+mobile ergonomics (touch targets, safe areas, keyboard, text scaling, back),
+state/recovery checks and platform evidence. `design-reference` remains the
+single design-direction source: reuse its approved brief, tokens and
+components; do not run a second branding/direction process or create
+duplicate token files. Read only the companion reference needed for the
+current unit. It is not the route for decks, art, posters or cloud diagrams;
+those keep their dedicated skills.
+
+Resolve the companion's directory from the selected skill's original inventory
+path, never from a generated prompt cache or an assumed `~/.claude`
+installation. If the companion is absent or manual-only, do not advertise or
+auto-load it; continue with the project method. Project skills and mandatory
+platform/Figma prerequisites (e.g. the Expo overview, React Native and Figma
+design-to-code/use) still apply; they are not optional competing design
+directions. Keep the two-design-skill ceiling: this method plus one
+companion, never an extra Sumi/UI style stack.
 
 ## 5. Quality floor (verified in the result, not in the intention)
 

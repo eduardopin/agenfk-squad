@@ -61,8 +61,9 @@ have `Bash`, which can write.
 
 *Wanted:* per-agent permission rules that allow the read-only commands each
 one needs (`git log`, `git diff`, the suite, `agenfk`, `gh pr view`) and deny
-the rest. The verifier is the hard one: it mutates code to test the tests, so
-it needs a scratch worktree it can write to and nothing else.
+the rest. The verifier is the hard one: reproducing the suite and probing the branch
+write caches and scratch files, so it needs a scratch worktree it can write
+to and nothing else.
 
 ### Internationalisation
 Everything is in English. The two regexes that read the owner's prompt accept
@@ -105,8 +106,6 @@ These need data more than code.
   interpreter path is found. See [Known limitations on
   Windows](docs/installation.md#known-limitations-on-windows).
 - `install.sh --uninstall` and `install.sh --dry-run`.
-- A `squad-watch doctor` command that checks hook registration and prints the
-  effective thresholds.
 - A report that turns `metrics.jsonl` into the table at the top of the
   README, for your own machine.
 - More tests around the session report (`session_context.py`); the suite

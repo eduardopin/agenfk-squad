@@ -174,7 +174,7 @@ ordinary request that merely contains the word ("it never opens, fix it"), a
 condition about the product ("whenever the user clicks save, call the API") or
 an instruction limited to one function, file, PR or moment does not count: the
 marker must be followed by an instruction. Diffs, logs,
-tracebacks, quoted, indented or fenced lines, prompts written by programs and
+tracebacks, quoted, indented or fenced lines, known prompts written by programs and
 prompts that announce a quote ("here is what the other agent said", "segue o
 texto da issue") are skipped. Pasted plain prose with no such announcement, such
 as a PR description or an issue body, can still trigger the line. That is why

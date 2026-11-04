@@ -197,7 +197,7 @@ QUOTING = re.compile(
     r"|\breview (?:this|the) (?:(?:pr|pull request|issue) (?:description|body|comment|text)|issue)\b"
     r"|\b(?:the other|another) (?:agent|session|claude) (?:said|wrote|says|sent|replied)\b"
     r"|\b(?:i'm|i am) (?:pasting|quoting)\b|\bpasted (?:below|here|from)\b"
-    r"|\bsegue (?:abaixo )?(?:o |a )?(?:texto|descricao|mensagem|issue|comentario|log|saida|resposta|o que)\b"
+    r"|\bsegue (?:abaixo )?(?:o |a )?(?:texto|descricao|mensagem|issue|comentario|log|saida|resposta)\b"
     r"|\b(?:o outro|outro) (?:agente|sessao) (?:disse|escreveu|mandou|falou|respondeu)\b"
     r"|\b(?:aqui esta|eis) o que\b.{1,40}?\b(?:disse|escreveu|falou|mandou)\b"
     r"|\b(?:colei|colando|copiei)\b"

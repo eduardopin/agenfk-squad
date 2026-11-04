@@ -76,6 +76,8 @@ POSITIVE_PT = [
     "Por favor, nunca use --no-verify.",
     "Quero que você sempre comente o card.",
     "Os PRs vão para a beta de agora em diante.",
+    "Segue o que decidimos.\nNunca mergeie sem review.",
+    "Segue abaixo o que quero: de agora em diante, use pnpm",
 ]
 
 NEGATIVE = [

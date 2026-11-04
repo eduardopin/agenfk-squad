@@ -123,7 +123,31 @@ def changes_state(cmd):
     return False
 
 
-def text(minutes):
+def open_goal(watch):
+    """The watcher's open goal for the session (`[squad] GOAL:`): not blocked, not let go."""
+    g = (watch or {}).get("goal")
+    return g if isinstance(g, dict) and not g.get("blocked") and not g.get("released") else None
+
+
+def goal_line(goal):
+    """One line: the goal, and the fan-out order when its cards should be running in parallel."""
+    line = f"The open goal: \"{str(goal.get('text') or '')[:300]}\"."
+    try:
+        import importlib.util
+        here = os.path.dirname(os.path.realpath(__file__))
+        spec = importlib.util.spec_from_file_location(
+            "squad_fleet", os.path.join(os.path.dirname(here), "skills", "architect", "scripts", "fleet.py"))
+        fleet = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fleet)
+        leaves = fleet.open_leaves(goal.get("cards") or [], os.environ.get("SQUAD_AGENFK") or "agenfk", 6)
+        if fleet.verdict(goal, leaves, 0) == "FAN OUT":
+            line += " " + fleet.fan_out_order(goal, leaves)
+    except Exception:
+        pass
+    return line
+
+
+def text(minutes, extra=""):
     # One line. No "handoff", "pause", "/clear", "pickup", "you can stop", "for today":
     # squad-watch reads the prompt and must not take it for the owner asking to stop
     # (it also skips this prefix; tests/test_wake.py checks both).
@@ -135,7 +159,7 @@ def text(minutes):
             "call you back on its own (the merge turn, a live background command), say in one line what you "
             "are waiting for and stop. Only stop for good by ending with one of these lines: "
             "`[squad] BLOCKED: <what only the owner can do>` or "
-            "`[squad] END: <why nothing is left that you can do>`.")
+            "`[squad] END: <why nothing is left that you can do>`." + (" " + extra if extra else ""))
 
 
 def log(pane, msg):
@@ -420,7 +444,10 @@ def decide(a, now, dry_run=False):
         return "reswitch", f"switch stuck for {int((now - ref) // 60)} min: redoing it", ctx
     if watch.get("ctx_level", 0) >= 2:
         return "none", "handoff with the watcher", ctx
-    if quiet > AGE:
+    goal = open_goal(watch)
+    if goal:
+        ctx["goal_line"] = goal_line(goal)
+    if quiet > AGE and not goal:
         return "none", f"idle for {int(quiet // 3600)} h: old conversation", ctx
     asked, reply = last_reply(tr)
     if not asked:
@@ -461,7 +488,7 @@ def wake(ctx):
     before = dict(st)
     st.update(n=int(st.get("n") or 0) + 1, ts=time.time(), size=os.path.getsize(ctx["tr"]))
     save(ctx["path"], st)                 # counted before sending: a full disk does not become a wake loop
-    rc, _ = herdr("agent", "prompt", pane, text(int(ctx["quiet"] // 60)))
+    rc, _ = herdr("agent", "prompt", pane, text(int(ctx["quiet"] // 60), ctx.get("goal_line", "")))
     if rc != 0:
         save(ctx["path"], before)
         log(pane, f"{sid[:8]} gave up: the prompt failed")

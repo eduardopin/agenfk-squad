@@ -195,7 +195,7 @@ def test_opening_a_goal_with_parallel_cards_orders_the_fan_out():
     h = W.home()
     s = Session(h, fake_agenfk(h))
     out = s.owner(f"[squad] GOAL: ship checkout, epic {EPIC}")
-    ctx = (json.loads(out).get("hookSpecificOutput") or {}).get("additionalContext", "") if out else ""
+    ctx = out                             # UserPromptSubmit context is plain stdout (emit())
     assert "FAN OUT" in ctx and T1 in ctx and S3 in ctx, out
     assert "parallel-plan" in ctx and "fanout.py" in ctx, ctx
 

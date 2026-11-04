@@ -2002,6 +2002,38 @@ def wake_lib():
     return mod
 
 
+def fleet_lib():
+    """skills/architect/scripts/fleet.py, loaded by path; None on any failure (no fan-out, never a broken hook)."""
+    try:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                            "skills", "architect", "scripts", "fleet.py")
+        spec = importlib.util.spec_from_file_location("squad_fleet", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def fan_out(goal, session):
+    """The FAN OUT order for a goal with AgEnFK cards, or "": two or more open cards and
+    nothing running in parallel. Bounded to 6 s for AgEnFK so the hook keeps its timeout."""
+    if not isinstance(goal, dict) or not goal.get("cards"):
+        return ""
+    try:
+        fleet = fleet_lib()
+        if fleet is None:
+            return ""
+        leaves = fleet.open_leaves(goal["cards"], AGENFK, deadline=6)
+        subs = fleet.live_subs(session, STATE)
+        if fleet.verdict(goal, leaves, subs) != "FAN OUT":
+            return ""
+        return fleet.fan_out_order(goal, leaves)
+    except Exception:
+        return ""
+
+
 def goal_text(text):
     return "".join(c for c in str(text) if c.isprintable()).strip()[:400]
 
@@ -2062,6 +2094,9 @@ def carry_prompt(st, text, session=""):
     m = GOAL.search(text)
     if m:
         st["goal"] = new_goal(m.group(1), "owner")
+        order = fan_out(st["goal"], session)
+        if order:
+            st.setdefault("pending", []).append(order)
         return
     g = st.get("goal")
     if not isinstance(g, dict):
@@ -2263,8 +2298,10 @@ def carry_on(p, path, st):
     what = (f"The goal: \"{goal['text']}\". " if goal.get("text") else
             "Your last reply hands the delivery back (a next step, an offer, or waiting for the owner): "
             "that work is yours. ")
+    order = fan_out(goal, session)
     print(json.dumps({"decision": "block", "reason": (
-        "[squad-watch] CARRY ON: the delivery is not finished. " + what +
+        "[squad-watch] CARRY ON" + (" + FAN OUT" if order else "") + ": the delivery is not finished. " +
+        (order + " " if order else "") + what +
         "Do the next step now instead of stopping or offering it: nobody reads this pane between "
         "milestones. Take the next card through its flow, and dispatch parallel fronts where the files are "
         "disjoint. " + CARRY_EXITS + f" (hold {goal['holds']} of {CARRY_CAP}; {CARRY_MAX} stops in a row "

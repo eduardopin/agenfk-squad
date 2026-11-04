@@ -438,6 +438,30 @@ The idea follows two public Stop hooks: [claude-goal](https://github.com/jthack/
 [taskmaster](https://github.com/levi-openclaw/taskmaster) (the transcript is
 re-read for unfinished work). Both are MIT; no code was taken from them.
 
+## Fanning a goal out
+
+Parallel is the default. A `[squad] GOAL:` that names AgEnFK cards is read when it
+opens and on each CARRY ON hold: the open cards at the bottom of the goal's tree
+(`open_leaves`) against the sub-sessions of that session touched in the last 10
+minutes (`live_subs`). With two or more open cards and nothing running the verdict
+is FAN OUT, and the watcher says so: on the UserPromptSubmit that opened the goal,
+and as `[squad-watch] CARRY ON + FAN OUT:` on a hold, ahead of the usual exits.
+The order names the cards, tells the session to run parallel-plan's waves and
+dispatch wave 1 in one message (at most 6 fronts, one worktree each). AgEnFK gets 6
+seconds at most, and any failure (no AgEnFK, no `fleet.py`) means no order, never a
+broken hook. Implicit goals carry no cards and are never fanned out; a BLOCKED or
+released goal is not either.
+
+- `skills/architect/scripts/fleet.py [--json]` is the survey: one row per live main
+  session with its goal, open cards, running sub-sessions and verdict.
+- `skills/architect/scripts/fanout.py --card <id> --worktree <path>` is for a card
+  that will not fit a sub-agent (over about 120k of context): it opens the card in
+  its own herdr tab, starts Claude there and hands it the goal. Outside herdr it
+  prints how to do that by hand.
+- squad-wake wakes an idle session whose goal is still open once it is past
+  `SQUAD_WAKE_AGE`, instead of leaving it as an old conversation, and the wake text
+  carries the goal and the FAN OUT order.
+
 ## Compacting before the cache goes cold
 
 A session that stopped with a large context still has its prompt cache warm

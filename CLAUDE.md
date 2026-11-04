@@ -33,6 +33,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
    (session → worktree → branch → card), the table of fronts and the path of each
    worktree. One `developer`/`frontend` per card, in the same message, each
    in its own worktree. Ceiling ~6 fronts. Same file in two fronts = run them in series.
+   Parallel is the default: the watcher orders FAN OUT for a goal with 2+ open cards and nothing running.
 4. **Whoever writes does not approve.** REVIEW, ADVERSARIAL and VERIFY go to the
    `verifier` in a clean context: pass the card and the branch, not the
    implementer's narrative. FIX_FIRST/REJECT goes back to whoever implemented, at most 2

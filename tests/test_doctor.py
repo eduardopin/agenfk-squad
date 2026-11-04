@@ -12,16 +12,19 @@ import ast
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.name == "nt":
     print("skipped: the doctor test drives install.sh and POSIX stubs; Windows installs with install.ps1")
     sys.exit(0)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+sys.dont_write_bytecode = True
 import squad_doctor as doc  # noqa: E402
 
 DOCTOR = os.path.join(ROOT, "scripts", "squad_doctor.py")
@@ -254,6 +257,205 @@ def test_the_project_is_found_from_a_subdirectory():
     os.makedirs(sub)
     _, checks = as_json(doctor(base, home, config, "--json", "--project", sub))
     assert checks["project"]["status"] == doc.OK and "p-1" in checks["project"]["summary"]
+
+
+# ---------------------------------------------------------------- round 1 of review
+
+def edit_settings(config, change):
+    path = os.path.join(config, "settings.json")
+    with open(path, encoding="utf-8") as fh:
+        settings = json.load(fh)
+    change(settings)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(settings, fh)
+
+
+def test_a_matcher_that_is_not_a_string_is_a_malformed_entry_not_a_crash():
+    base, home, config = wired()
+
+    def five(settings):
+        for g in settings["hooks"]["PreToolUse"]:
+            g["matcher"] = 5
+    edit_settings(config, five)
+    data, checks = as_json(doctor(base, home, config, "--json"))
+    hooks = checks["hooks"]
+    assert "the check itself failed" not in hooks["summary"], hooks
+    bad = {i["name"]: i for i in hooks["items"]}["squad-watch.py on PreToolUse"]
+    assert bad["status"] == doc.FAIL and "malformed" in bad["detail"] and "5" in bad["detail"], bad
+    assert data["exit"] == 1
+
+
+def test_a_clamped_threshold_shows_the_value_the_watcher_uses():
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_CTX_PCT": "500"})}
+    pct = by["SQUAD_CTX_PCT"]
+    assert pct["status"] == doc.WARN and pct["effective"] == 100 and "uses 100" in pct["detail"], pct
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_CTX_PCT": "3"})}
+    assert by["SQUAD_CTX_PCT"]["status"] == doc.WARN and by["SQUAD_CTX_PCT"]["effective"] == 10
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_CTX_PCT": "75"})}
+    assert by["SQUAD_CTX_PCT"]["status"] == doc.OK and by["SQUAD_CTX_PCT"]["effective"] == 75
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_CTX_PCT": "lots"})}
+    assert by["SQUAD_CTX_PCT"]["status"] == doc.WARN and by["SQUAD_CTX_PCT"]["effective"] == 90
+
+
+def test_squad_window_zero_reads_as_auto():
+    for environ in ({}, {"SQUAD_WINDOW": "0"}):
+        window = {i["name"]: i for i in doc.watcher_env(environ=environ)}["SQUAD_WINDOW"]
+        assert window["status"] == doc.OK and "auto" in window["detail"], window
+    window = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_WINDOW": "200000"})}["SQUAD_WINDOW"]
+    assert "auto" not in window["detail"].split(";")[0] and window["effective"] == 200000, window
+
+
+def test_the_kill_switches_warn_that_the_watcher_is_off():
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_WATCH": "0", "SQUAD_TURN": "0"})}
+    assert by["SQUAD_WATCH"]["status"] == doc.WARN and "watcher disabled" in by["SQUAD_WATCH"]["detail"]
+    assert by["SQUAD_TURN"]["status"] == doc.WARN and "disabled" in by["SQUAD_TURN"]["detail"]
+    check = doc.check_thresholds(environ={"SQUAD_WATCH": "0"})
+    assert check["status"] == doc.WARN and "SQUAD_WATCH" in check["fix"], check
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_WATCH": "1"})}
+    assert by["SQUAD_WATCH"]["status"] == doc.OK
+
+
+def test_the_doctor_writes_no_bytecode_even_without_dash_b():
+    clone = os.path.join(tempfile.mkdtemp(dir=TMP), "clone")
+    for rel in ("scripts/squad_doctor.py", "scripts/squad_settings.py", "hooks/manifest.json",
+                "hooks/squad-watch.py"):
+        os.makedirs(os.path.dirname(os.path.join(clone, rel)), exist_ok=True)
+        shutil.copy(os.path.join(ROOT, rel), os.path.join(clone, rel))
+    env = {"HOME": clone, "PATH": "/usr/bin:/bin"}            # no PYTHONDONTWRITEBYTECODE, no -B
+    r = subprocess.run([sys.executable, os.path.join(clone, "scripts", "squad_doctor.py"), "--json",
+                        "--config", os.path.join(clone, "config")], cwd=clone, env=env, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", timeout=120)
+    assert r.returncode in (0, 1) and json.loads(r.stdout)["checks"], r.stdout + r.stderr
+    written = [os.path.join(d, f) for d, _, fs in os.walk(clone) for f in fs if f.endswith(".pyc")]
+    assert written == [] and not os.path.exists(os.path.join(clone, "scripts", "__pycache__")), written
+
+
+def test_fix_commands_quote_paths_with_spaces():
+    spaced = os.path.join(tempfile.mkdtemp(dir=TMP), "a dir")
+    config, root, home = (os.path.join(spaced, n) for n in ("con fig", "clo ne", "ho me"))
+    for d in (config, root, home):
+        os.makedirs(d)
+    hooks = doc.check_hooks(config)
+    assert hooks["status"] == doc.FAIL
+    assert shlex.split(hooks["fix"]) == ["python3", os.path.join(doc.ROOT, "scripts", "squad_settings.py"),
+                                         "install", "--config", config], hooks["fix"]
+    installer = os.path.join(root, "install.sh")
+    links = doc.check_links(config, root=root)
+    assert links["status"] == doc.FAIL and shlex.split(links["fix"].split(" (")[0]) == ["run", installer], links
+    turn = doc.check_squad_turn(which=lambda _: None, root=root, home=home)
+    assert shlex.split(turn["fix"]) == ["run", installer], turn
+
+
+def test_agenfk_exiting_1_without_a_failed_line_quotes_its_first_line():
+    bin_dir = os.path.join(tempfile.mkdtemp(dir=TMP), "bin")
+    exe = stub(bin_dir, "agenfk", 'echo; echo "  Server unreachable at localhost:3000  "; echo more; exit 1')
+    check = doc.check_agenfk(which=lambda _: exe)
+    assert check["status"] == doc.WARN and check["summary"].endswith(": Server unreachable at localhost:3000"), check
+    exe = stub(bin_dir, "agenfk", 'echo "token expired" >&2; exit 1')
+    assert doc.check_agenfk(which=lambda _: exe)["summary"].endswith(": token expired")
+
+
+def test_agenfk_that_cannot_start_or_hangs_warns_and_names_why():
+    bin_dir = os.path.join(tempfile.mkdtemp(dir=TMP), "bin")
+    broken = os.path.join(bin_dir, "agenfk-broken")
+    os.makedirs(bin_dir)
+    with open(broken, "w", encoding="utf-8") as fh:
+        fh.write("#!/nonexistent/interpreter\n")
+    os.chmod(broken, 0o755)
+    check = doc.check_agenfk(which=lambda _: broken)
+    assert check["status"] == doc.WARN and "did not answer" in check["summary"], check
+    assert "Error" in check["summary"] and check["fix"], check
+    slow = stub(bin_dir, "agenfk", "exec sleep 5")
+    start = time.monotonic()
+    check = doc.check_agenfk(which=lambda _: slow, timeout=0.3)
+    assert time.monotonic() - start < 3, "the timeout did not cut the call"
+    assert check["status"] == doc.WARN and "TimeoutExpired" in check["summary"], check
+
+
+def test_a_dangling_squad_turn_link_on_path_is_named_as_dangling():
+    base, home, config = wired()
+    local = os.path.join(home, ".local", "bin", "squad-turn")
+    os.unlink(local)
+    os.symlink(os.path.join(base, "gone", "squad-turn.py"), local)
+    _, checks = as_json(doctor(base, home, config, "--json"))      # ~/.local/bin is the whole PATH
+    turn = checks["squad-turn"]
+    assert turn["status"] == doc.FAIL and "dangling" in turn["summary"], turn
+    assert "not on PATH" not in turn["summary"] and "install.sh" in turn["fix"], turn
+
+
+def test_a_project_json_without_a_project_id_or_of_an_odd_shape_warns():
+    for body in ("{}", '{"projectId": null}', '{"projectId": ""}', '{"projectId": "  "}', '{"projectId": 5}',
+                 "[]", '"p-1"', "{ not json", ""):
+        d = tempfile.mkdtemp(dir=TMP)
+        os.makedirs(os.path.join(d, ".agenfk"))
+        with open(os.path.join(d, ".agenfk", "project.json"), "w", encoding="utf-8") as fh:
+            fh.write(body)
+        check = doc.check_project(d)
+        assert check["status"] == doc.WARN and check["fix"], (body, check)
+
+
+def test_an_ascii_stdout_still_prints_a_non_ascii_path():
+    base, home, config = wired()
+    other = os.path.join(base, "cônfig")
+    r = doctor(base, home, config, "--config", other, extra={"PYTHONIOENCODING": "ascii"})
+    assert "Traceback" not in r.stderr and r.returncode == 1, r.stderr
+    assert "c?nfig" in r.stdout, r.stdout
+
+
+def test_a_settings_json_in_a_symlink_loop_is_unreadable():
+    base, home, config = wired()
+    path = os.path.join(config, "settings.json")
+    os.unlink(path)
+    os.symlink("settings.json", path)
+    _, checks = as_json(doctor(base, home, config, "--json"))
+    hooks = checks["hooks"]
+    assert hooks["status"] == doc.FAIL and "cannot read" in hooks["summary"] and hooks["items"] == [], hooks
+
+
+# ---------------------------------------------------------------- branches nothing pinned yet
+
+def test_vendored_skills_are_expected_as_links_and_vendor_itself_is_not():
+    root = tempfile.mkdtemp(dir=TMP)
+    for rel in ("agents/x.md", "CLAUDE.md", "skills/a/SKILL.md", "skills/no-doc/notes.md",
+                "skills/vendor/SKILL.md", "skills/vendor/b/SKILL.md", "skills/vendor/c/notes.md"):
+        os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+        open(os.path.join(root, rel), "w").close()
+    config = os.path.join(root, "config")
+    links = {name: (src, dst) for kind, name, src, dst in doc.expected_links(root, config) if kind == "skill"}
+    assert sorted(links) == ["a", "b"], links
+    assert links["b"] == (os.path.join(root, "skills", "vendor", "b"), os.path.join(config, "skills", "b"))
+    vendored = {os.path.basename(os.path.dirname(p))
+                for p in __import__("glob").glob(os.path.join(ROOT, "skills", "vendor", "*", "SKILL.md"))}
+    real = {name for kind, name, _, _ in doc.expected_links(ROOT, config) if kind == "skill"}
+    assert vendored <= real, vendored - real
+
+
+def test_an_old_python_fails():
+    old = doc.check_python((3, 9, 18))
+    assert old["status"] == doc.FAIL and "3.9.18" in old["summary"] and old["fix"], old
+    assert doc.check_python((3, 10, 0))["status"] == doc.OK
+
+
+def test_the_config_flag_wins_over_claude_config_dir():
+    base, home, config = wired()
+    empty = os.path.join(base, "empty-config")
+    os.makedirs(empty)
+    data, checks = as_json(doctor(base, home, empty, "--json", "--config", config))
+    assert data["config"] == config and checks["links"]["status"] == doc.OK, data
+    assert checks["hooks"]["status"] == doc.OK
+    data, checks = as_json(doctor(base, home, empty, "--json"))
+    assert data["config"] == empty and checks["links"]["status"] == doc.FAIL
+
+
+def test_no_settings_json_fails_every_hook_and_creates_nothing():
+    base, home, config = wired()
+    path = os.path.join(config, "settings.json")
+    os.unlink(path)
+    data, checks = as_json(doctor(base, home, config, "--json"))
+    hooks = checks["hooks"]
+    assert hooks["status"] == doc.FAIL and hooks["items"], hooks
+    assert all(i["status"] == doc.FAIL and "not registered" in i["detail"] for i in hooks["items"]), hooks
+    assert not os.path.lexists(path) and data["exit"] == 1
 
 
 if __name__ == "__main__":

@@ -136,7 +136,9 @@ restart.
 | `handoffs/<session>-compact.md` | watcher | The minimal handoff written before a `/compact` or an auto-compact |
 | `handoffs/<session>-<hash>.md` | watcher | The read-only, hash-checked copy handed to the pickup |
 | `turn/<repo-hash>.json` | watcher | Per repository: who holds the merge turn, since when, the queue |
+| `reviews/<card>.json` | watcher | Per card: the reviewer dispatches the review gate counts, and the owner's one override. Deleting it means the card needs a reviewer again |
 | `metrics.jsonl` | watcher | One line per finished sub-session |
+| `review-gate.jsonl` | watcher | One line per review-gate denial, fail-open pass and owner override; stops growing at 200 KB |
 | `switches.log` | `squad-switch.py` | Each step of every session switch, and why it gave up when it did |
 | `watch-errors.log` | watcher | Exceptions swallowed by the fail-open wrapper |
 

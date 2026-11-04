@@ -140,6 +140,101 @@ def test_dot_dot_traversal_is_not_allowed():
     assert allowed(ask(h, "Write", os.path.join(h, "proj", "src", "..", ".claude", "handoffs", "a.md")))
 
 
+def test_a_new_file_must_be_a_plain_file_inside_the_project():
+    h = tmp()
+    proj = os.path.join(h, "proj")
+    os.makedirs(proj)
+    assert allowed(ask(h, "Write", os.path.join(proj, "src", "notes.md"), cwd=proj))
+    refused = [".github/workflows/x.yml", ".vscode/tasks.json", ".husky/pre-commit", ".devcontainer/d.json",
+               ".claude/notes.md", ".pre-commit-config.yaml", "src/.hidden", "Makefile", "GNUmakefile", "Justfile",
+               "Dockerfile", "Dockerfile.dev", "run.sh", "src/RUN.SH", "package.json", "pyproject.toml", "setup.py",
+               "setup.cfg", "conftest.py", "tests/conftest.py", "x.pth", ".envrc", ".bashrc", ".zprofile",
+               "CLAUDE.local.md", "AGENTS.override.md"]
+    for rel in refused:
+        assert ask(h, "Write", os.path.join(proj, *rel.split("/")), cwd=proj) == "", rel
+
+
+def test_a_new_file_outside_the_project_is_not_allowed():
+    h = tmp()
+    proj = os.path.join(h, "proj")
+    os.makedirs(proj)
+    elsewhere = tmp()
+    for p in (os.path.join(h, ".newrc"), os.path.join(h, "other.txt"), os.path.join(elsewhere, "x.txt")):
+        assert ask(h, "Write", p, cwd=proj) == "", p
+
+
+def test_the_project_is_the_git_toplevel_of_the_cwd():
+    h = tmp()
+    proj = os.path.join(h, "proj")
+    os.makedirs(os.path.join(proj, "sub"))
+    subprocess.run(["git", "init", "-q", proj], check=True, capture_output=True)
+    assert allowed(ask(h, "Write", os.path.join(proj, "top.md"), cwd=os.path.join(proj, "sub")))
+    assert ask(h, "Write", os.path.join(h, "beside.md"), cwd=os.path.join(proj, "sub")) == ""
+
+
+def test_the_squad_folders_outside_the_project_are_still_allowed():
+    h = tmp()
+    proj = os.path.join(h, "proj")
+    os.makedirs(proj)
+    other = tmp()
+    assert allowed(ask(h, "Write", os.path.join(other, ".claude", "handoffs", "a.md"), cwd=proj))
+    assert allowed(ask(h, "Write", os.path.join(h, ".claude", "squad", "n.md"), cwd=proj))
+    assert allowed(ask(h, "Write", os.path.join(proj, "docs", "architect", "p.md"), cwd=proj))
+    assert ask(h, "Write", os.path.join(other, "docs", "architect", "p.md"), cwd=proj) == ""
+
+
+def test_a_symlink_to_the_squad_source_or_to_the_claude_folder_is_not_allowed():
+    h = tmp()
+    proj = os.path.join(h, "proj")
+    os.makedirs(proj)
+    os.makedirs(os.path.join(h, ".claude"))
+    os.symlink(ROOT, os.path.join(proj, "squad"))
+    os.symlink(os.path.join(h, ".claude"), os.path.join(proj, "cfg"))
+    for rel in ("squad/new.md", "squad/docs/new.md", "cfg/new.txt", "cfg/agents/a.md"):
+        assert ask(h, "Write", os.path.join(proj, *rel.split("/")), cwd=proj) == "", rel
+    assert ask(h, "Write", os.path.join(ROOT, "docs", "new-file.md"), cwd=proj) == ""
+
+
+def test_a_literal_path_through_a_link_named_like_a_denied_folder_is_not_allowed():
+    h = tmp()
+    proj = os.path.join(h, "proj")
+    os.makedirs(os.path.join(proj, "plain"))
+    os.symlink(os.path.join(proj, "plain"), os.path.join(proj, "hooks"))
+    os.symlink(os.path.join(proj, "plain"), os.path.join(proj, ".git"))
+    os.symlink(os.path.join(proj, "plain"), os.path.join(proj, ".ssh"))
+    for d in ("hooks", ".git", ".ssh"):
+        assert ask(h, "Write", os.path.join(proj, d, "new.txt"), cwd=proj) == "", d
+    assert allowed(ask(h, "Write", os.path.join(proj, "plain", "new.txt"), cwd=proj))
+
+
+def test_case_variants_of_denied_names_are_not_allowed():
+    h = tmp()
+    proj = os.path.join(h, "proj")
+    os.makedirs(proj)
+    for rel in ("Hooks/x.py", "SETTINGS.json", "Settings.Local.JSON", ".Git/config", ".ENV", "Id_RSA", "x.PEM",
+                ".Claude/Agents/a.md", ".claude/SKILLS/s.md", ".AWS/c"):
+        assert ask(h, "Write", os.path.join(proj, *rel.split("/")), cwd=proj) == "", rel
+    touch(os.path.join(proj, ".claude", "handoffs", "A.md"))
+    assert ask(h, "Write", os.path.join(proj, ".Claude", "Agents", "a.md"), cwd=proj) == ""
+
+
+def test_claude_config_dir_is_guarded_like_the_claude_folder():
+    h = tmp()
+    cfg = os.path.join(h, "cfgdir")
+    env = {"CLAUDE_CONFIG_DIR": cfg}
+    for rel in ("agents/a.md", "skills/s/SKILL.md", "commands/c.md", "plugins/p.md", "keybindings.json",
+                "hooks/x.py"):
+        assert ask(h, "Write", os.path.join(cfg, *rel.split("/")), cwd=h, env=env) == "", rel
+    assert allowed(ask(h, "Write", os.path.join(cfg, "squad", "n.md"), cwd=h, env=env))
+
+
+def test_the_squad_source_tree_is_never_allowed():
+    h = tmp()
+    for rel in ("hooks/new.py", "agents/new.md", "skills/new/x.md", "scripts/new.py", "install-new.sh", "notes.md"):
+        assert ask(h, "Write", os.path.join(ROOT, *rel.split("/")), cwd=ROOT) == "", rel
+        assert ask(h, "Write", os.path.join(ROOT, *rel.split("/")), cwd=h) == "", rel
+
+
 def test_other_tools_print_nothing():
     h = tmp()
     p = os.path.join(h, "proj", "new.md")

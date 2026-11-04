@@ -17,12 +17,22 @@ At the due time it compacts only if all of this still holds:
   1. the job is still this one (every Stop reschedules; the old process leaves on its own);
   2. the transcript has no new request (the cache was renewed);
   3. the pane hosts the same session, idle (idle or done);
-  4. no switch in progress (claim or scheduled wait), no ordered handoff and no
-     request from the owner to stop, in the watcher's state;
-  5. the job's text is one line starting with /compact.
+  4. no switch in progress (claim, scheduled wait or switched), no ordered
+     handoff, no request from the owner to stop and no earlier /compact that
+     arrived as a message, in the watcher's state; and that state exists and is
+     readable (missing or corrupt is doubt);
+  5. the job's text is one line starting with /compact, at most LIMIT
+     characters (above 800 Claude Code pastes the prompt and the /compact
+     becomes an ordinary message);
+  6. the transcript is readable (without it the compaction cannot be confirmed).
 Before sending, it records compact/<session>.sent (request id and time): the
 watcher's PreCompact reads it to label the handoff as a compaction the watcher
 ordered, and the watcher does not schedule a second one for the same request.
+Once sent, it counts as compacted only when a manual compact_boundary shows up
+in the transcript after the point of sending (within SQUAD_COMPACT_CONFIRM s,
+600). If the watcher saw the text arrive at UserPromptSubmit, it was a message,
+not a command: a failure. When it did not compact, the .sent record goes; the
+job goes whenever it ends, unless a newer Stop already rescheduled it.
 Every decision goes to ~/.claude/squad/compactions.log. Any doubt = do not compact.
 """
 import json
@@ -41,7 +51,18 @@ CLAIMS = os.path.join(BASE, "switches")
 HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
 LOG = os.path.join(BASE, "compactions.log")
 STEP = 30              # seconds between checks of the job while waiting
-MAX_TEXT = 4000        # the /compact text is one prompt line; a longer one is not the watcher's
+LIMIT = 760            # same ceiling as COMPACT_LIMIT in squad-watch.py, in UTF-16 units: margin over the
+                       # measured paste limit (800), in case an accent is counted in bytes
+
+
+def env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+CONFIRM = env_int("SQUAD_COMPACT_CONFIRM", 600)   # s waiting for the manual compact_boundary
 
 
 def log(pane, msg):
@@ -58,6 +79,16 @@ def load(path):
             return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def state(path):
+    """The watcher's state, or None when missing, corrupt or not a dict: doubt."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
 
 
 def load_job(path):
@@ -125,14 +156,79 @@ def last_request(transcript):
     return ""
 
 
+def size(transcript):
+    """Bytes in the transcript now, or None when it cannot be read."""
+    try:
+        with open(transcript, "rb") as fh:
+            fh.seek(0, 2)
+            return fh.tell()
+    except (OSError, ValueError):
+        return None
+
+
+def manual_boundary(transcript, since):
+    """Is there a compact_boundary with the manual trigger written after `since` bytes?"""
+    try:
+        with open(transcript, "rb") as fh:
+            fh.seek(since)
+            new = fh.read()
+    except (OSError, ValueError):
+        return False
+    for raw in new.split(b"\n"):
+        if b"compact_boundary" not in raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or rec.get("subtype") != "compact_boundary":
+            continue
+        meta = rec.get("compactMetadata")
+        if isinstance(meta, dict) and meta.get("trigger") == "manual":
+            return True
+    return False
+
+
+def confirm(transcript, st_path, since, sent_at):
+    """Waits for the proof that /compact ran as a command: 'ok', 'message' (the
+    watcher saw the text at UserPromptSubmit) or 'none' (nothing in time)."""
+    end = time.time() + CONFIRM
+    while True:
+        if manual_boundary(transcript, since):
+            return "ok"
+        mark = (state(st_path) or {}).get("compact_as_text")
+        if isinstance(mark, (int, float)) and mark >= sent_at:
+            return "message"
+        if time.time() >= end:
+            return "none"
+        time.sleep(1)
+
+
+def u16(text):
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
 def job_path_ok(path):
     return (os.path.dirname(os.path.abspath(path)) == os.path.abspath(JOBS)
             and re.fullmatch(r"[A-Za-z0-9_-]+\.json", os.path.basename(path)) is not None)
 
 
 def text_ok(text):
-    return (text.startswith("/compact ") and len(text) <= MAX_TEXT
+    return (text.startswith("/compact ") and u16(text) <= LIMIT
             and not any(ord(c) < 32 or ord(c) == 127 for c in text))
+
+
+def drop(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def drop_job(jpath, req):
+    """Removes the job unless a newer Stop already rescheduled it: that one is not ours."""
+    if load_job(jpath).get("req") == req:
+        drop(jpath)
 
 
 def mark_sent(session, req, job):
@@ -170,15 +266,22 @@ def main():
     if job.get("req") != req:
         return 0
     why = ""
-    if last_request(str(job.get("transcript") or "")) != req:
+    transcript = str(job.get("transcript") or "")
+    since = size(transcript)
+    if since is None:
+        why = "transcript unreadable: the compaction could not be confirmed"
+    elif last_request(transcript) != req:
         why = "the session moved on after it was scheduled (cache renewed)"
     sid, status = agent(pane) if not why else ("", "")
     if not why and sid != session:
         why = f"pane hosts session {sid[:8] or '?'}, expected {session[:8]}"
     elif not why and status not in ("idle", "done"):
         why = f"session is {status or '?'}"
-    st = load(os.path.join(STATE, f"{session}.main.json"))
-    if not why:
+    st_path = os.path.join(STATE, f"{session}.main.json")
+    st = state(st_path)
+    if not why and st is None:
+        why = "watcher state missing or unreadable"
+    elif not why:
         try:
             busy = (int(st.get("ctx_level") or 0) >= 2 or st.get("switched")
                     or float(st.get("switch_wait") or 0) > time.time()
@@ -189,32 +292,37 @@ def main():
             why = "session at handoff or switching"
         elif st.get("asked_stop"):
             why = "the owner asked to stop"
+        elif st.get("compact_as_text"):
+            why = "a /compact already arrived as a message in this session"
     text = str(job.get("text") or "")
     if not why and not text_ok(text):
-        why = "job without a one-line /compact text"
+        why = f"job without a one-line /compact text of at most {LIMIT} characters"
     if why:
         log(pane, f"{session[:8]} not compacted: {why}")
+        drop_job(jpath, req)
         return 1
     marker = mark_sent(session, req, job)
+    sent_at = time.time()
     rc, _ = herdr("agent", "prompt", pane, text)
     try:
         ctx, ttl = int(job.get("ctx") or 0), int(job.get("ttl") or 0)
     except (TypeError, ValueError):
         ctx, ttl = 0, 0
-    if rc == 0:
-        log(pane, f"{session[:8]} /compact sent ({ctx // 1000}k of context, {ttl // 60} min cache)")
+    if rc != 0:
+        log(pane, f"{session[:8]} not compacted: /compact not accepted by herdr")
+        result = "refused"
     else:
-        log(pane, f"{session[:8]} /compact not accepted")
-        if marker:
-            try:
-                os.remove(marker)                  # not sent: the next Stop may schedule it again
-            except OSError:
-                pass
-    try:
-        os.remove(jpath)
-    except OSError:
-        pass
-    return 0 if rc == 0 else 1
+        log(pane, f"{session[:8]} /compact sent ({ctx // 1000}k of context, {ttl // 60} min cache); "
+                  f"{u16(text)} characters, waiting for a manual compact_boundary")
+        result = confirm(transcript, st_path, since, sent_at)
+        log(pane, f"{session[:8]} " + {
+            "ok": "compacted: manual compact_boundary in the transcript",
+            "message": "not compacted: the /compact arrived as a message (UserPromptSubmit), not as a command",
+            "none": f"not compacted: no manual compact_boundary within {CONFIRM} s of sending"}[result])
+    if result != "ok" and marker:
+        drop(marker)                               # not compacted: the record must not label or block anything
+    drop_job(jpath, req)
+    return 0 if result == "ok" else 1
 
 
 if __name__ == "__main__":

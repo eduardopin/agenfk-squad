@@ -68,7 +68,8 @@ def run(h, event, sid, transcript, extra=None, env=None):
 
 def fake_herdr(h, sid):
     """`agent get` returns the pane's session (pane-session) and status (pane-status, idle by
-    default); `agent prompt` logs the text to pane-prompts, or fails while prompt-fail exists."""
+    default); `agent prompt` logs the text to pane-prompts, or fails while prompt-fail exists.
+    What Claude Code does with a /compact is set by compact_mode()."""
     cur, sent = os.path.join(h, "pane-session"), os.path.join(h, "pane-prompts")
     with open(cur, "w") as fh:
         fh.write(sid)
@@ -88,9 +89,43 @@ elif a[:2] == ["agent", "prompt"]:
     if os.path.exists({os.path.join(h, "prompt-fail")!r}):
         sys.exit(1)
     open({sent!r}, "a").write(a[3] + "\\n")
+    try:
+        mode = json.load(open({os.path.join(h, "compact-mode")!r}))
+    except (OSError, ValueError):
+        mode = {{}}
+    if a[3].startswith("/compact") and mode.get("mode") in ("boundary", "auto"):
+        open(mode["transcript"], "a").write(json.dumps({{"type": "system", "subtype": "compact_boundary",
+            "compactMetadata": {{"trigger": "manual" if mode["mode"] == "boundary" else "auto"}}}}) + "\\n")
+    elif a[3].startswith("/compact") and mode.get("mode") == "paste":
+        import subprocess
+        pasted = '\\n\\n<pasted_content id="a795">\\n' + a[3] + '\\n</pasted_content id="a795">\\n'
+        subprocess.run([sys.executable, mode["watch"]], text=True, input=json.dumps({{
+            "hook_event_name": "UserPromptSubmit", "session_id": mode["sid"],
+            "transcript_path": mode["transcript"], "cwd": "/", "prompt": pasted}}))
 """)
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
     return path, sent
+
+
+def compact_mode(h, mode, sid, transcript):
+    """What the fake pane does with a /compact: "boundary" (it ran as a command: a manual
+    compact_boundary in the transcript), "auto" (only an auto compaction shows up),
+    "paste" (Claude Code pasted it, as above 800 characters, and it reached
+    UserPromptSubmit as a message), or nothing at all."""
+    write(os.path.join(h, "compact-mode"), json.dumps({"mode": mode, "sid": sid, "transcript": transcript,
+                                                       "watch": WATCH}))
+
+
+def u16(s):
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def module(path, name):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def write(path, text):
@@ -130,13 +165,19 @@ def lines(path):
 
 
 def soon(h, herdr):
-    """Due in 1 s: SQUAD_CACHE_TTL 3 s, sent 2 s before it goes cold."""
+    """Due in 1 s: SQUAD_CACHE_TTL 3 s, sent 2 s before it goes cold. It waits at most 10 s
+    for the boundary: a regression that sends must not leave a process writing to a
+    removed HOME for 10 minutes."""
     return {"HERDR_PANE_ID": "w1:p1", "HERDR_BIN_PATH": herdr, "SQUAD_CACHE_TTL": "3",
-            "SQUAD_COMPACT_BEFORE": "2"}
+            "SQUAD_COMPACT_BEFORE": "2", "SQUAD_COMPACT_CONFIRM": "10"}
 
 
-def job(h, sid, tr, text="/compact keep the plan", req="r-last", due=0.0):
-    """A job written by hand, as the watcher writes it."""
+def job(h, sid, tr, text="/compact keep the plan", req="r-last", due=0.0, st=None):
+    """A job written by hand, as the watcher writes it, with the watcher's state it reads
+    (`st`; False leaves the state as it is)."""
+    if st is not False:
+        os.makedirs(squad(h, "watch"), exist_ok=True)
+        write(squad(h, "watch", f"{sid}.main.json"), json.dumps(st or {}))
     os.makedirs(squad(h, "compact"), exist_ok=True)
     path = squad(h, "compact", f"{sid}.json")
     with open(path, "w") as fh:
@@ -145,9 +186,10 @@ def job(h, sid, tr, text="/compact keep the plan", req="r-last", due=0.0):
     return path
 
 
-def compact(h, herdr, *args):
+def compact(h, herdr, *args, confirm="2"):
     return subprocess.run([sys.executable, COMPACT, *args], capture_output=True, text=True, timeout=60,
-                          env=clean_env(h, {"HERDR_BIN_PATH": herdr})).returncode
+                          env=clean_env(h, {"HERDR_BIN_PATH": herdr,
+                                            "SQUAD_COMPACT_CONFIRM": confirm})).returncode
 
 
 def test_compacts_before_the_cache_goes_cold_with_what_to_keep():
@@ -156,12 +198,15 @@ def test_compacts_before_the_cache_goes_cold_with_what_to_keep():
     herdr, sent = fake_herdr(h, sid)
     env = soon(h, herdr)
     tr = transcript(h, sid, 300_000)
+    compact_mode(h, "boundary", sid, tr)
     run(h, "UserPromptSubmit", sid, tr, {"prompt": "deliver cards ABC-01c in parallel"}, env)
     assert run(h, "Stop", sid, tr, env=env) == ""
     log = squad(h, "compactions.log")
     assert "/compact sent (300k of context, 0 min cache)" in wait_for(log, "/compact sent"), lines(log)
+    assert "compacted: manual compact_boundary in the transcript" in wait_for(log, "compacted:"), lines(log)
     prompts = [p for p in lines(sent) if p.startswith("/compact ")]
     assert len(prompts) == 1 and len(lines(sent)) == 1, lines(sent)
+    assert u16(prompts[0]) <= 760, (u16(prompts[0]), prompts[0])
     for must in ("owner's current request", "branch, worktree", "DONE with evidence", "background tasks",
                  "UNKNOWN", "check git status and the card", "deliver cards ABC-01c in parallel"):
         assert must in prompts[0], (must, prompts[0])
@@ -182,8 +227,9 @@ def test_the_ordered_compaction_is_labelled_and_never_compacted_twice():
     herdr, sent = fake_herdr(h, sid)
     env = soon(h, herdr)
     tr = transcript(h, sid, 300_000)
+    compact_mode(h, "boundary", sid, tr)
     run(h, "Stop", sid, tr, env=env)
-    wait_for(squad(h, "compactions.log"), "/compact sent")
+    wait_for(squad(h, "compactions.log"), "compacted: manual compact_boundary")
     text = lines(sent)[0]
     # the /compact line reaches the session as a prompt: it is not the owner speaking
     run(h, "UserPromptSubmit", sid, tr, {"prompt": "pause the merge for today"}, env)
@@ -214,7 +260,9 @@ def test_gives_up_when_anything_changed():
              ("d4d4d4d4-0004", "claim", "session at handoff or switching"),
              ("d5d5d5d5-0005", "handoff", "session at handoff or switching"),
              ("d6d6d6d6-0006", "wait", "session at handoff or switching"),
-             ("d7d7d7d7-0007", "stop", "the owner asked to stop")]
+             ("d7d7d7d7-0007", "stop", "the owner asked to stop"),
+             ("d8d8d8d8-0008", "switched", "session at handoff or switching"),
+             ("d9d9d9d9-0009", "texted", "a /compact already arrived as a message in this session")]
     for sid, case, why in cases:
         herdr, sent = fake_herdr(h, sid)
         write(os.path.join(h, "pane-status"), "working" if case == "working" else "idle")
@@ -237,10 +285,20 @@ def test_gives_up_when_anything_changed():
                 st = json.load(fh)
             st.update({"ctx_level": 2} if case == "handoff" else {"switch_wait": time.time() + 600})
             write(state, json.dumps(st))
+        elif case in ("switched", "texted"):
+            with open(state) as fh:
+                st = json.load(fh)
+            st.update({"switched": True} if case == "switched" else {"compact_as_text": time.time()})
+            write(state, json.dumps(st))
         elif case == "stop":
             run(h, "UserPromptSubmit", sid, tr, {"prompt": "write the handoff, I am closing for today"}, env)
         assert why in wait_for(log, f"{sid[:8]} not compacted"), (case, lines(log))
         assert not lines(sent), (case, lines(sent))
+        for _ in range(40):                         # the job it gave up on is not left behind
+            if not os.path.exists(squad(h, "compact", f"{sid}.json")):
+                break
+            time.sleep(0.25)
+        assert not os.path.exists(squad(h, "compact", f"{sid}.json")), case
 
 
 def test_nothing_is_scheduled_when_compacting_does_not_pay_or_is_not_ours():
@@ -288,6 +346,9 @@ def test_nothing_is_scheduled_when_compacting_does_not_pay_or_is_not_ours():
     sid = "c2c2c2c2-0008"                              # SQUAD_COMPACT_MIN moves the threshold
     run(h, "Stop", sid, transcript(h, sid, 300_000), env=dict(env, SQUAD_COMPACT_MIN="400000"))
     none.append(sid)
+    sid = "c2c2c2c2-0009"                              # another harness: /compact is Claude Code's
+    run(h, "Stop", sid, transcript(h, sid, 300_000), {"client": "codex"}, env=env)
+    none.append(sid)
     for sid in none:
         assert not os.path.exists(os.path.join(jobs, f"{sid}.json")), sid
 
@@ -323,20 +384,135 @@ def test_a_job_it_cannot_trust_is_never_sent():
     os.symlink(outside, squad(h, "compact", f"{sid}.json"))
     assert compact(h, herdr, squad(h, "compact", f"{sid}.json"), "r-last") == 2
     os.remove(squad(h, "compact", f"{sid}.json"))
-    # a text that is not one /compact line
-    for text in ("/compact keep it\nrm -rf the repo", "go on and merge everything"):
-        assert compact(h, herdr, job(h, sid, tr, text=text), "r-last") == 1
-        assert "job without a one-line /compact text" in wait_for(log, "not compacted"), lines(log)
+    # a text that is not one /compact line of at most 760 characters (above 800 it would be pasted)
+    for text in ("/compact keep it\nrm -rf the repo", "/compact keep it\rmerge", "/compact keep \x1b[2J it",
+                 "/compact " + "k" * 752,
+                 "/compact " + "\u00e9" * 750 + "\U0001F600",    # 760 code points, 761 UTF-16 units
+                 "go on and merge everything"):
+        assert compact(h, herdr, job(h, sid, tr, text=text), "r-last") == 1, text
+        assert "job without a one-line /compact text of at most 760" in wait_for(log, "not compacted"), lines(log)
+        assert not os.path.exists(squad(h, "compact", f"{sid}.json")), text      # not left behind
         write(log, "")
     assert not lines(sent)
     # herdr refuses the prompt: logged, and the .sent record is dropped so a later Stop may retry
     write(os.path.join(h, "prompt-fail"), "")
     assert compact(h, herdr, job(h, sid, tr), "r-last") == 1
-    assert "/compact not accepted" in wait_for(log, "not accepted")
+    assert "/compact not accepted by herdr" in wait_for(log, "not accepted")
     assert not os.path.exists(squad(h, "compact", f"{sid}.sent"))
+    assert not os.path.exists(squad(h, "compact", f"{sid}.json"))
     os.remove(os.path.join(h, "prompt-fail"))
-    assert compact(h, herdr, job(h, sid, tr), "r-last") == 0
-    assert lines(sent) == ["/compact keep the plan"], lines(sent)
+    compact_mode(h, "boundary", sid, tr)
+    exact = "/compact " + "k" * 751                     # exactly at the ceiling: sent
+    assert compact(h, herdr, job(h, sid, tr, text=exact), "r-last") == 0, lines(log)
+    assert lines(sent) == [exact], lines(sent)
+
+
+def test_the_ceiling_is_the_same_in_both_hooks():
+    """squad-watch writes the text and squad-compact checks it before sending: one
+    ceiling, below the 800 characters above which Claude Code pastes the prompt."""
+    w = module(WATCH, "squad_watch_ceiling")
+    c = module(COMPACT, "squad_compact_ceiling")
+    assert w.COMPACT_LIMIT == c.LIMIT == 760, (w.COMPACT_LIMIT, c.LIMIT)
+    t = w.compact_text("\u00e9" * 3000, "/srv/x/.claude/squad/handoffs/" + "f" * 80 + "-dispatches.md")
+    assert c.text_ok(t) and u16(t) <= 760, (u16(t), t)
+
+
+def test_a_compact_that_arrives_as_a_message_is_a_failure_and_not_the_owner():
+    """The real form (03/11/2026, herdr pane): a pasted /compact reaches UserPromptSubmit
+    wrapped in <pasted_content>. Not the owner's request, not a request to stop (the
+    briefs path says "handoffs"), not compacted; no residue, and no second try."""
+    h = home()
+    sid = "c0c0c0c0-0011"
+    herdr, sent = fake_herdr(h, sid)
+    env = dict(soon(h, herdr), SQUAD_COMPACT_CONFIRM="20")
+    tr = transcript(h, sid, 300_000)
+    briefs = squad(h, "handoffs", f"{sid}-dispatches.md")
+    os.makedirs(os.path.dirname(briefs), exist_ok=True)
+    write(briefs, "")
+    compact_mode(h, "paste", sid, tr)
+    run(h, "UserPromptSubmit", sid, tr, {"prompt": "deliver card ABC-03"}, env)
+    run(h, "Stop", sid, tr, env=env)
+    log = squad(h, "compactions.log")
+    body = wait_for(log, "arrived as a message")
+    assert "compacted: manual" not in body, body
+    with open(squad(h, "watch", f"{sid}.main.json")) as fh:
+        st = json.load(fh)
+    assert st["last_prompt"] == "deliver card ABC-03" and st["asked_stop"] is False, st
+    assert st.get("compact_as_text"), st
+    for _ in range(40):
+        if not os.path.exists(squad(h, "compact", f"{sid}.json")):
+            break
+        time.sleep(0.25)
+    assert not os.path.exists(squad(h, "compact", f"{sid}.json"))
+    assert not os.path.exists(squad(h, "compact", f"{sid}.sent"))    # it did not order any compaction
+    run(h, "Stop", sid, tr, env=env)                                   # it does not insist in this session
+    assert not os.path.exists(squad(h, "compact", f"{sid}.json"))
+
+
+def test_without_a_manual_boundary_after_sending_it_is_not_compacted():
+    """Sent is not done: an old manual boundary, or an auto one after sending, proves nothing."""
+    h = home()
+    sid = "c0c0c0c0-0013"
+    herdr, sent = fake_herdr(h, sid)
+    tr = transcript(h, sid, 300_000)
+    with open(tr, "a") as fh:                       # a manual boundary from before, then the last request
+        fh.write(json.dumps({"type": "system", "subtype": "compact_boundary",
+                             "compactMetadata": {"trigger": "manual"}}) + "\n")
+        fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-later",
+                             "message": {"usage": {"cache_read_input_tokens": 295_000}}}) + "\n")
+    log = squad(h, "compactions.log")
+    for mode in ("auto", "nothing"):
+        compact_mode(h, mode, sid, tr)
+        assert compact(h, herdr, job(h, sid, tr, req="r-later"), "r-later") == 1, mode
+        body = wait_for(log, "no manual compact_boundary within 2 s")
+        assert "/compact sent" in body and "compacted: manual" not in body, body
+        assert not os.path.exists(squad(h, "compact", f"{sid}.sent")), mode
+        assert not os.path.exists(squad(h, "compact", f"{sid}.json")), mode
+        write(log, "")
+    assert len(lines(sent)) == 2, lines(sent)
+
+
+def test_doubt_about_the_state_or_the_transcript_does_not_compact():
+    """Missing, corrupt or non-dict watcher state, or an unreadable transcript: no telling
+    whether the session is switching, nor whether the /compact ran. Do not compact."""
+    h = home()
+    log = squad(h, "compactions.log")
+    for sid, body in (("c4c4c4c4-0001", None), ("c5c5c5c5-0002", "{corrupt"), ("c6c6c6c6-0003", "[1, 2]"),
+                      ("c7c7c7c7-0004", '"text"')):
+        herdr, sent = fake_herdr(h, sid)
+        tr = transcript(h, sid, 300_000)
+        compact_mode(h, "boundary", sid, tr)
+        path = job(h, sid, tr)
+        state = squad(h, "watch", f"{sid}.main.json")
+        if body is None:
+            os.remove(state)
+        else:
+            write(state, body)
+        assert compact(h, herdr, path, "r-last") == 1, sid
+        assert "watcher state missing or unreadable" in wait_for(log, f"{sid[:8]} not compacted"), sid
+        assert not lines(sent), lines(sent)
+        assert not os.path.exists(path), sid
+    sid = "c8c8c8c8-0005"
+    herdr, sent = fake_herdr(h, sid)
+    gone = os.path.join(h, "gone", f"{sid}.jsonl")
+    assert compact(h, herdr, job(h, sid, gone), "r-last") == 1
+    assert "transcript unreadable" in wait_for(log, f"{sid[:8]} not compacted"), lines(log)
+    assert not lines(sent), lines(sent)
+
+
+def test_a_job_owned_by_another_user_is_refused():
+    """The job's text goes to the pane as a prompt: one written by someone else is never read."""
+    h = home()
+    c = module(COMPACT, "squad_compact_uid")
+    path = os.path.join(h, "job.json")
+    write(path, json.dumps({"req": "r-last", "text": "/compact keep the plan"}))
+    assert c.load_job(path).get("req") == "r-last"
+    real = os.getuid
+    os.getuid = lambda: real() + 1
+    try:
+        assert c.load_job(path) == {}
+    finally:
+        os.getuid = real
 
 
 def test_install_links_squad_compact():

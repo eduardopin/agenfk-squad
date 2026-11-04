@@ -385,24 +385,49 @@ At the due time it sends one line to the pane, `/compact` followed by what the
 summary must keep, in order: the owner's request verbatim and what was
 decided, cards, repository, branch, worktree, PRs and merge-queue position,
 decisions and why, DONE with evidence and REMAINING with the next step,
-background tasks still open, traps already found. It adds the owner's last
-request as the watcher recorded it and, if there are any, the path of the
-denied briefs. It sends it only if all of this still holds:
+background tasks still open, traps already found. It adds, if there are
+any, the absolute path of the denied briefs, and the owner's last request as
+the watcher recorded it.
+
+The line is at most 760 characters, counted in UTF-16 units, `/compact `
+included. Claude Code turns any prompt longer than 800 characters into a paste
+(`<pasted_content>`), and a pasted `/compact` does not run: it becomes an
+ordinary message to the model. The 40 characters of margin cover a count in
+bytes for accented text. The fixed instructions are short; the briefs path goes
+in whole or not at all; the owner's request takes what is left, cut with an
+ellipsis.
+
+It sends it only if all of this still holds:
 
 - the job is still the one it was launched for;
 - the transcript has no request after the scheduled one (the cache was renewed);
 - the pane hosts the same session, idle;
+- the watcher's state for the session exists and is readable (missing or
+  corrupt is doubt);
 - the session is not at handoff level or switching (no `switched`, no switch
-  claim, no scheduled switch wait) and the owner did not ask to stop or pause;
-- the job's text is one line starting with `/compact`.
+  claim, no scheduled switch wait), the owner did not ask to stop or pause,
+  and no earlier `/compact` arrived in this session as a message;
+- the job's text is one line starting with `/compact`, at most 760 characters;
+- the transcript is readable.
 
 Any doubt means not compacting. Before sending, it records
 `~/.claude/squad/compact/<session>.sent` (request id and time): the
 `PreCompact` handoff that follows says the watcher ordered the compaction, not
 that the session stopped without a handoff, and the same request is never
-compacted twice. The watcher skips its own `/compact` line when it reads
-prompts: it is not the owner's request. Each decision goes to
-`~/.claude/squad/compactions.log`.
+compacted twice.
+
+Sent is not done. It counts as compacted only when a `compact_boundary` with
+the `manual` trigger shows up in the transcript after the point of sending,
+within `SQUAD_COMPACT_CONFIRM` seconds (600). A `/compact` that runs as a
+command never reaches `UserPromptSubmit`; if the watcher sees its own text
+there, bare or wrapped in `<pasted_content>`, it was a message: the prompt is
+not recorded as the owner's request, the session is marked, squad-compact logs
+a failure and no `/compact` is scheduled again in that session. When it did
+not compact (herdr refused, it arrived as a message, no boundary in time) the
+`.sent` record is removed; the job is removed whenever squad-compact ends,
+unless a newer `Stop` already rescheduled it. After a confirmed compaction the
+`.sent` record stays: it is what keeps the same request from being compacted
+twice. Each decision goes to `~/.claude/squad/compactions.log`.
 
 It needs a herdr pane (`HERDR_PANE_ID`) and a Claude Code transcript.
 `SQUAD_COMPACT=0` turns it off.

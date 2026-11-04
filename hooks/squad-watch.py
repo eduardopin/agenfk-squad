@@ -42,7 +42,12 @@ back).
                     what to keep, SQUAD_COMPACT_BEFORE (120) s before the cache of
                     the last request goes cold (TTL read from the transcript: 1 h
                     or 5 min; SQUAD_CACHE_TTL overrides it). It gives up if the
-                    session moved on, changed or went into a switch.
+                    session moved on, changed or went into a switch. The text is
+                    at most 760 characters on one line (margin over the measured
+                    800: above it Claude Code pastes the prompt and /compact does
+                    not run); if it reaches UserPromptSubmit, bare or wrapped in
+                    <pasted_content>, it is not the owner speaking: the session
+                    is marked as a failure and gets no other one.
                     SQUAD_COMPACT=0 turns it off.
   PreCompact        main session only, manual or auto: before the conversation is
                     summarized, writes the same minimal handoff to
@@ -1731,10 +1736,16 @@ def prompt(p):
     mentions "handoff" in its text: that is not the owner speaking. And
     `/clear-pickup pickup` is a request to resume, not to stop."""
     text = str(p.get("prompt") or "")
-    if text.lstrip().startswith(("<task-notification>", WAKE_PREFIX, COMPACT_START)):
-        return                            # a task return, squad-wake or squad-compact: not the owner speaking
+    if text.lstrip().startswith(("<task-notification>", WAKE_PREFIX)):
+        return                            # a task return or squad-wake: not the owner speaking
     path = state_path(p["session_id"], "")
     st = load(path)
+    if compact_own(text):
+        # the watcher's /compact reached the session as a message (pasted), so it did not
+        # run as a command: not the owner speaking; squad-compact reads the mark as a failure
+        st["compact_as_text"] = time.time()
+        save(path, st)
+        return
     st["prompt_ts"] = time.time()
     st["asked_stop"] = bool(ASKED_TO_STOP.search(text)) and not RESUME.search(text)
     st["last_prompt"] = text[:3000]
@@ -1998,17 +2009,63 @@ def stop(p):
 
 # ------------------------------------------------------------- compaction
 COMPACT = os.path.join(BASE, "compact")
+# Claude Code turns every prompt longer than 800 characters into a paste
+# (<pasted_content>), and a pasted /compact does not run: it becomes an ordinary
+# message (measured in a herdr pane: 800 on one line runs as a command, 801 is
+# pasted). Hard ceiling, "/compact " included, counted in UTF-16 units (Claude
+# Code's string length), on one line. 760, not 800: the limit was measured with
+# ASCII only; if Claude Code or herdr counted bytes or code points instead, an
+# accent (2 bytes) or an emoji (2 units, 4 bytes) in the owner's last request
+# would push a text sitting exactly at 800 over it. squad-compact.py checks the
+# same LIMIT before sending (tests/test_compact.py keeps the two equal).
+COMPACT_LIMIT = 760
 COMPACT_REQUEST = (
-    "Summary to carry the work on without this conversation. Keep the exact values, in this order: "
-    "(1) the owner's current request, verbatim, and what the owner decided or approved; (2) AgenFK cards "
-    "(id and step), repository, branch, worktree, open PRs and position in the merge queue; (3) decisions "
-    "taken and why, including what was discarded; (4) DONE with evidence (commit, test, command) and "
-    "REMAINING in order, with the concrete next step; (5) background tasks and sub-agents still open (id, "
-    "what they do, where the result lands) and what is waiting for SLOT FREE or MERGE TURN; (6) errors and "
-    "traps already found. Drop file contents, tool output, diffs and logs (reread them from disk if needed) "
-    "and intermediate reasoning. Mark UNKNOWN what was not verified. After compacting, before editing, check "
-    "git status and the card.")
-COMPACT_START = "/compact " + COMPACT_REQUEST[:60]   # the prompt squad-compact sends
+    "Summary to carry the work on without this conversation. Keep exact values: (1) the owner's current "
+    "request, verbatim, and decisions; (2) AgenFK cards (id, step), repo, branch, worktree, PRs, merge queue; "
+    "(3) decisions and why, what was discarded; (4) DONE with evidence, REMAINING, next step; (5) background "
+    "tasks and sub-agents (id, where results land), pending SLOT FREE or MERGE TURN; (6) errors and traps. "
+    "Drop file contents, tool output, diffs, logs, reasoning. Mark UNKNOWN the unverified. Then check git "
+    "status and the card before editing.")
+# the first sentence is the same as in the older, longer text: both are recognised
+COMPACT_SIGNATURE = "/compact Summary to carry the work on without this conversation."
+PASTED = re.compile(r"\s*<pasted_content\b[^>]*>(.*?)</pasted_content\b[^>]*>\s*", re.S)
+
+
+def u16(s):
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def compact_own(text):
+    """The text is the watcher's own /compact, bare or wrapped in a paste
+    (<pasted_content id=...>...</pasted_content ...>, the form the hook receives
+    when Claude Code pasted it)."""
+    m = PASTED.fullmatch(text)
+    return (m.group(1) if m else text).strip().startswith(COMPACT_SIGNATURE)
+
+
+def compact_text(request, briefs=""):
+    """"/compact " + the instructions, at most COMPACT_LIMIT and on one line. The
+    path of the denied-dispatch briefs goes in whole or not at all (a cut path is
+    useless); the owner's last request takes what is left, cut with an ellipsis
+    (it is also in the conversation, and item 1 says to keep it)."""
+    text = "/compact " + COMPACT_REQUEST
+    if briefs:
+        part = f" Denied dispatch briefs: {briefs}."
+        if "\n" not in part and "\r" not in part and u16(text + part) <= COMPACT_LIMIT:
+            text += part
+    request = " ".join(str(request or "").split())
+    label = ' Owner\'s last request: "{}".'
+    room = COMPACT_LIMIT - u16(text + label.format(""))
+    if request and room >= 20:
+        if u16(request) > room:
+            request = request[:room]
+            while request and u16(request) > room - 1:
+                request = request[:-1]
+            request = request.rstrip() + "\u2026"
+        text += label.format(request)
+    return text
+
+
 ORDERED_FRESH = 600    # s: a .sent record older than this did not order the compaction now starting
 
 
@@ -2021,6 +2078,8 @@ def compact_schedule(p, path, st):
     if (not os.environ.get("HERDR_PANE_ID") or os.environ.get("SQUAD_COMPACT") == "0"
             or st.get("asked_stop") or harness(p) != "claude"):
         return                            # the owner asked to stop or pause: compacting is not the watcher's call
+    if st.get("compact_as_text"):
+        return                            # a /compact already arrived here as a message: do not insist
     session = safe(p["session_id"])
     transcript = str(p.get("transcript_path") or "")
     tok = fold(transcript, st.get("tok") or {})
@@ -2035,11 +2094,9 @@ def compact_schedule(p, path, st):
         save(path, st)                    # no cache_creation in the transcript: no telling when it goes cold;
         return                            # or this request was already compacted
     due = time.time() + max(ttl - COMPACT_BEFORE, 1)
-    request = " ".join(ctx_lib().clean(st.get("last_prompt") or "", 400).split())
-    briefs = os.path.join(BASE, "handoffs", f"{session}-dispatches.md")
-    text = "/compact " + COMPACT_REQUEST + (
-        f" Owner's last request, recorded by the watcher: \"{request}\"." if request else "") + (
-        f" Briefs of denied dispatches (the pending plan): {briefs}." if os.path.exists(briefs) else "")
+    request = ctx_lib().clean(st.get("last_prompt") or "", 400)
+    briefs = os.path.join(BASE, "handoffs", f"{session}-dispatches.md")   # absolute: the Read tool takes no ~
+    text = compact_text(request, briefs if os.path.exists(briefs) else "")
     job = {"due": due, "req": tok["last"], "pane": os.environ["HERDR_PANE_ID"], "session": session,
            "transcript": transcript, "ctx": ctx, "ttl": ttl, "text": text}
     jpath = os.path.join(COMPACT, f"{session}.json")

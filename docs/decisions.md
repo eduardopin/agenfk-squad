@@ -104,8 +104,14 @@ both stay active as before. A crash between the two steps leaves both
 decisions active, visible in the index. A second fault while rolling back
 leaves either both active or the old one marked as superseded by the new one,
 which is complete and active; it never leaves the old one pointing at a
-decision that is not there, and it says "could not undo" on stderr. In every
-case `squad-decisions supersede <old> --by <new>` can be run again to finish.
+decision that is not there, and it says "could not undo" on stderr.
+
+What to run next depends on what is left, so check `squad-decisions list --all`:
+both decisions active means the supersede did not finish, and
+`squad-decisions supersede <old> --by <new>` finishes it; the old one already
+superseded by the new one means there is nothing left to do (a second
+`supersede` is refused); after `add --supersedes` rolled back, the new decision
+is gone, so run the `add` again.
 
 **Who can write.** `--source owner` is self-declared: nothing checks that the
 owner typed it. Any session that can run Bash can record a decision, and every

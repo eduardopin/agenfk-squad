@@ -355,8 +355,9 @@ def mark(folder, old, new):
 
 def roll_back(folder, old, before, new, undo_new):
     """After a failure in add or supersede: puts old back as it was if it already points at new, and only then
-    undoes new. A second fault on the way stops the undo with both decisions active (and says so), so old is
-    never left pointing at a decision that is gone."""
+    undoes new. A second fault on the way stops the undo (and says so) with either both decisions active, or
+    old still marked as superseded by new, which is complete; old is never left pointing at a decision that
+    is gone."""
     try:
         if old:
             meta, _ = read(folder, old)
@@ -365,7 +366,8 @@ def roll_back(folder, old, before, new, undo_new):
         undo_new()
     except Exception as e:                            # the first failure is the one raised; this one is told
         print(f"squad-decisions: could not undo ({e}); {new} is kept and {old or 'no decision'} may still be "
-              "active: check `squad-decisions list --all` and run `supersede` again.", file=sys.stderr)
+              "active: check `squad-decisions list --all`; if both are active, run `supersede` again.",
+              file=sys.stderr)
 
 
 def cmd_supersede(folder, a):

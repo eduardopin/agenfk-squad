@@ -343,8 +343,9 @@ you installed by hand: `git pull`, then `install.ps1` again, as in the previous 
 `-Uninstall` removes the squad's entries from `settings.json` (and nobody
 else's), the links into the clone, the `squad-turn.cmd` and
 `squad-decisions.cmd` shims, and the marked copies that you did not edit (an
-edited copy is kept, with a warning); the clone stays. `-Purge` deletes the clone too, unless it has local changes: then
-it refuses and you delete it by hand. By hand:
+edited copy is kept, with a warning); the clone stays. `-Purge` deletes the
+clone too, unless it has local changes: then it refuses and you delete it by
+hand. By hand:
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall`
 and `python scripts\squad_settings.py uninstall`.
 State under `%USERPROFILE%\.claude\squad` is plain files; delete the

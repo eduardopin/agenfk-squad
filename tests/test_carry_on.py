@@ -435,6 +435,18 @@ def test_two_releases_in_a_row_close_an_explicit_goal():
     assert not s.state().get("goal"), s.state()
 
 
+def test_the_third_refused_done_is_accepted_while_the_card_is_open():
+    s = Session(statuses={CARD: "IN_PROGRESS"})
+    s.owner(f"[squad] GOAL: close card {CARD}")
+    for _ in range(3):
+        s.edit()
+        s.reply("[squad] DONE: all good")
+        assert "DONE refused" in s.stop()
+    s.edit()
+    s.reply("[squad] DONE: all good")
+    assert s.stop() == "nothing"
+
+
 def test_done_is_refused_for_a_card_named_by_its_eight_character_prefix():
     s = Session(statuses={"51d1c739": "IN_PROGRESS"})
     s.owner("[squad] GOAL: ship checkout, card 51d1c739")

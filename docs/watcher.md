@@ -400,7 +400,7 @@ The session stops by ending a reply with one line:
 
 | Line | Effect |
 |---|---|
-| `[squad] DONE: PR #64 merged, cards DONE` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`, the first 4 cards, in parallel, within 7 s); a CLI or server that does not answer in time counts as done. |
+| `[squad] DONE: PR #64 merged, cards DONE` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`, the first 4 cards, in parallel, within 7 s); a CLI or server that does not answer in time counts as done. After `SQUAD_CARRY_MAX` (3) refused DONEs the line is accepted while a card is still open, so a CLI or server that stays down, or a card that cannot reach DONE, cannot hold the session. |
 | `[squad] BLOCKED: merge approval on PR #64 is the owner's` | Lets go until the owner speaks again: merge approval, a production apply, an answer only the owner has. |
 | `[squad] END: no card is left that I can take` | Closes the goal. |
 

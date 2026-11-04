@@ -380,21 +380,32 @@ A delivery is open when either holds:
   owner's message or in one of the session's replies. The `architect` skill
   writes it when a plan goes to execution. AgEnFK card ids on that line are the
   goal's cards. An explicit goal survives the owner's side questions: the
-  session answers and goes back to work.
-- **an implicit one**: the last reply names a next step or card ("o próximo
-  passo é o card X", "next card", "next step"). It ends at the owner's next
-  message, which decides what comes next.
+  session answers and goes back to work. Writing the same line again changes
+  nothing, a session's line never replaces the owner's goal, and a new session
+  goal keeps the guard's counters.
+- **an implicit one**: the last reply hands the work back. It names a next step
+  or card ("o próximo passo é o card X", "next card"), offers to do it ("posso
+  abrir essa frente agora, se você quiser", "quer que eu", "want me to", "shall
+  I"), or says it is waiting for the owner ("esperando você", "waiting on
+  you"). It lives only while replies keep doing that, and it ends at the
+  owner's next message. Its first hold counts as no progress unless work was
+  done since the previous stop, so a Q&A answer that only mentions a next step
+  is held at most twice.
 
 The session stops by ending a reply with one line:
 
 | Line | Effect |
 |---|---|
-| `[squad] DONE: <evidence>` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`); a CLI or server that does not answer counts as done. |
+| `[squad] DONE: <evidence>` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`, the first 4 cards, in parallel, within 7 s); a CLI or server that does not answer in time counts as done. |
 | `[squad] BLOCKED: <what only the owner can do>` | Lets go until the owner speaks again: merge approval, a production apply, an answer only the owner has. |
 | `[squad] END: <why nothing is left>` | Closes the goal. |
 
 These are the same lines `squad-wake.py` reads, so a session that stopped for a
 reason the hook cannot see (an API error, a reboot) is still woken by the timer.
+
+The order names what the session must do itself before it calls anything the
+owner's: push, open or reopen a session or pane, merge with a green gate and
+SHIP, start the next front. Only what only the owner can do goes in `BLOCKED`.
 
 The hold never wins against the owner or the watcher:
 
@@ -408,6 +419,9 @@ The hold never wins against the owner or the watcher:
   dispatch, a commit, push or merge, a PR, an `agenfk verify/update/create`.
   Checking alone is not progress. Progress, or the owner speaking, re-arms it;
 - `SQUAD_CARRY_CAP` (200) holds per goal let go even with progress;
+- an explicit goal released twice in a row without progress in between is
+  closed, and one with no progress for `SQUAD_CARRY_AGE` (43200 s, 12 h) has
+  expired, so an abandoned goal does not hold the owner's later chat;
 - `SQUAD_CARRY=0` turns it off.
 
 The idea follows two public Stop hooks: [claude-goal](https://github.com/jthack/claude-goal)

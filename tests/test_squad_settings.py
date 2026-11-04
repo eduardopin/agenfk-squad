@@ -406,6 +406,68 @@ def test_a_top_level_matchers_that_is_not_an_object_is_a_bad_manifest():
             raise AssertionError(f"top-level matchers {bad!r} was accepted")
 
 
+def test_a_copy_under_another_matcher_hands_the_users_timeout_to_the_one_that_stays():
+    config = config_with("squad-graph.py")
+    cmd = ss.command_for(config, "squad-graph.py")
+    mine = {"type": "command", "command": "echo mine"}
+    m = manifest([GRAPH])                                   # the manifest says 10, on "Bash|Grep|Read|Glob"
+    right = {"matcher": "Bash|Grep|Read|Glob", "hooks": [{"type": "command", "command": cmd, "timeout": 10}]}
+    stale = {"matcher": "*", "hooks": [{"type": "command", "command": cmd, "timeout": 99}, mine]}
+    kept = {"matcher": "Bash|Grep|Read|Glob", "hooks": [{"type": "command", "command": cmd, "timeout": 99}]}
+    left = {"matcher": "*", "hooks": [mine]}
+    for groups, wanted in (([right, stale], [kept, left]), ([stale, right], [left, kept])):
+        settings = {"model": "opus", "hooks": {"PreToolUse": json.loads(json.dumps(groups))}}
+        changed, report = run("install", settings, config, m)
+        assert changed, report
+        assert settings == {"model": "opus", "hooks": {"PreToolUse": wanted}}, (groups, settings)
+        changed, report = run("install", settings, config, m)
+        assert not changed, report
+
+
+def test_a_copy_already_in_place_with_a_null_or_zero_timeout_gets_the_manifests():
+    config = config_with("squad-graph.py")
+    cmd = ss.command_for(config, "squad-graph.py")
+    mine = {"type": "command", "command": "echo mine", "timeout": 0}       # the user's: never touched
+    m = manifest([GRAPH])                                   # the manifest says 10
+    for given in (None, 0):
+        settings = {"hooks": {"PreToolUse": [{"matcher": "Bash|Grep|Read|Glob", "hooks": [
+            {"type": "command", "command": cmd, "timeout": given}, dict(mine)]}]}}
+        changed, report = run("install", settings, config, m)
+        assert changed, report
+        assert settings == {"hooks": {"PreToolUse": [{"matcher": "Bash|Grep|Read|Glob", "hooks": [
+            {"type": "command", "command": cmd, "timeout": 10}, mine]}]}}, (given, settings)
+        assert not any("already registered" in line for line in report), report
+        changed, report = run("install", settings, config, m)
+        assert not changed, report
+    # no timeout at all is Claude Code's default, a choice the user can make: it stays
+    settings = {"hooks": {"PreToolUse": [{"matcher": "Bash|Grep|Read|Glob", "hooks": [
+        {"type": "command", "command": cmd}]}]}}
+    before = json.dumps(settings, sort_keys=True)
+    changed, report = run("install", settings, config, m)
+    assert not changed, report
+    assert json.dumps(settings, sort_keys=True) == before, settings
+
+
+def test_of_two_timeouts_the_user_gave_the_first_in_document_order_wins():
+    config = config_with("squad-graph.py")
+    cmd = ss.command_for(config, "squad-graph.py")
+    m = manifest([GRAPH])                                   # the manifest says 10
+    for first, second, wanted in (("*", "Bash|Grep|Read|Glob", 45), ("Bash|Grep|Read|Glob", "*", 45),
+                                  ("Bash|Grep|Read|Glob", "Bash|Grep|Read|Glob", 45)):
+        settings = {"hooks": {"PreToolUse": [
+            {"matcher": first, "hooks": [{"type": "command", "command": cmd, "timeout": 45}]},
+            {"matcher": second, "hooks": [{"type": "command", "command": cmd, "timeout": 99}]},
+        ]}}
+        changed, report = run("install", settings, config, m)
+        assert changed, report
+        assert settings == {"hooks": {"PreToolUse": [{"matcher": "Bash|Grep|Read|Glob", "hooks": [
+            {"type": "command", "command": cmd, "timeout": wanted}]}]}}, (first, second, settings)
+        changed, report = run("install", settings, config, m)
+        assert not changed, report
+    flat = " ".join(ss.__doc__.split())
+    assert "the first in document order" in flat, ss.__doc__
+
+
 def test_uninstall_needs_only_the_script_names_from_the_manifest():
     no_events = {k: v for k, v in WATCH.items() if k != "events"}
     broken = [

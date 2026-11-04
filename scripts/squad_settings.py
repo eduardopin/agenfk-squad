@@ -46,8 +46,16 @@ in the manifest wants it, and stays put. A manifest that lists one script
 twice on the same event is refused (install would move it back and forth on
 every run); uninstall reads only the script names and events, so a manifest
 that install refuses does not stop it. Copies of one squad hook under matchers
-Claude Code reads alike collapse to the first one, which takes the timeout the
-user gave any of them (one that differs from the manifest's).
+Claude Code reads alike collapse to the first one.
+
+When copies of one squad hook on an event go (moved, collapsed, or removed
+because one is already under the right matcher), the entry that stays takes
+the user's timeout: a timeout that differs from the manifest's; with two of
+them, the first in document order; with none, the manifest's when any copy
+carries it. A null or 0 timeout is not one: a moved entry, or one already in
+place, left with null or 0 gets the manifest's. An entry already in place with
+no timeout at all, and no other copy to take one from, keeps Claude Code's
+default (a moved entry is written anew and gets the manifest's).
 """
 import contextlib
 import argparse
@@ -298,18 +306,16 @@ def users_timeout(entries, manifest_timeout):
     return next((t for t in given if t != manifest_timeout), given[0] if given else None)
 
 
-def dedupe(settings, event, script, config, matcher, timeout=None):
+def dedupe(settings, event, script, config, matcher):
     """Keeps the first copy of this script among the event's groups under this
     matcher, or one Claude Code reads the same, so it runs once per tool call.
-    The copy kept takes the timeout the user gave any of them (`timeout` is the
-    manifest's). Returns True when it removed a copy."""
+    Returns True when it removed a copy."""
     def mine(h):
         return isinstance(h, dict) and squad_script(h.get("command"), config) == script
     groups = settings["hooks"][event]
     copies = [h for g in groups if same_matcher(g.get("matcher"), matcher) for h in g.get("hooks", []) if mine(h)]
     if len(copies) < 2:
         return False
-    keep = users_timeout(copies, timeout)
     first, out = True, []
     for g in groups:
         if not same_matcher(g.get("matcher"), matcher):
@@ -321,8 +327,6 @@ def dedupe(settings, event, script, config, matcher, timeout=None):
                 if not first:
                     continue
                 first = False
-                if keep and h.get("timeout") != keep:
-                    h = dict(h, timeout=keep)
             entries.append(h)
         if entries == g.get("hooks", []):
             out.append(g)
@@ -330,6 +334,25 @@ def dedupe(settings, event, script, config, matcher, timeout=None):
             out.append(dict(g, hooks=entries))
     settings["hooks"][event] = out
     return True
+
+
+def retime(settings, event, script, config, matcher, keep, timeout):
+    """Gives the copy of this script under this matcher the timeout `keep` (the
+    one users_timeout chose from every copy on the event, before drop and dedupe
+    removed the others); when none was set, a null or 0 timeout there gets the
+    manifest's `timeout`, and no timeout at all stays (Claude Code's default).
+    Returns the timeout it set, or None when the copy already had it."""
+    for g in settings.get("hooks", {}).get(event, []):
+        if not same_matcher(g.get("matcher"), matcher):
+            continue
+        for h in g.get("hooks", []):
+            if isinstance(h, dict) and squad_script(h.get("command"), config) == script:
+                want = keep or (timeout if "timeout" in h else None)
+                if not want or want == h.get("timeout"):
+                    return None
+                h["timeout"] = want
+                return want
+    return None
 
 
 def install(settings, config, plan, report):
@@ -345,21 +368,29 @@ def install(settings, config, plan, report):
                      for h in g.get("hooks", [])
                      if isinstance(h, dict) and squad_script(h.get("command"), config) == script]
             if right:
+                # chosen from every copy, in document order, before drop and dedupe remove all but one
+                keep = users_timeout([h for g in groups for h in g.get("hooks", [])
+                                      if isinstance(h, dict) and squad_script(h.get("command"), config) == script],
+                                     timeout)
                 if stale:                    # a second copy would still run on every tool call
                     drop(settings, event, script, config, matcher)
                     changed = True
                     report.append(f"on      {script:<16} {event} (copy under another matcher removed)")
-                twice = dedupe(settings, event, script, config, matcher, timeout)
+                twice = dedupe(settings, event, script, config, matcher)
                 if twice:
                     changed = True
                     report.append(f"on      {script:<16} {event} (second copy removed)")
+                retimed = retime(settings, event, script, config, matcher, keep, timeout)
+                if retimed:
+                    changed = True
+                    report.append(f"on      {script:<16} {event} (timeout set to {retimed})")
                 # the copy that stays is the one to repair: on Windows a `python3` entry runs the Store stub
                 kept = [g for g in settings.get("hooks", {}).get(event, [])
                         if same_matcher(g.get("matcher"), matcher)]
                 if repair_stale(kept, config, script):
                     changed = True
                     report.append(f"fixed   {script:<16} {event} (was `python3`, the Microsoft Store stub)")
-                elif not stale and not twice:
+                elif not stale and not twice and not retimed:
                     report.append(f"on      {script:<16} {event} (already registered)")
                 continue
             if not os.path.exists(os.path.join(config, "hooks", script)):

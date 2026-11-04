@@ -33,6 +33,7 @@ when there are none, outside a git repository, on malformed input or any
 error: it never fails the session (exit 0). SQUAD_DECISIONS=0 turns the hook
 off. Standard library only.
 """
+import contextlib
 import hashlib
 import json
 import os
@@ -46,6 +47,7 @@ NAME = re.compile(r"\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md")
 SOURCE = re.compile(r"owner|card [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 FIELDS = ("title", "date", "source", "status", "supersedes", "superseded_by")
 TAG = "[squad-decisions]"
+LOCK = ".lock"                                        # not a decision name: list and the index never see it
 
 
 class Refused(Exception):
@@ -108,7 +110,11 @@ def inside(folder, name):
 
 
 def parse(text):
-    """(frontmatter dict, body) of a decision file; ({}, text) when there is no frontmatter."""
+    """(frontmatter dict, body) of a decision file; ({}, text) when there is no frontmatter.
+
+    A UTF-8 byte order mark (an editor on Windows adds one) is dropped first: it would hide the opening ---."""
+    if text.startswith("\ufeff"):
+        text = text[1:]
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return {}, text
@@ -161,8 +167,14 @@ def entries(folder):
     return out
 
 
+def status(meta):
+    """The status in lower case; a missing or empty one is active. A hand-written `Active` is active; any
+    other value (a typo) keeps the decision out of the index, and `list --all` shows it as written."""
+    return (meta.get("status") or "active").strip().lower()
+
+
 def active(folder):
-    return [e for e in entries(folder) if e[1].get("status", "active") == "active"]
+    return [e for e in entries(folder) if status(e[1]) == "active"]
 
 
 def line(name, meta):
@@ -219,8 +231,61 @@ def hook():
         budget = 4000
     text = index(folder, max(budget, 0))
     if text:
-        sys.stdout.write(text)
+        # Bytes, not text: a text-mode stdout on Windows turns each "\n" into "\r\n", one byte per line over
+        # the budget the index counted. Flushed here, so a full or closed stdout fails inside the caller's try.
+        out = getattr(sys.stdout, "buffer", None)
+        if out is None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        else:
+            sys.stdout.flush()
+            out.write(text.encode("utf-8"))
+            out.flush()
     return 0
+
+
+@contextlib.contextmanager
+def locked(folder, wait=30.0):
+    """An exclusive lock on the store while a status is checked and changed: two sessions superseding the
+    same decision at once cannot both win. flock on POSIX, msvcrt.locking on Windows; a lock still held
+    after `wait` seconds is refused rather than waited on forever."""
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    path = inside(folder, LOCK)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        deadline = time.monotonic() + wait
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() > deadline:
+                        raise Refused(f"the store is locked by another session ({path}); try again")
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        raise Refused(f"the store is locked by another session ({path}); try again")
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def cmd_add(folder, a):
@@ -233,55 +298,82 @@ def cmd_add(folder, a):
     old = safe_name(a.supersedes) if a.supersedes else ""
     if old:
         meta, _ = read(folder, old)                   # must exist before anything is written
-        if meta.get("status", "active") != "active":
+        if status(meta) != "active":
             raise Refused(f"{old} is already superseded (by {meta.get('superseded_by') or '?'})")
     if sys.stdin.isatty():
         raise Refused("the body comes on stdin (What / Why); pipe it in, e.g. a heredoc")
     body = sys.stdin.read().strip()
     if not body:
         raise Refused("the body is empty: write What was decided and Why")
-    os.makedirs(folder, mode=0o700, exist_ok=True)
     date = time.strftime("%Y-%m-%d")
     meta = {"title": title, "date": date, "source": source, "status": "active", "supersedes": old}
     base = f"{date}-{slug(title)}"
-    for n in range(1, 1000):
-        name = f"{base}.md" if n == 1 else f"{base}-{n}.md"
-        path = inside(folder, name)
-        try:                                          # O_EXCL: two worktrees adding the same title get two files
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            continue
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(render(meta, body))
-        break
-    else:
-        raise Refused(f"too many decisions named {base} today")
-    if old:
-        mark(folder, old, name)
+    with locked(folder):
+        if old:                                       # again, under the lock: another session may have won
+            meta_old, _ = read(folder, old)
+            if status(meta_old) != "active":
+                raise Refused(f"{old} is already superseded (by {meta_old.get('superseded_by') or '?'})")
+        name = reserve(folder, base)
+        try:
+            # The old one is marked first and the new one written last: until the new file has its text it is
+            # empty, and an empty file is not a decision, so the index never shows both as active. A failure
+            # on either side undoes the other.
+            undo = mark(folder, old, name) if old else None
+            try:
+                write(folder, name, meta, body)
+            except BaseException:
+                if undo:
+                    undo()
+                raise
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(inside(folder, name))
+            raise
     print(name)
     return 0
 
 
+def reserve(folder, base):
+    """Claims <base>.md (or -2, -3...) with an exclusive create and leaves it empty, invisible to the index."""
+    for n in range(1, 1000):
+        name = f"{base}.md" if n == 1 else f"{base}-{n}.md"
+        try:                                          # O_EXCL: two worktrees adding the same title get two files
+            os.close(os.open(inside(folder, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        except FileExistsError:
+            continue
+        return name
+    raise Refused(f"too many decisions named {base} today")
+
+
 def mark(folder, old, new):
+    """Marks old as superseded by new; returns the function that puts old back as it was."""
     meta, body = read(folder, old)
+    before = dict(meta)
     meta["status"], meta["superseded_by"] = "superseded", new
     write(folder, old, meta, body)
+    return lambda: write(folder, old, before, body)
 
 
 def cmd_supersede(folder, a):
     old, new = safe_name(a.file), safe_name(a.by)
     if old == new:
         raise Refused("a decision cannot supersede itself")
-    meta_old, _ = read(folder, old)
-    meta_new, body_new = read(folder, new)
-    if meta_old.get("status", "active") != "active":
-        raise Refused(f"{old} is already superseded (by {meta_old.get('superseded_by') or '?'})")
-    if meta_new.get("status", "active") != "active":
-        raise Refused(f"{new} is itself superseded; supersede with an active decision")
-    if not meta_new.get("supersedes"):
-        meta_new["supersedes"] = old
-        write(folder, new, meta_new, body_new)
-    mark(folder, old, new)
+    read(folder, old), read(folder, new)              # a missing file is named before the store is locked
+    with locked(folder):                              # check and mark in one step: one of two racing sessions wins
+        meta_old, _ = read(folder, old)
+        meta_new, body_new = read(folder, new)
+        if status(meta_old) != "active":
+            raise Refused(f"{old} is already superseded (by {meta_old.get('superseded_by') or '?'})")
+        if status(meta_new) != "active":
+            raise Refused(f"{new} is itself superseded; supersede with an active decision")
+        undo = mark(folder, old, new)
+        if not meta_new.get("supersedes"):
+            try:
+                meta_new["supersedes"] = old
+                write(folder, new, meta_new, body_new)
+            except BaseException:
+                undo()
+                raise
     print(f"{old} superseded by {new}")
     return 0
 
@@ -289,9 +381,9 @@ def cmd_supersede(folder, a):
 def cmd_list(folder, a):
     rows = (entries if a.all else active)(folder) if os.path.isdir(folder) else []
     for name, meta in rows:
-        status = meta.get("status", "active")
-        extra = f"  -> {meta['superseded_by']}" if status == "superseded" and meta.get("superseded_by") else ""
-        print(f"{line(name, meta)}  [{status}, {meta.get('source', '?')}]{extra}")
+        raw = one_line(meta.get("status") or "active", 40)   # as written: a hand edit stays visible
+        extra = f"  -> {meta['superseded_by']}" if status(meta) == "superseded" and meta.get("superseded_by") else ""
+        print(f"{line(name, meta)}  [{raw}, {meta.get('source', '?')}]{extra}")
     return 0
 
 
@@ -354,8 +446,11 @@ if __name__ == "__main__":
         pass
     if len(sys.argv) == 1:
         try:
-            code = hook()
+            hook()
+            sys.stdout.flush()
         except BaseException:                         # the session must start whatever happens here
-            code = 0
-        sys.exit(code)
+            pass
+        # os._exit, not sys.exit: the interpreter flushes stdout once more on the way out, and a stdout that is
+        # full or closed would turn that into exit 120. Everything the hook printed was flushed above.
+        os._exit(0)
     sys.exit(main(sys.argv[1:]))

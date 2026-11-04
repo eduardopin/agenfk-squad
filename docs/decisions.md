@@ -51,7 +51,10 @@ Production deploys happen Monday to Thursday.
 Two Friday incidents in October ran into the weekend with nobody on call.
 ```
 
-`source` is `owner` or `card <id>`. `status` is `active` or `superseded`. A
+`source` is `owner` or `card <id>`. `status` is `active` or `superseded`,
+read without regard to case; a file edited by hand with any other value is
+left out of the index and shown as written by `list --all`, and a leading
+byte order mark is ignored. A
 decision is never deleted: superseding one sets its `status: superseded` and
 `superseded_by: <new file>`, and leaves it out of the index. The old file stays
 as the record of what was decided before, whole, not summarised.
@@ -89,6 +92,19 @@ EOF
 
 A refused request (bad source, empty body, a `--supersedes` that does not
 exist, a path as a file name) exits 2 and writes nothing.
+
+`add`, `supersede` and `add --supersedes` hold an exclusive lock on the store
+(`.lock` in it) while they check a status and change it, so two sessions
+superseding the same decision at once cannot both win: the second one is
+refused. With `--supersedes`, the old decision is marked first and the new one
+written last; a failure on either side undoes the other, so no half state is
+left with both active.
+
+**Who can write.** `--source owner` is self-declared: nothing checks that the
+owner typed it. Any session that can run Bash can record a decision, and every
+later session of that repository reads it at start. A pull request cannot plant
+one, because the store lives outside the checkout; to audit, `squad-decisions
+list --all` shows every decision with its source, and `show` the whole file.
 
 ## The SessionStart hook
 

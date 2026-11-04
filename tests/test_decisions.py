@@ -8,7 +8,9 @@ under the OS temp dir, and never touches ~/.claude.
     python3 tests/test_decisions.py
 """
 import atexit
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -16,6 +18,9 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "hooks", "squad-decisions.py")
@@ -247,7 +252,51 @@ def test_the_budget_counts_bytes_not_characters():
     assert len(out.encode("utf-8")) <= 900 and "more left out" in out, len(out.encode("utf-8"))
 
 
+def test_the_budget_holds_in_bytes_on_a_crlf_stdout():
+    """A text-mode stdout on Windows writes "\r\n" for "\n"; the hook writes bytes, so the budget still holds:
+    the raw bytes are the same as on a plain pipe, which the budget tests above hold to the cap."""
+    h = home()
+    r = repo(h)
+    for i in range(12):
+        add(h, r, f"Line ending case {i}")
+    budget = len(cli(h, r, "index").stdout.encode("utf-8")) - 150
+    plain = subprocess.run([sys.executable, HOOK], cwd=r, input=json.dumps({"cwd": r}).encode(),
+                           capture_output=True, env=env(h, SQUAD_DECISIONS_BUDGET=str(budget))).stdout
+    assert b"more left out" in plain and len(plain) <= budget, plain
+    crlf = ("import importlib.util, io, sys\n"
+            "spec = importlib.util.spec_from_file_location('d', sys.argv[1])\n"
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+            "sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', newline='\\r\\n')\n"
+            "m.hook(); sys.stdout.flush()\n")
+    out = subprocess.run([sys.executable, "-c", crlf, HOOK], cwd=r, input=json.dumps({"cwd": r}).encode(),
+                         capture_output=True, env=env(h, SQUAD_DECISIONS_BUDGET=str(budget)))
+    assert out.returncode == 0 and out.stderr == b"", out
+    assert len(out.stdout) <= budget and out.stdout == plain, (len(out.stdout), budget, out.stdout[:200])
+
+
 # 4. the hook never fails a session
+
+def test_a_full_stdout_still_exits_0():
+    """The interpreter's last flush of a full stdout used to end the hook with exit 120."""
+    h = home()
+    r = repo(h)
+    add(h, r, "Anything at all")
+    full = ("import io, runpy, sys\n"
+            "class Full(io.RawIOBase):\n"
+            "    def writable(self): return True\n"
+            "    def write(self, b): raise OSError(28, 'No space left on device')\n"
+            "sys.stdout = io.TextIOWrapper(io.BufferedWriter(Full()), encoding='utf-8')\n"
+            "sys.argv = [sys.argv[1]]\n"
+            "runpy.run_path(sys.argv[0], run_name='__main__')\n")
+    out = subprocess.run([sys.executable, "-c", full, HOOK], cwd=r, input=json.dumps({"cwd": r}),
+                         capture_output=True, text=True, encoding="utf-8", env=env(h))
+    assert out.returncode == 0 and out.stderr == "", out
+    if os.path.exists("/dev/full"):                   # the real device too, where the OS has one
+        with open("/dev/full", "w") as dev:
+            out = subprocess.run([sys.executable, HOOK], cwd=r, input=b"{}", stdout=dev,
+                                 stderr=subprocess.PIPE, env=env(h))
+        assert out.returncode == 0 and out.stderr == b"", out
+
 
 def test_the_hook_is_silent_when_there_is_nothing_to_say():
     h = home()
@@ -323,7 +372,137 @@ def test_squad_decisions_0_turns_the_hook_off():
     assert hook(h, r, SQUAD_DECISIONS="0").stdout == ""
 
 
-# 5. nothing escapes the store
+def test_a_bom_or_a_capitalised_status_does_not_hide_a_decision():
+    h = home()
+    r = repo(h)
+    store = cli(h, r, "path").stdout.strip()
+    os.makedirs(store)
+    files = {"2026-01-01-bom.md": "\ufeff---\ntitle: With a BOM\nstatus: active\n---\nx\n",
+             "2026-01-02-caps.md": "---\r\ntitle: Capitalised\r\nstatus: Active\r\n---\r\nx\r\n",
+             "2026-01-03-typo.md": "---\ntitle: Typo status\nstatus: actvie\n---\nx\n"}
+    for name, text in files.items():
+        with open(os.path.join(store, name), "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+    out = hook(h, r).stdout
+    assert "With a BOM" in out and "Capitalised" in out, out
+    assert "Typo status" not in out, "an unknown status is not active"
+    every = cli(h, r, "list", "--all").stdout
+    assert "Typo status" in every and "[actvie," in every, every
+    assert "[Active," in every, "list --all shows the status as written"
+    # the capitalised one is active for supersede too
+    assert cli(h, r, "supersede", "2026-01-02-caps.md", "--by", "2026-01-01-bom.md").returncode == 0
+    assert "Capitalised" not in hook(h, r).stdout
+
+
+# 5. one session wins a race, and a failure leaves no half state
+
+def _store_with(m, *titles):
+    folder = home()
+    names = []
+    for i, t in enumerate(titles):
+        name = f"2026-01-0{i + 1}-{m.slug(t)}.md"
+        m.write(folder, name, {"title": t, "date": f"2026-01-0{i + 1}", "source": "owner", "status": "active"},
+                "## What\nx\n")
+        names.append(name)
+    return folder, names
+
+
+def test_two_concurrent_supersedes_of_one_decision_one_wins():
+    """Reading the old decision is slowed down so both sessions are inside check-then-mark at once."""
+    m = module()
+    folder, (old, a, b) = _store_with(m, "Old", "New A", "New B")
+    real = m.read
+
+    def slow(f, name):
+        got = real(f, name)
+        if name == old:
+            time.sleep(0.3)
+        return got
+    m.read = slow
+    results = {}
+
+    def run(by):
+        try:
+            results[by] = m.cmd_supersede(folder, types.SimpleNamespace(file=old, by=by))
+        except m.Refused as e:
+            results[by] = e
+    with contextlib.redirect_stdout(io.StringIO()):
+        threads = [threading.Thread(target=run, args=(n,)) for n in (a, b)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    m.read = real
+    wins = [n for n, v in results.items() if v == 0]
+    assert len(wins) == 1, results
+    meta, _ = m.read(folder, old)
+    assert meta["status"] == "superseded" and meta["superseded_by"] == wins[0], meta
+    loser = a if wins[0] == b else b
+    assert not m.read(folder, loser)[0].get("supersedes"), "the loser does not claim to supersede it"
+
+
+def test_a_failure_in_add_supersedes_or_supersede_leaves_no_half_state():
+    m = module()
+    real = m.write
+
+    def failing(target):
+        def write(f, name, meta, body):
+            if target(name):
+                raise OSError(28, "No space left on device")
+            return real(f, name, meta, body)
+        return write
+
+    def add_args(old):
+        return types.SimpleNamespace(title="Replacement", source="owner", supersedes=old)
+
+    # marking the old one fails: no new decision, the old one still the only active one
+    folder, (old,) = _store_with(m, "Old")
+    m.write = failing(lambda n: n == old)
+    sys.stdin, stdin = io.StringIO("## What\nnew\n"), sys.stdin
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                m.cmd_add(folder, add_args(old))
+            except OSError:
+                pass
+            else:
+                raise AssertionError("the failure was swallowed")
+        assert [n for n, _ in m.active(folder)] == [old], m.active(folder)
+        assert sorted(os.listdir(folder)) == [m.LOCK, old], os.listdir(folder)
+
+        # writing the new one fails after the old one was marked: the old one is put back as it was
+        m.write = failing(lambda n: n != old)
+        sys.stdin = io.StringIO("## What\nnew\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                m.cmd_add(folder, add_args(old))
+            except OSError:
+                pass
+            else:
+                raise AssertionError("the failure was swallowed")
+    finally:
+        sys.stdin = stdin
+        m.write = real
+    assert [n for n, _ in m.active(folder)] == [old] and not m.read(folder, old)[0].get("superseded_by")
+    assert sorted(os.listdir(folder)) == [m.LOCK, old], os.listdir(folder)
+
+    # supersede: recording `supersedes` on the new one fails, so the old one is not left marked
+    folder, (old, new) = _store_with(m, "Old", "New")
+    m.write = failing(lambda n: n == new)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                m.cmd_supersede(folder, types.SimpleNamespace(file=old, by=new))
+            except OSError:
+                pass
+            else:
+                raise AssertionError("the failure was swallowed")
+    finally:
+        m.write = real
+    assert m.status(m.read(folder, old)[0]) == "active", m.read(folder, old)
+
+
+# 6. nothing escapes the store
 
 def test_a_title_cannot_name_a_path():
     h = home()

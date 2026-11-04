@@ -45,13 +45,17 @@ It links, into `${CLAUDE_CONFIG_DIR:-~/.claude}`:
 | `agents/<name>.md` | each file in `agents/` |
 | `skills/<name>` | each skill directory that has a `SKILL.md`, including those in `skills/vendor/` |
 | `CLAUDE.md` | `CLAUDE.md` |
-| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py` | the files in `hooks/` |
+| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py`, `squad-decisions.py` | the files in `hooks/` |
 
-and, so that the merge queue can be called by name:
+and, so that the merge queue and the project decisions can be called by name:
 
 | Link | Target |
 |---|---|
 | `~/.local/bin/squad-turn` | `hooks/squad-turn.py` |
+| `~/.local/bin/squad-decisions` | `hooks/squad-decisions.py` ([Project decisions](decisions.md)) |
+
+On Windows, `install.ps1` writes `squad-turn.cmd` and `squad-decisions.cmd`
+shims in `%USERPROFILE%\.local\bin` instead (see [Windows](#windows)).
 
 Make sure `~/.local/bin` is on your `PATH`.
 
@@ -154,6 +158,13 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
           { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 20 }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-decisions.py", "timeout": 5 }
+        ]
+      }
     ]
   }
 }
@@ -163,6 +174,7 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 |---|---|
 | `squad-router.py` | `UserPromptSubmit` |
 | `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `PreCompact` |
+| `squad-decisions.py` | `SessionStart`: prints the index of the project's active decisions ([Project decisions](decisions.md)) |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
 them when needed. `squad-wake.py` is not a hook either: the timer runs it.

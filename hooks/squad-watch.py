@@ -107,6 +107,7 @@ Thresholds, by environment variable:
   SQUAD_CARRY_MAX     (3)       stops in a row without progress before carry on lets go
   SQUAD_CARRY_CAP     (200)     carry-on holds per goal
   SQUAD_CARRY_AGE     (43200)   seconds without progress after which an explicit goal expires
+  SQUAD_CARRY_BLOCKED_AGE (604800) the same for a goal waiting in BLOCKED
   SQUAD_CARRY=0                 turns carry on off
   SQUAD_WATCH=0                 turns it off
 
@@ -1948,6 +1949,7 @@ CARRY = os.environ.get("SQUAD_CARRY") != "0"
 CARRY_MAX = env_int("SQUAD_CARRY_MAX", 3)      # stops in a row without progress before the hold lets go
 CARRY_CAP = env_int("SQUAD_CARRY_CAP", 200)    # holds per goal, progress or not
 CARRY_AGE = env_int("SQUAD_CARRY_AGE", 12 * 3600)   # an explicit goal without progress this long has expired
+CARRY_BLOCKED_AGE = env_int("SQUAD_CARRY_BLOCKED_AGE", 7 * 86400)   # a BLOCKED goal nobody answered
 AGENFK = os.environ.get("SQUAD_AGENFK") or "agenfk"
 # only at the start of a line and with real content: quoting the template ("<what ...>") does not count
 GOAL = re.compile(r"(?m)^[\s>*`-]*\[squad\]\s*GOAL\s*:\s*([^<\s`][^\n]{0,400})$", re.I)
@@ -1972,8 +1974,7 @@ OFFER = re.compile(
     r"|\blet\s+me\s+know\s+if\s+you(?:'d)?\s+(?:want|like)\s+me\s+to\b|\bwaiting\s+(?:on|for)\s+you\b", re.I)
 DELIVERY = re.compile(
     r"\b(?:cards?|cart(?:ão|ões|ao|oes)|frentes?|fronts?|PRs?|pull\s+requests?|merges?|mergear|push|ondas?"
-    r"|waves?|deploys?|review|reviews|revis[ãa]o|branch(?:es)?|worktrees?|commits?|tarefas?|tasks?|tickets?"
-    r"|issues?|releases?|follow-up|entregas?|deliver(?:y|ies)?)\b|#\d+", re.I)
+    r"|waves?|deploys?|worktrees?|releases?|follow-up)\b|#\d+", re.I)
 FENCE = re.compile(r"```.*?(?:```|\Z)", re.S)
 QUOTE = re.compile(r"(?m)^\s*>.*$")
 
@@ -2027,8 +2028,8 @@ def adopt_goal(prev, text, source):
 
 def stale(g):
     """An explicit goal with no progress for CARRY_AGE. A BLOCKED goal waits for the owner, however long."""
-    return (g.get("source") != "implicit" and not g.get("blocked")
-            and time.time() - g.get("progress_ts", g.get("ts", 0)) > CARRY_AGE)
+    age = time.time() - g.get("progress_ts", g.get("ts", 0))
+    return g.get("source") != "implicit" and age > (CARRY_BLOCKED_AGE if g.get("blocked") else CARRY_AGE)
 
 
 def hands_back(text, worked):
@@ -2037,7 +2038,8 @@ def hands_back(text, worked):
     if STEP.search(text):
         return True
     for m in OFFER.finditer(text):
-        if worked() or DELIVERY.search(text[max(0, m.start() - 160):m.end() + 160]):
+        line = text[text.rfind("\n", 0, m.start()) + 1:(text.find("\n", m.end()) + 1 or len(text) + 1) - 1]
+        if worked() or DELIVERY.search(line):
             return True
     return False
 
@@ -2056,6 +2058,7 @@ def carry_prompt(st, text, session=""):
     after the guard let go; an implicit one (a reply that named a next step) ends here,
     because the owner's new request decides what comes next. An explicit goal with no
     progress for CARRY_AGE has expired: the owner moved on."""
+    st.pop("closed_goal", None)           # the owner speaks: a closed goal may be opened again
     m = GOAL.search(text)
     if m:
         st["goal"] = new_goal(m.group(1), "owner")
@@ -2177,7 +2180,7 @@ def carry_on(p, path, st):
         goal = None
     for t in texts:
         m = GOAL.search(t)
-        if m:
+        if m and goal_text(m.group(1)) != st.get("closed_goal"):
             goal = adopt_goal(goal, m.group(1), "session")
     last = texts[-1] if texts else ""
     end = None
@@ -2247,10 +2250,10 @@ def carry_on(p, path, st):
         goal["releases"] = goal.get("releases", 0) + 1
         if goal.get("holds", 0) >= CARRY_CAP:
             why += ", so the goal is closed"
-            goal = None
+            st["closed_goal"], goal = goal.get("text"), None
         elif goal["releases"] >= 2 and goal.get("source") != "implicit":
             why += "; released twice in a row without progress, so the goal is closed"
-            goal = None
+            st["closed_goal"], goal = goal.get("text"), None
         keep(goal)
         carry_note(session, st, why)
         save(path, st)

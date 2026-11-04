@@ -387,8 +387,8 @@ A delivery is open when either holds:
   or card ("o próximo passo é o card X", "next card"), offers to do it ("posso
   abrir essa frente agora, se você quiser", "quer que eu", "want me to", "shall
   I"), or says it is waiting for the owner ("esperando você", "waiting on
-  you"). An offer or a wait counts only when it speaks of delivery work (a
-  card, front, PR, merge, push, wave, deploy, review, branch, `#12`) or follows
+  you"). An offer or a wait counts only when its own line speaks of delivery work
+  (a card, front, PR, merge, push, wave, deploy, worktree, `#12`) or follows
   work done in the same turn, so "want me to go deeper?" after an explanation
   is not a delivery; code blocks and quoted lines are not read. It lives only
   while replies keep doing that, and it ends at the owner's next message. Its first hold counts as no progress unless work was
@@ -427,7 +427,9 @@ The hold never wins against the owner or the watcher:
 - an explicit goal released twice in a row without progress in between is
   closed, and one with no progress for `SQUAD_CARRY_AGE` (43200 s, 12 h) has
   expired, so an abandoned goal does not hold the owner's later chat. A goal in
-  `BLOCKED` does not age: the owner's answer re-arms it however late it comes;
+  `BLOCKED` ages for `SQUAD_CARRY_BLOCKED_AGE` (7 days) instead, and the owner's
+  answer re-arms it. A closed goal does not come back by the session writing
+  the same line again; the owner's next message lifts that;
 - reaching `SQUAD_CARRY_CAP` closes the goal;
 - `SQUAD_CARRY=0` turns it off.
 

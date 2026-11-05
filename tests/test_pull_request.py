@@ -518,6 +518,75 @@ def test_blocking_review_requests_changes_and_self_review_only_comments():
     assert "**Blocking.**" in rev["comments"][0]["body"], rev
 
 
+REVIEW_DIFF = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n x = 1\n+y = secret\n"
+REVIEW_FINDING = {"severity": "High", "path": "a.py", "line": 2,
+                  "problem": "The call has no timeout.", "fix": "Pass a timeout."}
+
+
+def run_review_comments(tmp, findings, *extra):
+    d, f = os.path.join(tmp, "pr.diff"), os.path.join(tmp, "findings.json")
+    with open(d, "w") as fh:
+        fh.write(REVIEW_DIFF)
+    with open(f, "w") as fh:
+        json.dump(findings, fh)
+    return subprocess.run([sys.executable, "-I", "-B", os.path.join(SKILL, "scripts", "review_comments.py"),
+                           "--diff", d, "--findings", f, *extra], capture_output=True, text=True)
+
+
+def test_high_finding_is_a_comment_that_never_blocks_the_approve():
+    """Pins the High level: it sits between Blocking and Minor, is accepted in both languages, labels the inline
+    comment, tells the author to fix it before the merge, and leaves the event at APPROVE."""
+    rev = review_comments.build_review(REVIEW_DIFF, [dict(REVIEW_FINDING)])
+    assert rev["event"] == "APPROVE", rev
+    assert rev["comments"][0]["body"].startswith("**High.**"), rev
+    assert "fix them before" in rev["body"] and "Verdict: Approve" in rev["body"], rev
+    assert review_comments.SEVERITIES == ("Blocking", "High", "Minor"), review_comments.SEVERITIES
+    outside = review_comments.build_review(REVIEW_DIFF, [dict(REVIEW_FINDING, line=40)])
+    assert "| High |" in outside["body"] and outside["event"] == "APPROVE", outside
+    both = review_comments.build_review(REVIEW_DIFF, [dict(REVIEW_FINDING), dict(REVIEW_FINDING, severity="Blocking")])
+    assert both["event"] == "REQUEST_CHANGES" and "do not block the merge, but" not in both["body"], both
+    pt = review_comments.build_review(REVIEW_DIFF, [dict(REVIEW_FINDING, severity="Alta")], lang="pt")
+    assert pt["event"] == "APPROVE" and "**Alta.**" in pt["comments"][0]["body"], pt
+    selfrev = review_comments.build_review(REVIEW_DIFF, [dict(REVIEW_FINDING)], self_review=True)
+    assert selfrev["event"] == "COMMENT" and "fix them before" not in selfrev["body"], selfrev
+    bad = run_review_comments(tempfile.mkdtemp(), [dict(REVIEW_FINDING, severity="Critical")])
+    assert bad.returncode == 2 and "severity" in bad.stderr, bad
+
+
+def test_markdown_flag_writes_the_review_text_for_the_slop_lint():
+    """Pins --markdown: the summary and every comment body land in the file or on stdout, headed by where each
+    comment lands; the JSON payload is unchanged; --help exits 0; the text passes slop_lint.py's input contract."""
+    tmp = tempfile.mkdtemp()
+    out = os.path.join(tmp, "review.md")
+    p = run_review_comments(tmp, [dict(REVIEW_FINDING), dict(REVIEW_FINDING, severity="Minor", line=40, problem="Naming.")],
+                            "--markdown", out)
+    assert p.returncode == 0, p.stderr
+    payload = json.loads(p.stdout)
+    text = open(out).read()
+    assert payload["body"] in text and payload["comments"][0]["body"] in text, text
+    assert "### a.py:2" in text and "Naming." in text, text
+    plain = run_review_comments(tmp, [dict(REVIEW_FINDING)])
+    assert json.loads(plain.stdout)["comments"] == payload["comments"][:1], plain.stdout
+    so = run_review_comments(tmp, [dict(REVIEW_FINDING)], "--markdown", "-")
+    assert so.returncode == 0 and so.stdout.startswith("**Verdict: Approve.**") and "### a.py:2" in so.stdout, so
+    helped = subprocess.run([sys.executable, "-I", "-B", os.path.join(SKILL, "scripts", "review_comments.py"), "--help"],
+                            capture_output=True, text=True)
+    assert helped.returncode == 0 and "--markdown" in helped.stdout, helped
+    slop = os.path.join(ROOT, "skills", "writing", "scripts", "slop_lint.py")
+    if os.path.exists(slop):
+        lint = subprocess.run([sys.executable, "-I", "-B", slop, out], capture_output=True, text=True)
+        assert lint.returncode in (0, 1), lint  # it reads the file; a finding is its verdict, a crash is not
+        assert "Traceback" not in lint.stderr, lint.stderr
+
+
+def test_review_reference_documents_the_three_levels_and_the_lint_step():
+    """Pins references/review.md: High is defined between Blocking and Minor, and the posting step lints --markdown."""
+    with open(os.path.join(SKILL, "references", "review.md")) as fh:
+        doc = fh.read()
+    assert "**High**" in doc and doc.index("**Blocking**") < doc.index("**High**") < doc.index("**Minor**"), "High level"
+    assert "--markdown" in doc and "slop_lint.py" in doc, "lint step"
+
+
 # --- body rules, one by one ---------------------------------------------------
 
 GOOD = {"pt": GOOD_PT, "en": GOOD_EN}

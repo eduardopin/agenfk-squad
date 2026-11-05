@@ -14,3 +14,4 @@
 - [ ] A new or changed denial tells the session how the work continues
 - [ ] New environment variables are listed in `docs/configuration.md`
 - [ ] No private paths, project names or session ids in the diff
+- [ ] I have read CLA.md and I agree to it for this and my future contributions.

@@ -608,6 +608,37 @@ def _load(name, file):
     return mod
 
 
+def test_a_windows_agenfk_command_keeps_its_backslashes_and_drops_its_quotes():
+    w = _load("squad_watch_argv", "squad-watch.py")
+    assert w.agenfk_argv(r"C:\hostedtoolcache\python.exe C:\tools\agenfk.py", windows=True) == \
+        [r"C:\hostedtoolcache\python.exe", r"C:\tools\agenfk.py"]
+    assert w.agenfk_argv(r'"C:\Program Files\Python\python.exe" "C:\a b\agenfk.py"', windows=True) == \
+        [r"C:\Program Files\Python\python.exe", r"C:\a b\agenfk.py"]
+    assert w.agenfk_argv("python3 '/tmp/a b/agenfk.py'", windows=False)[1:] == ["/tmp/a b/agenfk.py"]
+    assert w.agenfk_argv('"unclosed', windows=False) == []
+
+
+def test_card_status_runs_the_windows_split_of_a_quoted_agenfk_path():
+    """card_status reaches agenfk through agenfk_argv, so a Windows SQUAD_AGENFK with a space in its
+    path must arrive as one word, and a bare one with its backslashes: the split is faked as Windows here."""
+    w = _load("squad_watch_card_status", "squad-watch.py")
+    seen = []
+
+    class Done:
+        returncode, stdout = 0, '{"status": "IN_PROGRESS"}'
+
+    real_which, real_run = shutil.which, subprocess.run     # the module objects are shared: put them back
+    w.AGENFK = r'"C:\Program Files\Python\python.exe" C:\tools\agenfk.py'
+    w.agenfk_argv.__defaults__ = (None, True)         # the `windows` default, as on a Windows runner
+    try:
+        shutil.which = lambda word: None              # no launcher lookup: the quoted path stays as is
+        subprocess.run = lambda argv, **kw: seen.append(argv) or Done()
+        assert w.card_status(CARD) == "IN_PROGRESS"
+    finally:
+        shutil.which, subprocess.run = real_which, real_run
+    assert seen == [[r"C:\Program Files\Python\python.exe", r"C:\tools\agenfk.py", "get", CARD, "--json"]]
+
+
 def _shown_lines(text):
     """The `[squad] KEY: text` lines an instruction shows in backticks, as a session would copy them."""
     import re

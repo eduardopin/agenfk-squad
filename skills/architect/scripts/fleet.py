@@ -24,6 +24,7 @@ Python standard library only.
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -42,12 +43,30 @@ FANNED = 6 * 3600      # seconds: a card whose fanout.py session started within 
 TITLE_MAX = 80         # characters of a card title in the order: it is one line
 
 
+def agenfk_argv(cmd=None, windows=os.name == "nt"):
+    """SQUAD_AGENFK (or "agenfk") as argv, split as hooks/squad-watch.py agenfk_argv does: on Windows a
+    backslash is a path separator, not an escape, and the quotes stay for us to strip; the first word
+    goes through shutil.which so that an agenfk.cmd launcher runs by name. [] when it does not parse."""
+    try:
+        words = shlex.split(AGENFK if cmd is None else cmd, posix=not windows)
+    except ValueError:
+        return []
+    if windows:
+        words = [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w for w in words]
+    if words:
+        words[0] = shutil.which(words[0]) or words[0]
+    return words
+
+
 def call_json(args, timeout):
     """(parsed JSON or None, cut): cut is True when the call ran out of time, not when it failed."""
     if timeout <= 0:
         return None, True
     try:
-        r = subprocess.run([*shlex.split(AGENFK), *args], capture_output=True, text=True, timeout=timeout,
+        argv = agenfk_argv()
+        if not argv:
+            return None, False
+        r = subprocess.run([*argv, *args], capture_output=True, text=True, timeout=timeout,
                            stdin=subprocess.DEVNULL)
         return (json.loads(r.stdout) if r.returncode == 0 else None), False
     except subprocess.TimeoutExpired:

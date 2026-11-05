@@ -128,7 +128,7 @@ on a review step with no reviewer dispatch recorded for that card since it enter
 that step is denied (REVIEW REQUIRED): one dispatch unlocks one review step, and a
 re-review after FIX_FIRST needs a new one. The way forward is to dispatch the
 verifier with the card id and the branch.
-  SQUAD_REVIEW_STEPS  (REVIEW,ADVERSARIAL,HEAVY_REVIEW)  steps that need a reviewer; empty = off
+  SQUAD_REVIEW_STEPS  (REVIEW,ADVERSARIAL)  steps that need a reviewer; empty = off
   SQUAD_REVIEW_MEMORY_DAYS (14)  how long a reviewer dispatch is remembered, across
                                  sessions (~/.claude/squad/reviews/<card>.json); no
                                  session writes there with a tool, only the watcher
@@ -255,9 +255,10 @@ DISPATCH = {"Agent", "Task"}
 REVIEWER = re.compile(r"verif|review|revis|segur|secur|audit|advers", re.I)
 CARD = re.compile(r"\b(?:[A-Z][A-Z0-9]{1,6}-\d+[a-z]?|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
 ORCH_LIVE = 600        # seconds: a sub-session with activity within this interval counts as live
-# Review gate. Empty SQUAD_REVIEW_STEPS turns it off.
+# Review gate. Empty SQUAD_REVIEW_STEPS turns it off. HEAVY_REVIEW is not in the default: the flow gives that step
+# to the main session, which runs `squad-review` (another model, via Bash), so no Agent/Task dispatch ever exists.
 REVIEW_STEPS = {s.strip().upper() for s in os.environ.get(
-    "SQUAD_REVIEW_STEPS", "REVIEW,ADVERSARIAL,HEAVY_REVIEW").split(",") if s.strip()}
+    "SQUAD_REVIEW_STEPS", "REVIEW,ADVERSARIAL").split(",") if s.strip()}
 REVIEW_DAYS = max(env_int("SQUAD_REVIEW_MEMORY_DAYS", 14), 1)
 # Outside STATE: every reader of STATE (here, squad-wake, squad-compact, squad-switch) takes its entries for sessions
 REVIEWS = os.path.join(BASE, "reviews")
@@ -2807,9 +2808,27 @@ def replies_since(path, offset):
     return texts, size
 
 
+def agenfk_argv(cmd=None, windows=os.name == "nt"):
+    """SQUAD_AGENFK (or "agenfk") as argv. On Windows a backslash is a path separator, not an escape
+    (POSIX shlex read C:\\a\\b.exe as C:ab.exe), and the quotes stay for us to strip; the first word
+    goes through shutil.which so that an agenfk.cmd launcher runs by name."""
+    try:
+        words = shlex.split(AGENFK if cmd is None else cmd, posix=not windows)
+    except ValueError:
+        return []
+    if windows:
+        words = [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w for w in words]
+    if words:
+        words[0] = shutil.which(words[0]) or words[0]
+    return words
+
+
 def card_status(card):
     try:
-        r = subprocess.run([*shlex.split(AGENFK), "get", card, "--json"], capture_output=True, text=True,
+        argv = agenfk_argv()
+        if not argv:
+            return ""
+        r = subprocess.run([*argv, "get", card, "--json"], capture_output=True, text=True,
                            timeout=6, stdin=subprocess.DEVNULL)
         return str(json.loads(r.stdout).get("status") or "") if r.returncode == 0 else ""
     except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):

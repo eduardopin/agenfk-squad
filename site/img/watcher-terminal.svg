@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="416" viewBox="0 0 1440 416">
+  <title>Example squad-watch hook output from a synthetic transcript</title>
+  <desc>Example hook output from a synthetic transcript at an artificial 550 thousand tokens of context.</desc>
+  <rect width="1440" height="416" fill="#0d1117"/>
+  <style>text { font: 22px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }</style>
+  <text x="50" y="102" fill="#72e2b7">[squad-watch] PROACTIVE HANDOFF — context 550k/1.0M (55%), burn 60% of the budget, reread 90%, each</text><text x="50" y="138" fill="#dce4ed">  turn rereads 55k weighted tokens, a new session pays for itself in 1.2 turn(s). When you close the</text><text x="50" y="174" fill="#dce4ed">  step in progress, without asking permission and without starting a new front: (1) record on the card</text><text x="50" y="210" fill="#dce4ed">  what was decided (`agenfk comment &lt;id&gt; &quot;PAUSE: done X, remaining Y, next Z&quot;`); (2) write the handoff</text><text x="50" y="246" fill="#dce4ed">  with mode A of the `clear-pickup` skill (ground truth by command, short, UNKNOWN for whatever you did</text><text x="50" y="282" fill="#dce4ed">  not verify; under Next step, what remains of the current request, in order); (3) end your reply with</text><text x="50" y="318" fill="#dce4ed">  the handoff path and stop. Tell the owner: `/clear` and then `/clear-pickup pickup`.</text>
+</svg>

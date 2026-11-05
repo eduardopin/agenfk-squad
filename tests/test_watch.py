@@ -1699,8 +1699,14 @@ def test_review_gate_only_on_review_steps():
     sid = "abcdef12-0111"
     for step in ("IMPLEMENT", "IN_PROGRESS", "TEST", "DONE"):
         assert verify(h, sid, cards[step], env) == "nothing", step
-    for step in ("ADVERSARIAL", "HEAVY_REVIEW", "review"):
+    for step in ("ADVERSARIAL", "review"):
         assert "REVIEW REQUIRED" in verify(h, sid, cards[step], env), step
+    # HEAVY_REVIEW is not in the default: the flow gives it to the main session, whose review is
+    # `squad-review` (another model, run through Bash), not an Agent/Task dispatch the gate could count
+    assert verify(h, sid, cards["HEAVY_REVIEW"], env) == "nothing"
+    # ...but naming it explicitly still gates it
+    named = dict(env, SQUAD_REVIEW_STEPS="REVIEW,ADVERSARIAL,HEAVY_REVIEW")
+    assert "REVIEW REQUIRED" in verify(h, sid, cards["HEAVY_REVIEW"], named)
     # the steps are configurable; empty turns the gate off
     narrow = dict(env, SQUAD_REVIEW_STEPS="test")
     assert "REVIEW REQUIRED" in verify(h, sid, cards["TEST"], narrow)
@@ -1860,7 +1866,9 @@ def test_a_reviewer_dispatch_unlocks_one_review_step_not_the_next_one():
     reviewer(h, sid, f"Adversarial review of card {CARD_A}, branch feat/a", env, agent_type="adversarial-verifier")
     assert verify(h, sid, CARD_A, env) == "nothing"
     move(h, CARD_A, "HEAVY_REVIEW")
-    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
+    assert verify(h, sid, CARD_A, env) == "nothing"                 # not in the default steps
+    named = dict(env, SQUAD_REVIEW_STEPS="REVIEW,ADVERSARIAL,HEAVY_REVIEW")
+    assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, named)       # one dispatch does not unlock the next step
     # FIX_FIRST: the card goes back to the implementer and returns to REVIEW; the old dispatches do not count
     move(h, CARD_A, "IN_PROGRESS")
     assert verify(h, sid, CARD_A, env) == "nothing"                 # not a review step
@@ -1896,6 +1904,8 @@ def test_records_from_before_the_step_check_neither_lock_out_nor_unlock_every_st
         assert [d["session"] for d in json.load(fh)["dispatches"]] == ["s59", sid]   # the same file, appended
     # fail-open is unchanged: with agenfk missing or without a history, a recorded dispatch still counts
     move(h, CARD_A, "HEAVY_REVIEW")
+    env = dict(env, SQUAD_REVIEW_STEPS="REVIEW,ADVERSARIAL,HEAVY_REVIEW")   # HEAVY_REVIEW is gated only when named
+    no_stub = dict(no_stub, SQUAD_REVIEW_STEPS=env["SQUAD_REVIEW_STEPS"])
     assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)          # control: the step is gated
     assert verify(h, sid, CARD_A, no_stub) == "nothing"
     last = gate_log(h)[-1]

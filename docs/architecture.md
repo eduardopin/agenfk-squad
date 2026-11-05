@@ -15,6 +15,7 @@ agenfk-squad/
 ├── hooks/
 │   ├── squad-router.py       UserPromptSubmit: suggests the agent, flags the owner's standing rules
 │   ├── squad-watch.py        the watcher: seven hook events
+│   ├── squad-decisions.py    SessionStart: prints the index of the project's decisions (`squad-decisions`)
 │   ├── squad-switch.py       detached: clears the pane and calls the pickup
 │   └── squad-turn.py         the merge queue CLI (`squad-turn`)
 ├── flows/squad-delivery.json the AgenFK flow whose steps match the agents
@@ -86,7 +87,8 @@ stdin. The watcher is one script that looks at `hook_event_name` and branches.
 |---|---|---|---|
 | `UserPromptSubmit` | The owner sends a prompt | `squad-router.py` | No. Prints at most two route hints, and one `[squad decision]` line when the owner states a standing rule |
 | `UserPromptSubmit` | The owner sends a prompt | `squad-watch.py` | No. Delivers pending notes (a sub-session ended badly, `SLOT FREE`, `MERGE TURN`) |
-| `PreToolUse` | Before any tool call | `squad-watch.py` | Yes. Returns `permissionDecision: deny` with the reason |
+| `SessionStart` | A session starts | `squad-decisions.py` | No. Prints the index of the repository's active decisions; nothing when there are none, and it never fails the session |
+| `PreToolUse` | Before any tool call | `squad-watch.py` | Yes. Returns `permissionDecision: deny` with the reason, including `REVIEW REQUIRED` when a card is advanced past a review step with no reviewer dispatched on it |
 | `PostToolUse` | After any tool call | `squad-watch.py` | No. Adds context: warnings, `PROACTIVE HANDOFF` |
 | `PostToolUseFailure` | A tool call fails | `squad-watch.py` | No. Gives back the merge turn a failed merge held |
 | `SubagentStop` | A sub-session ends | `squad-watch.py` | No. Records metrics, leaves a note for the parent |
@@ -144,6 +146,7 @@ restart.
 | `handoffs/<session>-<hash>.md` | watcher | The read-only, hash-checked copy handed to the pickup |
 | `turn/<repo-hash>.json` | watcher | Per repository: who holds the merge turn, since when, the queue |
 | `reviews/<card>.json` | watcher | Per card: the reviewer dispatches the review gate counts, and the owner's one override. Deleting it means the card needs a reviewer again |
+| `decisions/<repo-hash>/<date>-<slug>.md` | `squad-decisions` | One file per decision the project settled, read at `SessionStart` by every session of the repository ([decisions.md](decisions.md)) |
 | `metrics.jsonl` | watcher | One line per finished sub-session |
 | `review-gate.jsonl` | watcher | One line per review-gate denial, fail-open pass and owner override; stops growing at 200 KB |
 | `switches.log` | `squad-switch.py` | Each step of every session switch, and why it gave up when it did |
@@ -236,7 +239,7 @@ model's sense of its own context is not.
 
 **Text is the interface.** There is no protocol between the watcher and the
 session beyond keywords in capitals (`PROACTIVE HANDOFF`, `DISPATCH DENIED`,
-`MERGE TURN`) that `CLAUDE.md` teaches the session to act on. The tests assert
+`REVIEW REQUIRED`, `MERGE TURN`) that `CLAUDE.md` teaches the session to act on. The tests assert
 on those keywords, so a change to one is a change to an API.
 
 **One writer per file.** Agents are prompts, and a prompt cannot stop two

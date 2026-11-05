@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <title>AgenFK Squad — guardrails for parallel Claude Code sessions</title>
+  <meta name="description" content="Twelve role-limited agents and a Python watcher for context budgets, independent review, dispatch limits, and a one-at-a-time merge queue.">
+  <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f1eb" media="(prefers-color-scheme: light)">
+  <link rel="canonical" href="https://eduardopin.github.io/agenfk-squad/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://eduardopin.github.io/agenfk-squad/">
+  <meta property="og:title" content="AgenFK Squad — guardrails for parallel Claude Code sessions">
+  <meta property="og:description" content="Keep context, review, dispatch, and merges from becoming shared blind spots.">
+  <meta property="og:image" content="https://eduardopin.github.io/agenfk-squad/og.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="AgenFK Squad: guardrails for parallel Claude Code sessions">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AgenFK Squad — guardrails for parallel Claude Code sessions">
+  <meta name="twitter:description" content="Keep context, review, dispatch, and merges from becoming shared blind spots.">
+  <meta name="twitter:image" content="https://eduardopin.github.io/agenfk-squad/og.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="shell header-inner">
+      <a class="brand" href="#top" aria-label="AgenFK Squad home">
+        <span class="brand-mark" aria-hidden="true">A/</span>
+        <span>agenfk-squad</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#problem">Problem</a>
+        <a href="#system">System</a>
+        <a href="#agents">Agents</a>
+        <a href="#install">Install</a>
+      </nav>
+      <a class="header-link" href="https://github.com/eduardopin/agenfk-squad">GitHub <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero shell" id="top" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Twelve agents. Python hooks. One local merge queue.</p>
+        <h1 id="hero-title">Parallel Claude Code, with someone watching the blind spots.</h1>
+        <p class="hero-lede">AgenFK Squad keeps context budgets visible, dispatches bounded, reviews independent, and merges moving through the default branch one at a time.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#install">Try the squad</a>
+          <a class="button button-secondary" href="https://github.com/eduardopin/agenfk-squad/blob/beta/docs/architecture.md">Read the architecture</a>
+        </div>
+        <ul class="hero-facts" aria-label="Project facts">
+          <li>Static Markdown agents</li>
+          <li>Python standard library hooks</li>
+          <li>Built on AgenFK</li>
+        </ul>
+      </div>
+
+      <figure class="hero-terminal">
+        <div class="terminal-bar" aria-hidden="true">
+          <span></span><span></span><span></span>
+          <b>squad-watch · PostToolUse</b>
+        </div>
+        <img src="img/watcher-terminal.svg" width="1440" height="416" alt="Example squad-watch hook output from a synthetic transcript at an artificial 550 thousand tokens of context">
+        <figcaption>Example output from the hook over a synthetic transcript with an artificial 550k context value, generated in a throwaway home.</figcaption>
+      </figure>
+    </section>
+
+    <section class="problem-section" id="problem" aria-labelledby="problem-title">
+      <div class="shell">
+        <div class="section-heading split-heading">
+          <div>
+            <p class="kicker">The failure pattern</p>
+            <h2 id="problem-title">Reasonable sessions add up to an unreasonable system.</h2>
+          </div>
+          <p>The limits began with one measured week—not a benchmark, and not a claim about anyone else’s machine.</p>
+        </div>
+
+        <ol class="problem-grid">
+          <li>
+            <span class="beat">01 / context cost</span>
+            <strong>420k–966k</strong>
+            <h3>Context is repaid every turn.</h3>
+            <p>The orchestrating sessions carried hundreds of thousands of context tokens while deciding for themselves when to stop.</p>
+          </li>
+          <li>
+            <span class="beat">02 / unbounded fan-out</span>
+            <strong>249 <small>sub-agents</small></strong>
+            <h3>Spawns look free from inside the session.</h3>
+            <p>Sub-agents consumed 64% of all tokens measured that week.</p>
+          </li>
+          <li>
+            <span class="beat">03 / repeated review</span>
+            <strong>5× <small>one card reviewed</small></strong>
+            <h3>One card was sent to review five times.</h3>
+            <p>That is the measurement. Separately, the observed failure pattern was self-approval: authors judging their own work.</p>
+          </li>
+          <li>
+            <span class="beat">04 / merge collisions</span>
+            <strong>5 <small>projects overnight</small></strong>
+            <h3>Every merge moves the floor.</h3>
+            <p>Five projects orchestrated at once. Without a turn, each session can resolve against a version of the default branch that is about to move.</p>
+          </li>
+        </ol>
+        <p class="source-note">Measured over <strong>one week, one machine, five projects</strong>. Source: <a href="https://github.com/eduardopin/agenfk-squad/blob/beta/README.md#the-problem">README, “The problem”</a>.</p>
+      </div>
+    </section>
+
+    <section class="system-section shell" id="system" aria-labelledby="system-title">
+      <div class="section-heading centered-heading">
+        <p class="kicker">How it fits together</p>
+        <h2 id="system-title">Prompts define the jobs. Hooks enforce the traffic rules.</h2>
+        <p>AgenFK owns the card and evidence. The squad owns role boundaries. The watcher owns context, dispatch, session switches with herdr, and merge turns.</p>
+      </div>
+
+      <div class="diagram-wrap">
+        <svg class="architecture-diagram" viewBox="0 0 1040 590" role="img" aria-labelledby="diagram-title diagram-desc">
+          <title id="diagram-title">AgenFK Squad architecture</title>
+          <desc id="diagram-desc">An owner prompt is routed to a main Claude Code session, which dispatches limited agents. AgenFK gates code and evidence. A watcher observes the main and agent sessions, switches sessions automatically with herdr, and serializes merges through a queue.</desc>
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 z"></path>
+            </marker>
+            <marker id="arrow-dashed" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0 0 L8 4 L0 8 z"></path>
+            </marker>
+          </defs>
+
+          <g class="diagram-box owner-box">
+            <rect x="25" y="238" width="130" height="86" rx="20"></rect>
+            <text x="90" y="275" text-anchor="middle">Owner</text>
+            <text class="small" x="90" y="302" text-anchor="middle">prompt</text>
+          </g>
+          <path class="flow-line" d="M155 281 H232" marker-end="url(#arrow)"></path>
+          <text class="line-label" x="193" y="264" text-anchor="middle">router</text>
+
+          <g class="diagram-box main-box">
+            <rect x="242" y="204" width="244" height="154" rx="24"></rect>
+            <text x="364" y="246" text-anchor="middle">Main session</text>
+            <text class="small" x="364" y="279" text-anchor="middle">orchestrates the card</text>
+            <text class="small" x="364" y="309" text-anchor="middle">advances with evidence</text>
+            <text class="tag" x="364" y="338" text-anchor="middle">never self-approves</text>
+          </g>
+
+          <path class="flow-line" d="M486 252 H570" marker-end="url(#arrow)"></path>
+          <text class="line-label" x="527" y="234" text-anchor="middle">brief</text>
+          <path class="flow-line return-line" d="M570 321 H486" marker-end="url(#arrow)"></path>
+          <text class="line-label" x="527" y="344" text-anchor="middle">evidence</text>
+
+          <g class="diagram-box agents-box">
+            <rect x="580" y="176" width="278" height="218" rx="24"></rect>
+            <text x="719" y="216" text-anchor="middle">Role-limited agents</text>
+            <text class="small" x="719" y="253" text-anchor="middle">plan · map · build · test</text>
+            <text class="small" x="719" y="286" text-anchor="middle">review · cost · context</text>
+            <line x1="614" y1="309" x2="824" y2="309"></line>
+            <text class="tag" x="719" y="343" text-anchor="middle">one writer / one card</text>
+            <text class="tag" x="719" y="373" text-anchor="middle">reviewers: no Edit / Write</text>
+          </g>
+
+          <g class="diagram-box watch-box">
+            <rect x="242" y="28" width="616" height="100" rx="24"></rect>
+            <text x="550" y="69" text-anchor="middle">squad-watch</text>
+            <text class="small" x="550" y="100" text-anchor="middle">measures context · brakes dispatch · detects loops · assigns merge turns</text>
+          </g>
+          <path class="watch-line" d="M364 128 V193" marker-end="url(#arrow-dashed)"></path>
+          <path class="watch-line" d="M719 128 V166" marker-end="url(#arrow-dashed)"></path>
+
+          <g class="diagram-box gate-box">
+            <rect x="242" y="443" width="244" height="114" rx="24"></rect>
+            <text x="364" y="483" text-anchor="middle">AgenFK gates</text>
+            <text class="small" x="364" y="517" text-anchor="middle">card · flow · evidence</text>
+            <text class="tag" x="364" y="544" text-anchor="middle">no card, no code</text>
+          </g>
+          <path class="flow-line" d="M364 358 V433" marker-end="url(#arrow)"></path>
+          <path class="flow-line return-line" d="M580 380 L496 469" marker-end="url(#arrow)"></path>
+
+          <g class="diagram-box exit-box">
+            <rect x="580" y="443" width="194" height="114" rx="24"></rect>
+            <text x="677" y="483" text-anchor="middle">Session switch</text>
+            <text class="small" x="677" y="516" text-anchor="middle">with herdr</text>
+            <text class="tag" x="677" y="544" text-anchor="middle">work continues</text>
+          </g>
+          <path class="watch-line" d="M550 128 V155 Q550 416 647 433" marker-end="url(#arrow-dashed)"></path>
+
+          <g class="diagram-box queue-box">
+            <rect x="824" y="443" width="190" height="114" rx="24"></rect>
+            <text x="919" y="483" text-anchor="middle">Merge queue</text>
+            <text class="small" x="919" y="516" text-anchor="middle">fetch once, suite, land</text>
+            <text class="tag" x="919" y="544" text-anchor="middle">one turn at a time</text>
+          </g>
+          <path class="watch-line" d="M858 92 Q965 110 954 433" marker-end="url(#arrow-dashed)"></path>
+        </svg>
+      </div>
+
+      <div class="system-grid">
+        <article>
+          <span class="system-index">01</span>
+          <h3>Roles with explicit boundaries</h3>
+          <p>Each agent gets a job and a tool list. Writers gate on one card; the independent verifier has no Edit/Write tool and receives the branch, not the author’s story. The no-writing roles still have Bash, so that boundary remains a prompt rule.</p>
+        </article>
+        <article>
+          <span class="system-index">02</span>
+          <h3>A watcher that measures</h3>
+          <p>The Python hook reads transcript usage, applies the same handoff arithmetic as the session report, and treats its capitalized messages as a text API.</p>
+        </article>
+        <article>
+          <span class="system-index">03</span>
+          <h3>A way out of every refusal</h3>
+          <p>A denial says where work continues: in the current session, after a clean handoff, when a slot frees, or with an explicit owner decision.</p>
+        </article>
+        <article>
+          <span class="system-index">04</span>
+          <h3>A local merge queue</h3>
+          <p>Sessions request a turn. When <code>MERGE TURN</code> arrives, that session fetches, merges the default branch once, runs the suite, pushes, and lands.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="agents-section" id="agents" aria-labelledby="agents-title">
+      <div class="shell">
+        <div class="section-heading split-heading">
+          <div>
+            <p class="kicker">The twelve agents</p>
+            <h2 id="agents-title">One role each. Limits included.</h2>
+          </div>
+          <p>The catalogue is Markdown. A project-specific agent with the same name replaces the squad default.</p>
+        </div>
+
+        <div class="agent-grid">
+          <article><div><span class="agent-name">product</span><span class="agent-access read">plans</span></div><h3>Find the smallest usable increment.</h3><p>Reads the repo and board, then creates checkable cards in TODO.</p></article>
+          <article><div><span class="agent-name">github</span><span class="agent-access scoped">claims only</span></div><h3>Map branches, worktrees, and fronts.</h3><p>Plans disjoint parallel work and the merge train; never merges.</p></article>
+          <article><div><span class="agent-name">developer</span><span class="agent-access write">writes</span></div><h3>Turn one card into code.</h3><p>One branch and worktree, with the project suite as the gate.</p></article>
+          <article><div><span class="agent-name">frontend</span><span class="agent-access write">writes</span></div><h3>Own interface and visual quality.</h3><p>Builds screens, components, systems, motion, and visual pieces.</p></article>
+          <article><div><span class="agent-name">design-bridge</span><span class="agent-access write">writes</span></div><h3>Carry design across tools.</h3><p>Moves motion and visual assets between code, Figma, Claude, GPT, and ComfyUI.</p></article>
+          <article><div><span class="agent-name">tester</span><span class="agent-access scoped">tests only</span></div><h3>Prove each new test can fail.</h3><p>Writes tests for one card and records the mutation evidence.</p></article>
+          <article class="agent-featured"><div><span class="agent-name">verifier</span><span class="agent-access read">no Edit/Write</span></div><h3>Review from clean context.</h3><p>Runs review, adversarial checks, and verification; returns SHIP, FIX_FIRST, or REJECT.</p></article>
+          <article><div><span class="agent-name">infra</span><span class="agent-access scoped">plan only</span></div><h3>Write infrastructure, stop at plan.</h3><p>Handles CI/CD, Terraform, Dockerfiles, and migrations; never applies or deploys.</p></article>
+          <article><div><span class="agent-name">finops</span><span class="agent-access read">no Edit/Write</span></div><h3>Price engineering choices.</h3><p>Sources cloud cost and measures token and CI spend.</p></article>
+          <article><div><span class="agent-name">finance</span><span class="agent-access read">no Edit/Write</span></div><h3>Connect cost to the product.</h3><p>Works from sourced data on pricing, margin, break-even, and runway.</p></article>
+          <article><div><span class="agent-name">gtm</span><span class="agent-access read">drafts only</span></div><h3>Draft the route to a user.</h3><p>Positioning, landing copy, outreach, and demos; never publishes or sends.</p></article>
+          <article><div><span class="agent-name">context</span><span class="agent-access scoped">handoffs only</span></div><h3>Decide when a session should move.</h3><p>Measures context, burn, rereading, loops, and verified pickup state.</p></article>
+        </div>
+        <p class="section-link"><a href="https://github.com/eduardopin/agenfk-squad/tree/beta/agents">Read the agent definitions <span aria-hidden="true">→</span></a></p>
+      </div>
+    </section>
+
+    <section class="message-section shell" aria-labelledby="message-title">
+      <div class="message-copy">
+        <p class="kicker">The watcher speaks in exits</p>
+        <h2 id="message-title">A refusal is only useful if work knows where to go.</h2>
+        <p>This is example output from <code>hooks/squad-watch.py</code> over a synthetic transcript with an artificial 550k context value in a throwaway home.</p>
+      </div>
+      <div class="terminal-block">
+        <div class="terminal-bar" aria-hidden="true"><span></span><span></span><span></span><b>watcher output</b></div>
+        <pre tabindex="0" role="region" aria-label="Synthetic proactive handoff message"><code>[squad-watch] PROACTIVE HANDOFF — context 550k/1.0M (55%), burn 60% of the budget, reread 90%, each turn rereads 55k weighted tokens, a new session pays for itself in 1.2 turn(s). When you close the step in progress, without asking permission and without starting a new front: (1) record on the card what was decided (`agenfk comment &lt;id&gt; "PAUSE: done X, remaining Y, next Z"`); (2) write the handoff with mode A of the `clear-pickup` skill (ground truth by command, short, UNKNOWN for whatever you did not verify; under Next step, what remains of the current request, in order); (3) end your reply with the handoff path and stop. Tell the owner: `/clear` and then `/clear-pickup pickup`.</code></pre>
+      </div>
+    </section>
+
+    <section class="install-section" id="install" aria-labelledby="install-title">
+      <div class="shell install-grid">
+        <div>
+          <p class="kicker">Install</p>
+          <h2 id="install-title">Put the squad at the user level.</h2>
+          <p>The installer checks prerequisites, installs the latest stable release, links the agents and hooks into Claude Code, and registers the hook manifest. It refuses to overwrite real files.</p>
+          <p class="requirements"><strong>Needs git, curl, bash and Python 3;</strong> the installer warns if Claude Code or AgenFK are missing. Developed and run daily on Linux; macOS is untested; WSL behaves like Linux when Claude Code runs inside WSL. Windows 10/11 has its own installer and CI job.</p>
+          <p><a href="https://github.com/eduardopin/agenfk-squad/blob/beta/docs/installation.md">Read manual installation, Windows, and uninstall details <span aria-hidden="true">→</span></a></p>
+        </div>
+        <div class="install-command">
+          <div class="terminal-bar" aria-hidden="true"><span></span><span></span><span></span><b>shell</b></div>
+          <pre tabindex="0" role="region" aria-label="Installation command"><code id="install-code">curl -fsSL https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.sh | sh</code></pre>
+          <p class="visually-hidden" aria-live="polite" aria-atomic="true" data-copy-status></p>
+          <noscript><p>Select the command above to copy it.</p></noscript>
+        </div>
+      </div>
+    </section>
+
+    <section class="help-section shell" id="help" aria-labelledby="help-title">
+      <div class="section-heading centered-heading">
+        <p class="kicker">Help wanted</p>
+        <h2 id="help-title">The first machine is documented. The next data point could be yours.</h2>
+        <p>Bring a failure, a threshold, a harness, or a small test. The repository spells out the evidence and isolation expected from both people and coding agents.</p>
+      </div>
+
+      <div class="help-grid">
+        <a href="https://github.com/eduardopin/agenfk-squad/blob/beta/ROADMAP.md">
+          <span>01 / roadmap</span>
+          <h3>Pick an open problem</h3>
+          <p>Adapters beyond herdr, another harness, observe-only mode, safer worktree ownership, and more.</p>
+          <b>See what is missing →</b>
+        </a>
+        <a href="https://github.com/eduardopin/agenfk-squad/blob/beta/CONTRIBUTING.md">
+          <span>02 / contribution guide</span>
+          <h3>Start with evidence</h3>
+          <p>Use the no-dependency checks, the watcher-rule bar, and the smallest useful change.</p>
+          <b>Make a first contribution →</b>
+        </a>
+        <a href="https://github.com/eduardopin/agenfk-squad/blob/beta/docs/external-contributor-agent.md">
+          <span>03 / agent protocol</span>
+          <h3>Contribute from an outside agent</h3>
+          <p>Copy the isolation, approval, sanitization, and validation protocol into your coding agent.</p>
+          <b>Open the protocol →</b>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-inner">
+      <div>
+        <a class="brand" href="#top" aria-label="AgenFK Squad home"><span class="brand-mark" aria-hidden="true">A/</span><span>agenfk-squad</span></a>
+        <p>An independent companion to AgenFK.</p>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="https://github.com/eduardopin/agenfk-squad">Repository</a>
+        <a href="https://github.com/eduardopin/agenfk-squad/issues">Issues</a>
+        <a href="https://github.com/eduardopin/agenfk-squad/blob/beta/LICENSE">License</a>
+        <a href="https://github.com/cglab-public/agenfk">AgenFK</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

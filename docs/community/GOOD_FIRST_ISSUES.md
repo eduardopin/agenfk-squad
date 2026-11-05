@@ -111,7 +111,9 @@ new guess.
   200k and record the value `session_context.py` passes to `handoff_math()`;
   alternatively, drive the watcher with `SQUAD_WINDOW=200000` and record the
   value it passes to `handoff_math()`. Do not present `SQUAD_WINDOW` as an input
-  to `session_context.py`.
+  to `session_context.py`. Note that `session_context.py` resolves a Claude
+  transcript to a window of at least 1M, so for Claude sessions use the watcher
+  route; a transcript that really reports 200k comes from Codex.
 - Give the `Observations` table these columns: window actually used, context,
   weighted burn, reread share, `handoff_math()` decision, timing (early/late),
   and usefulness.

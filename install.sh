@@ -58,6 +58,7 @@ done
 link "$SQUAD/CLAUDE.md" "$CLAUDE/CLAUDE.md" || rc=1
 link "$SQUAD/hooks/squad-router.py" "$CLAUDE/hooks/squad-router.py" || rc=1
 link "$SQUAD/hooks/squad-decisions.py" "$CLAUDE/hooks/squad-decisions.py" || rc=1
+link "$SQUAD/hooks/squad-allow.py" "$CLAUDE/hooks/squad-allow.py" || rc=1
 link "$SQUAD/hooks/squad-watch.py" "$CLAUDE/hooks/squad-watch.py" || rc=1
 link "$SQUAD/hooks/squad-switch.py" "$CLAUDE/hooks/squad-switch.py" || rc=1
 link "$SQUAD/hooks/squad-turn.py" "$CLAUDE/hooks/squad-turn.py" || rc=1
@@ -168,6 +169,7 @@ echo "New agents and skills only show up in sessions started after this step."
 echo "Hooks in settings.json (see docs/installation.md): squad-router.py on UserPromptSubmit;"
 echo "squad-watch.py on PreToolUse, PostToolUse, PostToolUseFailure, SubagentStop, Stop, PreCompact and UserPromptSubmit."
 echo "squad-decisions.py on SessionStart: the index of the project's active decisions (docs/decisions.md)."
+echo "squad-allow.py on PermissionRequest (Write, Edit, MultiEdit, NotebookEdit): answers yes to the file prompts nobody is at the pane for (docs/configuration.md)."
 echo "Register PostToolUseFailure too: without it, a merge that fails holds the merge turn until"
 echo "it expires (SQUAD_TURN_HOLD, 120 s)."
 echo "Changed in the merge turn: SQUAD_TURN_IDLE, SQUAD_TURN_MAX and SQUAD_TURN_CLAIM were removed;"

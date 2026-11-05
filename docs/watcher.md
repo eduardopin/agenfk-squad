@@ -25,7 +25,7 @@ measured. `SQUAD_WATCH=0` turns it off.
 | Hook event | What the watcher does |
 |---|---|
 | `PostToolUse` | Records the call and warns on repetition. Every 60 seconds it reads what was appended to the transcript and redoes the arithmetic: context, burn, reread share, payback. A sub-session at its threshold is told to return its handoff; a main session is told to write one. |
-| `PreToolUse` | In a sub-session: denies an identical repeated call (loop) and, above the context cut, denies everything except `git` and `agenfk`. In a main session: applies the dispatch brake to `Agent`/`Task` calls and the merge queue to merge and sync commands. |
+| `PreToolUse` | In a sub-session: denies an identical repeated call (loop) and, above the context cut, denies everything except `git` and `agenfk`. In a main session: applies the dispatch brake to `Agent`/`Task` calls and the merge queue to merge and sync commands, and the review gate to `agenfk verify` (see [The review gate](#the-review-gate-no-self-approval)). |
 | `PostToolUseFailure` | A tool call failed: if it was the merge that held the merge turn, gives the turn back at once instead of waiting for `SQUAD_TURN_HOLD` to expire. |
 | `SubagentStop` | Writes the sub-session's metrics to `metrics.jsonl` and leaves a note for the parent when the sub-session ended badly. |
 | `UserPromptSubmit` | Delivers pending notes to the main session. |
@@ -225,7 +225,7 @@ is checked:
    letters, digits, `_` and `-`) is handed to `agenfk`. Anything else, such as
    `$ID` or `--`, passes and is logged.
 2. If the step is one of `SQUAD_REVIEW_STEPS` (default
-   `REVIEW,ADVERSARIAL,HEAVY_REVIEW`) and no reviewer dispatch for that card
+   `REVIEW,ADVERSARIAL`) and no reviewer dispatch for that card
    has been recorded **since the card entered that step** (and within the
    last `SQUAD_REVIEW_MEMORY_DAYS`, 14), the call is denied with
    `REVIEW REQUIRED`. One dispatch unlocks one review step: the next review
@@ -347,6 +347,13 @@ session that edits its own environment or settings on purpose; see what it
 guards against, above.
 
 An empty `SQUAD_REVIEW_STEPS` turns the gate off.
+
+`HEAVY_REVIEW` is not in the default. The flow gives that step to the main
+session, whose review is `squad-review`: a different model, run through Bash,
+not an `Agent`/`Task` dispatch. The gate only counts dispatches, so gating the
+step would deny every `agenfk verify` on it with nothing the session could do
+to unlock it. A project whose flow does dispatch a reviewer on `HEAVY_REVIEW`
+can name it: `SQUAD_REVIEW_STEPS=REVIEW,ADVERSARIAL,HEAVY_REVIEW`.
 
 ## The soft stop
 
@@ -586,6 +593,41 @@ The idea follows two public Stop hooks: [claude-goal](https://github.com/jthack/
 (an active `/goal` holds the stop, with a cap per goal) and
 [taskmaster](https://github.com/levi-openclaw/taskmaster) (the transcript is
 re-read for unfinished work). Both are MIT; no code was taken from them.
+
+## Fanning a goal out
+
+Parallel is the default. A `[squad] GOAL:` that names AgEnFK cards is read when it
+opens and on each CARRY ON hold: the open cards at the bottom of the goal's tree
+(`open_leaves`) against the sub-sessions of that session touched in the last 10
+minutes (`live_subs`). With two or more open cards and nothing running the verdict
+is FAN OUT, and the watcher says so: on the UserPromptSubmit that opened the goal,
+and as `[squad-watch] CARRY ON + FAN OUT:` on a hold, ahead of the usual exits.
+Cards in BLOCKED, PAUSED, TRASHED or IDEAS are not open work, as in parallel-plan's
+waves, and a parked card takes its children out with it. Every card the goal names
+is read (up to 10), in parallel, with 6 seconds for AgEnFK as the only bound. If the
+deadline cuts the read short the order still goes out but says "read N of the M named
+cards" and the goal is not marked fanned, so the rest is ordered at a later hold.
+The order names the cards, tells the session to run parallel-plan's waves and
+dispatch wave 1 in one message (at most 6 fronts, one worktree each). Any failure
+(no AgEnFK, no `fleet.py`) means no order, never a broken hook. A check that finds
+nothing to order is remembered on the goal (`fan_checked`) for 5 minutes (`FAN_CHECK`),
+so a dead AgEnFK costs one lookup per window, not one per event. No order goes out
+within 5 minutes (`DENIED_QUIET`) of a denied dispatch either. Implicit goals carry
+no cards and are never fanned out; a BLOCKED or released goal is not either.
+
+- `skills/architect/scripts/fleet.py [--json]` is the survey: one row per live main
+  session with its goal, open cards, running sub-sessions and verdict.
+- `skills/architect/scripts/fanout.py --card <id> --worktree <path>` is for a card
+  that will not fit a sub-agent (over about 120k of context): it opens the card in
+  its own herdr tab, starts Claude there and hands it the goal. Outside herdr it
+  prints how to do that by hand.
+- squad-wake wakes an idle session whose goal is still open once it is past
+  `SQUAD_WAKE_AGE`, instead of leaving it as an old conversation, and the wake text
+  carries the goal and the FAN OUT order. A wake keeps the same brake: no order
+  within `DENIED_QUIET` of a denied dispatch, and the order is recorded on the wake
+  state (`fan_goal`, the goal's `ts`) so a later wake does not repeat it.
+- `fleet.py` reads the session state under `$HOME/.claude/squad/watch`, where the
+  hooks write it, whatever `CLAUDE_CONFIG_DIR` says.
 
 ## Compacting before the cache goes cold
 

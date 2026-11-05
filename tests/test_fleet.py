@@ -196,6 +196,17 @@ def test_a_fan_out_names_every_card_of_a_six_card_goal_and_is_recorded():
     assert json.load(open(path))["goal"].get("fanned")
 
 
+def test_a_cut_project_list_makes_the_read_incomplete():
+    h = W.home()
+    fleet = module(FLEET, "fleet_m2")
+    items = six_cards()[:3]
+    ids = [c["id"] for c in items]
+    start = time.time()
+    leaves, read, total = fleet.goal_leaves(ids, fake_agenfk(h, items, slow_list=True), deadline=1.5)
+    assert time.time() - start < 4
+    assert read < total == 3, (read, total)
+
+
 def test_fanout_logs_where_the_hooks_state_lives_so_the_survey_sees_the_card_as_fanned():
     h = W.home()
     wt = tempfile.mkdtemp(dir=h)

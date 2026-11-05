@@ -27,7 +27,7 @@ import shlex
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HOME = os.path.expanduser("~")
 # the hooks write here whatever CLAUDE_CONFIG_DIR says (squad-watch.py, squad-wake.py), so this reads here
@@ -77,18 +77,33 @@ def goal_leaves(cards, agenfk=None, deadline=6.0):
     def left():
         return min(end - time.time(), 5)
 
-    leaves, items, read = {}, {}, 0
+    leaves, items, unread = {}, {}, set()
     with ThreadPoolExecutor(max_workers=min(len(cards), 8)) as pool:
-        roots = list(pool.map(lambda c: call_json(["get", c, "--json"], left()), cards))
-        for root, cut in roots:
-            read += 0 if cut else 1
-            if isinstance(root, dict) and root.get("id"):
-                items[root["id"]] = root
-        projects = list(dict.fromkeys(r.get("projectId") for r in items.values() if r.get("projectId")))
-        for listed, cut in pool.map(lambda p: call_json(["list", "--project", p, "--json"], left()), projects):
-            for it in listed if isinstance(listed, list) else []:
-                if isinstance(it, dict) and it.get("id"):
-                    items.setdefault(it["id"], it)
+        # a project's list starts as soon as the first card of it is read, so a slow card does not
+        # eat the time of the others' lists
+        pending = {pool.submit(call_json, ["get", c, "--json"], left()): ("get", c) for c in cards}
+        listed_projects, project_of = set(), {}
+        while pending:
+            for fut in as_completed(list(pending)):
+                kind, key = pending.pop(fut)
+                got, cut = fut.result()
+                if kind == "get":
+                    if cut:
+                        unread.add(key)
+                    if isinstance(got, dict) and got.get("id"):
+                        items[got["id"]] = got
+                        project_of[key] = pid = got.get("projectId")
+                        if pid and pid not in listed_projects:
+                            listed_projects.add(pid)
+                            pending[pool.submit(call_json, ["list", "--project", pid, "--json"],
+                                                left())] = ("list", pid)
+                else:
+                    if cut:    # without the project's cards a goal card looks like a leaf: it is not read
+                        unread.update(c for c, pid in project_of.items() if pid == key)
+                    for it in got if isinstance(got, list) else []:
+                        if isinstance(it, dict) and it.get("id"):
+                            items.setdefault(it["id"], it)
+                break          # as_completed was built before the new list calls: rebuild it
     children = {}
     for it in items.values():
         if it.get("parentId"):
@@ -111,7 +126,7 @@ def goal_leaves(cards, agenfk=None, deadline=6.0):
     for card in cards:
         if card in items:
             walk(items[card])
-    return list(leaves.values()), read, len(cards)
+    return list(leaves.values()), len(cards) - len(unread), len(cards)
 
 
 def open_leaves(cards, agenfk=None, deadline=6.0):

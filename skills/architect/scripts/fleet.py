@@ -77,11 +77,14 @@ def goal_leaves(cards, agenfk=None, deadline=6.0):
     def left():
         return min(end - time.time(), 5)
 
+    def timed(args):
+        return call_json(args, left())      # the time left when the call starts, not when it was queued
+
     leaves, items, unread = {}, {}, set()
     with ThreadPoolExecutor(max_workers=min(len(cards), 8)) as pool:
         # a project's list starts as soon as the first card of it is read, so a slow card does not
         # eat the time of the others' lists
-        pending = {pool.submit(call_json, ["get", c, "--json"], left()): ("get", c) for c in cards}
+        pending = {pool.submit(timed, ["get", c, "--json"]): ("get", c) for c in cards}
         listed_projects, project_of = set(), {}
         while pending:
             for fut in as_completed(list(pending)):
@@ -95,8 +98,7 @@ def goal_leaves(cards, agenfk=None, deadline=6.0):
                         project_of[key] = pid = got.get("projectId")
                         if pid and pid not in listed_projects:
                             listed_projects.add(pid)
-                            pending[pool.submit(call_json, ["list", "--project", pid, "--json"],
-                                                left())] = ("list", pid)
+                            pending[pool.submit(timed, ["list", "--project", pid, "--json"])] = ("list", pid)
                 else:
                     if cut:    # without the project's cards a goal card looks like a leaf: it is not read
                         unread.update(c for c, pid in project_of.items() if pid == key)

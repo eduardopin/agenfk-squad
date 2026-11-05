@@ -795,6 +795,7 @@ def pre_dispatch(p):
                    "take the choice to the owner: fix it another way, split the card or accept the risk")
     if why:
         st["blocked"] = st.get("blocked", 0) + 1
+        st["denied_ts"] = time.time()     # fan_out() keeps quiet for DENIED_QUIET: the brake just said no
         again = ""
         if handoff:                       # the watcher ordered a handoff: the switch on Stop is armed
             if st.get("ordered"):
@@ -2626,7 +2627,7 @@ CARRY_EXITS = ("Before you call anything the owner's, do every part you can do y
                "approval the project reserves for the owner, approval on the board, a decision or an answer "
                "only the owner has, a production apply), or `[squad] END: no card is left that I can take`. "
                "These are examples: write your own text after the colon, never a <placeholder>.")
-GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts")
+GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts", "fanned", "fan_checked")
 
 
 def wake_lib():
@@ -2636,6 +2637,61 @@ def wake_lib():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def fleet_lib():
+    """skills/architect/scripts/fleet.py, loaded by path; None on any failure (no fan-out, never a broken hook)."""
+    try:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                            "skills", "architect", "scripts", "fleet.py")
+        spec = importlib.util.spec_from_file_location("squad_fleet", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+DENIED_QUIET = 300     # seconds after a denied dispatch in which no FAN OUT is ordered
+FAN_CHECK = 300        # seconds a verdict other than FAN OUT stands: AgEnFK is not asked on every event
+
+
+def fan_out(goal, session, st=None):
+    """The FAN OUT order for a goal with AgEnFK cards, or "": two or more open cards without a
+    session of their own and nothing running in parallel. At most once per goal (goal["fanned"]),
+    and not within DENIED_QUIET of a denied dispatch: the order would only ask for what the brake
+    refuses. Bounded to 6 s for AgEnFK so the hook keeps its timeout."""
+    if not isinstance(goal, dict) or not goal.get("cards") or goal.get("fanned"):
+        return ""
+    try:
+        denied = float((st or {}).get("denied_ts") or 0)
+    except (TypeError, ValueError):
+        denied = 0       # a corrupt state file must not cost the session its order
+    if time.time() - denied < DENIED_QUIET:
+        return ""
+    try:
+        checked = float(goal.get("fan_checked") or 0)
+    except (TypeError, ValueError):
+        checked = 0
+    if 0 <= time.time() - checked < FAN_CHECK:
+        return ""                # a dead AgEnFK costs 5 s an event; the hook has 10
+    try:
+        fleet = fleet_lib()
+        if fleet is None:
+            return ""
+        leaves, read, total = fleet.goal_leaves(goal["cards"], AGENFK, deadline=6)
+        leaves = fleet.unfanned(leaves)
+        subs = fleet.live_subs(session, STATE)
+        if fleet.verdict(goal, leaves, subs) != "FAN OUT":
+            goal["fan_checked"] = time.time()
+            return ""
+        order = fleet.fan_out_order(goal, leaves, read, total)
+        if read >= total:
+            goal["fanned"] = True       # an order on part of the goal is not recorded: the rest is still due
+        return order
+    except Exception:
+        return ""
 
 
 def goal_text(text):
@@ -2707,6 +2763,9 @@ def carry_prompt(st, text, session=""):
     m = GOAL.search(text)
     if m:
         st["goal"] = new_goal(m.group(1), "owner")
+        order = fan_out(st["goal"], session, st)
+        if order:
+            st.setdefault("pending", []).append(order)
         return
     g = st.get("goal")
     if not isinstance(g, dict):
@@ -2928,8 +2987,11 @@ def carry_on(p, path, st):
     what = (f"The goal: \"{goal['text']}\". " if goal.get("text") else
             "Your last reply hands the delivery back (a next step, an offer, or waiting for the owner): "
             "that work is yours. ")
+    order = fan_out(goal, session, st)
+    save(path, st)                        # goal["fanned"], goal["fan_checked"]: keep() saved the goal before them
     print(json.dumps({"decision": "block", "reason": (
-        "[squad-watch] CARRY ON: the delivery is not finished. " + what +
+        "[squad-watch] CARRY ON" + (" + FAN OUT" if order else "") + ": the delivery is not finished. " +
+        (order + " " if order else "") + what +
         "Do the next step now instead of stopping or offering it: nobody reads this pane between "
         "milestones. Take the next card through its flow, and dispatch parallel fronts where the files are "
         "disjoint. " + CARRY_EXITS + f" (hold {goal['holds']} of {CARRY_CAP}; {CARRY_MAX} stops in a row "

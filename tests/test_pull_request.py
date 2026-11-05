@@ -583,7 +583,7 @@ def test_review_reference_documents_the_three_levels_and_the_lint_step():
     """Pins references/review.md: High is defined between Blocking and Minor, and the posting step lints --markdown."""
     with open(os.path.join(SKILL, "references", "review.md")) as fh:
         doc = fh.read()
-    assert "**High**" in doc and doc.index("**Blocking**") < doc.index("**High**") < doc.index("**Minor**"), "High level"
+    assert "**High**:" in doc and doc.index("**Blocking**:") < doc.index("**High**:") < doc.index("**Minor**:"), "High level"
     assert "--markdown" in doc and "slop_lint.py" in doc, "lint step"
 
 

@@ -166,6 +166,19 @@ def test_a_deadline_that_cuts_the_read_short_is_reported_and_bounds_the_wait():
     assert "4 of the 6 named cards" in order, order
 
 
+def test_the_deadline_bounds_a_goal_with_more_cards_than_workers():
+    h = W.home()
+    fleet = module(FLEET, "fleet_t2c")
+    items = [{"id": f"{n:08x}-0000-4000-8000-000000000000", "type": "TASK", "status": "TODO",
+              "title": f"Card {n}", "projectId": PROJECT} for n in range(1, 18)]
+    ids = [c["id"] for c in items]
+    start = time.time()
+    leaves, read, total = fleet.goal_leaves(ids, fake_agenfk(h, items, slow=ids), deadline=2.0)
+    took = time.time() - start
+    assert took < 4, f"17 hung cards on 8 workers took {took:.1f} s against a 2 s deadline"
+    assert (read, total) == (0, 17), (read, total)
+
+
 def test_a_cut_read_does_not_mark_the_goal_fanned():
     h = W.home()
     items = six_cards()

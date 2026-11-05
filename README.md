@@ -3,7 +3,7 @@
 [![tests](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml/badge.svg)](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml)
 [![license: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue.svg)](LICENSE)
 
-**A squad of twelve Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).**
+**A squad of eleven Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).**
 
 AgenFK gives an AI coding session a board, a flow and gates: no card, no edit; no
 evidence, no next step. The squad adds what a single gated session still lacks
@@ -76,7 +76,7 @@ flowchart LR
         main["Main session<br/>(the orchestrator)"]
         subgraph squad["Squad agents (sub-sessions)"]
             direction LR
-            plan["product, scheduler<br/>github"]
+            plan["product<br/>github"]
             write["developer<br/>frontend<br/>infra"]
             check["tester<br/>verifier"]
             advise["finops, finance<br/>gtm, context"]
@@ -124,7 +124,6 @@ agent that owns it and the evidence `agenfk verify` has to carry.
 | Agent | Role | Writes? | Model |
 |---|---|---|---|
 | `product` | Says where the project really is, cuts the goal to the smallest usable increment, breaks it into cards | No (creates cards in TODO) | inherit |
-| `scheduler` | Turns a long plan into a dependency graph and waves of cards that run together; recomputes the next wave when a card closes | Card descriptions only (a dependency block) | inherit |
 | `github` | Maps who is in which worktree and branch, plans parallel fronts over disjoint files, proposes the merge train | Worktree claims only | inherit |
 | `developer` | Turns exactly one card into code, on its own branch and worktree | Yes | inherit |
 | `frontend` | Interface, components, design systems, motion, visual pieces, with a measured quality floor | Yes | inherit |
@@ -222,7 +221,7 @@ Then open a project that has an AgenFK board and ask for something:
 |---|---|
 | `pr-evidence` | Repository-template answers and current-head independent reviews/checks/threads; offline, no auto-post or merge |
 | `ci-plan-evidence` | Complete current CI JSON plans, expected environments/checks and exact loss approval; no Terraform/cloud execution |
-| `parallel-plan` | The `Depends on` / `Touches` block the `scheduler` writes on each card and `scripts/waves.py`: iterative dependency waves with inherited parent constraints, blocked prerequisites and conservative file collisions, the critical path and the pairs kept apart by a shared file; forecast only |
+| `parallel-plan` | Iterative dependency waves with inherited parent constraints, blocked prerequisites and conservative file collisions; forecast only |
 | `architect` | Plans a new app, stack or multi-front feature before it is built: contracts, a resource-to-PR table and optimistic/likely/conservative duration ranges computed from a task DAG (`scripts/plan.py`, `delivery_map.py`, `handoff.py`). It does not order dispatch: `parallel-plan` does that from the cards, and a `delivery_map.py` schedule is not a dispatch order |
 | `engineering-evidence` | On-demand diagnosis, contract, source-to-sink security and bounded-cost telemetry checklists |
 | `session-context` | Context indicators for Claude Code, Codex, pi and oh-my-pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |

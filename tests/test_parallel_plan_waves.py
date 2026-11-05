@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""The scheduler turns a long plan into waves of cards that can run together.
+"""`skills/parallel-plan/scripts/waves.py` turns a long plan into waves of cards that can run together.
 
-Covers `skills/parallel-plan/scripts/waves.py` (the arithmetic), the router rule
-that points a request at the `scheduler` agent, and the agent's wiring.
+Covers the arithmetic: dependencies, parent inheritance, file collisions, `--parent`,
+`--done`, paused and archived cards, and the `Depends on` / `Touches` reading.
 
 Self-checking: the exit code is the verdict.
 
-    python3 tests/test_scheduler.py
+    python3 tests/test_parallel_plan_waves.py
 """
 import json
 import os
-import re
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "parallel-plan", "scripts", "waves.py")
-ROUTER = os.path.join(ROOT, "hooks", "squad-router.py")
 sys.path.insert(0, os.path.dirname(SCRIPT))
 sys.dont_write_bytecode = True   # no __pycache__ inside the skill, which ships as is
 import waves  # noqa: E402
@@ -59,12 +57,6 @@ def wave_of(result, cid):
         if cid in wave:
             return i
     raise AssertionError(f"{cid} is in no wave: {result['waves']}")
-
-
-def route(prompt):
-    out = subprocess.run([sys.executable, ROUTER], input=json.dumps({"prompt": prompt}),
-                         capture_output=True, text=True).stdout
-    return [line for line in out.splitlines() if line.startswith("[squad route]")]
 
 
 def item(cid, desc="", status="TODO", parent=None, touches=True):
@@ -419,6 +411,16 @@ def test_an_archived_prerequisite_is_not_done():
     assert r["waves"] == [["bbbb0000"]], "--done is how the owner says an archived card was delivered"
 
 
+def test_a_closed_prerequisite_counts_as_done():
+    for status in ("DONE", "CLOSED"):
+        r = run([item("aaaa0000", status=status), item("bbbb0000", "Depends on: aaaa0000")])
+        assert r["waves"] == [["bbbb0000"]] and r["blocked"] == [], (status, r)
+        assert r["done"] == ["aaaa0000"], (status, r)
+    # a closed container does not finish a child that is still open: refused
+    err = refused({"items": [box("e1e1e1e1", status="CLOSED"), item("t1t1t1t1", parent="e1e1e1e1")]})
+    assert "completed parent" in err, err
+
+
 def test_a_description_dependency_counts_in_every_input_shape():
     a = {"id": "a", "touches": ["a.py"]}
     b = {"id": "b", "touches": ["b.py"], "description": "Depends on: a"}
@@ -449,64 +451,6 @@ def test_a_parent_cycle_is_refused_not_a_dropped_prerequisite():
     assert "parent cycle" in refused(data)
     data["cards"][1]["parentId"] = None
     assert run(data)["waves"] == [["a"], ["c"]], "with the loop broken, c waits on a again"
-
-
-# --- the router --------------------------------------------------------------
-
-def test_the_owners_request_routes_to_the_scheduler_first():
-    hints = route("Precisamos paralelizar as tarefas para entregar mais coisas ao mesmo tempo")
-    assert hints and "`scheduler`" in hints[0], hints
-    for prompt in ("qual o caminho crítico desse epic?", "monta o grafo de dependências dos cards",
-                   "what can run in parallel in this plan?", "show me the critical path of this plan",
-                   "parallelise the epic into waves", "split this roadmap into waves", "quais cards podem rodar em paralelo?",
-                   "which cards can run in parallel?", "what can we run in parallel?",
-                   "o que podemos paralelizar?"):
-        hints = route(prompt)
-        assert hints and "`scheduler`" in hints[0], (prompt, hints)
-
-
-def test_the_scheduler_ignores_graphs_and_paths_that_are_not_a_plan():
-    for prompt in ("show the npm dependency graph", "dependency graph of this python package",
-                   "critical path of the request latency", "critical path rendering in the browser",
-                   "é um projeto longo, quanto falta?"):
-        assert not any("`scheduler`" in h for h in route(prompt)), prompt
-
-
-def test_the_scheduler_does_not_steal_github_or_product_requests():
-    for prompt, owner in (("abre um worktree para esse card", "`github`"),
-                          ("quanto falta para o MVP?", "`product`"),
-                          ("can i merge this pr?", "`verifier`")):
-        hints = route(prompt)
-        assert not any("`scheduler`" in h for h in hints), (prompt, hints)
-        assert any(owner in h for h in hints), (prompt, hints)
-
-
-# --- the agent's wiring ------------------------------------------------------
-
-def frontmatter(path):
-    with open(path) as fh:
-        text = fh.read()
-    m = re.match(r"---\n(.*?)\n---\n", text, re.S)
-    assert m, path
-    return dict(line.split(": ", 1) for line in m.group(1).splitlines() if ": " in line)
-
-
-def test_the_agent_cannot_edit_files():
-    fm = frontmatter(os.path.join(ROOT, "agents", "scheduler.md"))
-    assert fm["name"] == "scheduler"
-    tools = {t.strip() for t in fm["tools"].split(",")}
-    assert not tools & {"Edit", "Write", "NotebookEdit"}, tools
-    assert "Bash" in tools
-
-
-def test_the_agent_is_listed_where_dispatch_is_decided():
-    for rel in ("CLAUDE.md", "README.md", "docs/agents.md", "docs/agenfk-integration.md"):
-        with open(os.path.join(ROOT, rel)) as fh:
-            assert "`scheduler`" in fh.read(), rel
-    with open(os.path.join(ROOT, "flows", "squad-delivery.json")) as fh:
-        todo = json.load(fh)["steps"][0]
-    assert todo["name"] == "TODO" and "scheduler" in todo["exitCriteria"]
-    assert os.path.exists(os.path.join(ROOT, "skills", "parallel-plan", "SKILL.md"))
 
 
 if __name__ == "__main__":

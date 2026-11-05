@@ -1,6 +1,6 @@
 ---
 name: parallel-plan
-description: Propose deterministic dispatch waves from an explicit AgenFK card export, dependencies and touched files, with the stdlib script `waves.py`. Use when the `scheduler` agent records the block on each card, before parallelizing an epic, when a card closes and the next wave is needed, for inherited story dependencies, blocked prerequisites, critical path questions, "what can run in parallel" and "o que pode rodar em paralelo". Read-only forecast; does not dispatch, create cards/worktrees or advance status.
+description: Propose deterministic dispatch waves from an explicit AgenFK card export, dependencies and touched files. Use before parallelizing an epic, for inherited story dependencies, blocked prerequisites, critical path questions, "what can run in parallel" and "o que pode rodar em paralelo". Read-only forecast; does not dispatch, create cards/worktrees or advance status.
 ---
 
 # parallel-plan: dependencies first, file collisions second
@@ -11,11 +11,10 @@ still depends on unfinished work, or while both agents will rewrite one file.
 ## 0. The project decides
 
 Load the project's instructions and flow. `product` defines the smallest
-vertical slices and real prerequisites; the `scheduler` agent records the block
-below on each card; `github` owns branch/worktree geometry. This skill gives
-them a forecast, not dispatch power. No board, branch or card is modified by
-the script. Recollect the plan when a card closes. A forecast never overrides
-gatekeeper or a human approval step.
+vertical slices and real prerequisites; `github` owns branch/worktree geometry.
+This skill gives them a forecast, not a new scheduler agent or dispatch power.
+No board, branch or card is modified by the script. Recollect the plan when a
+card closes. A forecast never overrides gatekeeper or a human approval step.
 
 ## 1. Declare the graph
 
@@ -101,6 +100,4 @@ dispatches and advances cards; only an independent verifier approves them.
 ## Origin
 
 New implementation of dependency-wave ideas from the owner's weekly archive
-(2026-10-12), merged with the `scheduler` contribution (PR #17): its
-`--parent`, `--done`, conflicts and stricter `Depends on` reading, on top of
-this skill's blocked-status, inheritance and collision rules.
+(2026-10-12). No patches were applied wholesale and no new agent role was added.

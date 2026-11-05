@@ -74,9 +74,6 @@ dependencies, what is out of scope.
 agenfk create epic|story|task "<title>" --project <id> [--parent <id>] -d "<scope and criteria>"
 ```
 
-When the plan has more than a handful of cards, hand them to `scheduler`: it
-records the dependencies and touched files on each card and returns the waves.
-
 ## Never
 
 - Speed things up by cutting tests, independent review or security.

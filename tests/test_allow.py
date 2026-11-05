@@ -205,8 +205,11 @@ def test_build_and_dependency_files_with_an_inert_extension_are_not_allowed():
     h = tmp()
     for name in ("requirements.txt", "requirements-dev.txt", "Requirements.TXT", "dev-requirements.txt",
                  "constraints.txt", "constraints-py312.txt", "CMakeLists.txt", "cmakelists.txt",
-                 "llms.txt", "llms-full.txt", "robots.txt"):
-        p = os.path.join(h, "proj", "sub", name)
+                 "llms.txt", "llms-full.txt", "robots.txt", "dev_requirements.txt", "test.requirements.txt",
+                 "requirements/base.txt", "Requirements/dev.txt", "constraints/py312.txt",
+                 "pkg.egg-info/requires.txt", "pkg.egg-info/SOURCES.txt", "pkg-1.0.dist-info/METADATA.txt",
+                 "build_constraints.txt"):
+        p = os.path.join(h, "proj", "sub", *name.split("/"))
         assert ask(h, "Write", p) == "", name
     assert ask(h, "Write", os.path.join(h, "proj", "sub", "notes.txt")) != ""
 

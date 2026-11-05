@@ -12,8 +12,9 @@ A. Write of a NEW file (lexists is false, so a dangling symlink is not new) with
    Refused outright when the root is "/", $HOME or an ancestor of $HOME. No path
    component below the root may start with "." or be named node_modules, vendor,
    .terraform, bin, sbin, hooks, githooks or .githooks, and the name may not be
-   CLAUDE*.md, AGENTS*.md, GEMINI*.md, COPILOT*.md, SKILL.md, CONVENTIONS.md, requirements*.txt,
-   *-requirements*.txt, constraints*.txt, CMakeLists.txt, llms*.txt or robots.txt. No
+   CLAUDE*.md, AGENTS*.md, GEMINI*.md, COPILOT*.md, SKILL.md, CONVENTIONS.md, CMakeLists.txt,
+   llms*.txt or robots.txt, and no component may match *requirements*, *constraints*,
+   *.egg-info or *.dist-info. No
    component of the whole absolute path, root included, may start with ".", and the
    path may not sit under a claude dir or ~/.config. B has the same full-path checks.
 B. Write (new) or Edit/MultiEdit of .md or .json under <root>/docs/architect/.
@@ -60,9 +61,11 @@ CLAUDE_DIRS = {"agents", "skills", "commands", "plugins"}
 INERT = {".md", ".txt", ".csv", ".tsv", ".log", ".png", ".jpg", ".jpeg", ".pdf"}
 STEER = ("claude*.md", "agents*.md", "gemini*.md", "copilot*.md", "skill.md", "conventions.md",
          # read by build, package or crawler tools as code or dependency specs, despite the .txt
-         "requirements*.txt", "*-requirements*.txt", "constraints*.txt", "cmakelists.txt",
+         "*requirements*.txt", "*constraints*.txt", "cmakelists.txt",
          "llms*.txt", "robots.txt")
 BAD = {"node_modules", "vendor", ".terraform", "bin", "sbin", "hooks", "githooks", ".githooks"}
+# a folder pip, setuptools or a build reads as dependency specs: requirements/base.txt, pkg.egg-info/requires.txt
+BAD_GLOB = ("*requirements*", "*constraints*", "*.egg-info", "*.dist-info")
 
 
 def parts(path):
@@ -123,7 +126,9 @@ def inside(path, root):
 
 def clean(path, base):
     """No component below base starts with a dot or names a place that runs or vendors code."""
-    return all(not c.startswith(".") and c.lower() not in BAD for c in parts(os.path.relpath(path, base)))
+    return all(not c.startswith(".") and c.lower() not in BAD
+               and not any(fnmatch.fnmatchcase(c.lower(), g) for g in BAD_GLOB)
+               for c in parts(os.path.relpath(path, base)))
 
 
 def dotted(path):

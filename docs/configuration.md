@@ -55,8 +55,9 @@ has no project.
   .tsv .log .png .jpg .jpeg .pdf`. No path component under the root starts
   with a dot or is named `node_modules`, `vendor`, `.terraform`, `bin`, `sbin`,
   `hooks`, `githooks` or `.githooks`, and the name is not `CLAUDE*.md`, `AGENTS*.md`, `GEMINI*.md`, `COPILOT*.md`,
-  `SKILL.md`, `CONVENTIONS.md`, or a build or dependency spec (`requirements*.txt`,
-  `*-requirements*.txt`, `constraints*.txt`, `CMakeLists.txt`, `llms*.txt`, `robots.txt`). No component of the whole absolute path, root included,
+  `SKILL.md`, `CONVENTIONS.md`, or a build or dependency spec (`CMakeLists.txt`, `llms*.txt`,
+  `robots.txt`, and any file or folder matching `*requirements*`, `*constraints*`,
+  `*.egg-info` or `*.dist-info`). No component of the whole absolute path, root included,
   may start with a dot, and the path may not sit under a claude dir or `~/.config`;
   B has the same checks. A session rooted in a dot folder such as `~/.claude` gets nothing.
 - **B. Architect plan files.** Write of a new, or Edit and MultiEdit of an existing,

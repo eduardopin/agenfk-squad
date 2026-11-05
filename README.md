@@ -1,9 +1,19 @@
+<div align="center">
+
 # agenfk-squad
 
-[![tests](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml/badge.svg)](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml)
-[![license: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
+**Keep parallel Claude Code sessions within budget, independently reviewed, and moving through the default branch one at a time.**
 
-**A squad of eleven Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).**
+A squad of Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).
+
+<a href="https://eduardopin.github.io/agenfk-squad/"><img src="site/img/watcher-terminal.svg" width="900" alt="Example squad-watch hook output from a synthetic transcript at an artificial 550 thousand tokens of context"></a>
+
+[See how the squad works](https://eduardopin.github.io/agenfk-squad/) · [Read the architecture](docs/architecture.md) · [Try the installer](#quickstart)
+
+[![tests](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml/badge.svg)](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml)
+[![License](https://img.shields.io/github/license/eduardopin/agenfk-squad)](LICENSE)
+
+</div>
 
 AgenFK gives an AI coding session a board, a flow and gates: no card, no edit; no
 evidence, no next step. The squad adds what a single gated session still lacks
@@ -20,11 +30,24 @@ once you run several of them at the same time:
   tells the session where the work continues: here, in a fresh session, or with
   the owner.
 
-It is a small thing: Markdown prompts, four Python hooks with no dependencies
+It is a small thing: Markdown prompts, Python hooks with no dependencies
 beyond the standard library, and one test suite. It is also an open question.
 The rules here came from watching real sessions fail, and there are many
 failures we have not seen yet. If you run AI agents in parallel, we want your
 evidence and your rules. See [Contributing](#contributing).
+
+## What is missing
+
+The current system covers context handoffs, dispatch brakes, independent review and a local
+merge queue; it does not yet wake sessions outside herdr, enforce worktree
+ownership, run its hooks in other agent harnesses beyond the existing oh-my-pi
+port, or coordinate two people on two machines.
+
+Concrete ways in: bring a sanitized watcher failure, test the defaults with a
+200k context window, add a tmux/Zellij/WezTerm/kitty adapter, port one rule to
+another harness, or take a smaller item from the [roadmap](ROADMAP.md). Start
+with [CONTRIBUTING.md](CONTRIBUTING.md); outside coding agents can use the
+[external contributor protocol](docs/external-contributor-agent.md).
 
 ## The problem
 
@@ -87,10 +110,11 @@ flowchart LR
 
     subgraph hooks["Hooks"]
         direction TB
-        router["squad-router<br/>routes the request"]
+        router["squad-router<br/>routes the request,<br/>flags owner rules"]
         watch["squad-watch<br/>measures, warns, denies"]
         switch["squad-switch<br/>fresh session + pickup"]
         turn["squad-turn<br/>merge queue"]
+        decisions["squad-decisions<br/>project decisions at session start"]
     end
 
     owner -- prompt --> router --> main
@@ -101,6 +125,7 @@ flowchart LR
     watch -. "every tool call" .-> squad
     watch --> switch
     watch --> turn
+    decisions -- "SessionStart: index" --> main
     switch -- "/clear, then pickup" --> main
 ```
 
@@ -144,11 +169,17 @@ session in messages that start with `[squad-watch]`.
 |---|---|
 | Main session at 80% of its window, or rereading itself for 60% of its spend above a floor that weighs how much it has already burned | `PROACTIVE HANDOFF`: the session writes a handoff and stops; the watcher clears the pane and a fresh session picks the work up |
 | A sub-session repeating the same call, or past 180k of context | Denies the call; the sub-session returns a short handoff to its parent |
-| An orchestrator at 600k of context, or with 40 sub-sessions, or a fourth session orchestrating at once, or a seventh reviewer on one card | `DISPATCH DENIED`, with the way forward spelled out |
+| An orchestrator at 800k of context, or with 60 sub-sessions, or a seventh session orchestrating at once, or a seventh reviewer on one card | `DISPATCH DENIED`, with the way forward spelled out |
+| `agenfk verify` on a card that sits on a review step, with no reviewer dispatched on it since it entered | `REVIEW REQUIRED`: dispatch the verifier, then verify again with its verdict as the evidence |
 | A merge to main while another session holds the turn | Denies it, queues the session, and wakes it with `MERGE TURN` |
 
 Every threshold is an environment variable. The arithmetic, with worked
 examples, is in [docs/watcher.md](docs/watcher.md).
+
+A separate hook, `hooks/squad-decisions.py`, runs on `SessionStart`: it prints
+the index of the project's active decisions (the standing rules the owner
+settled), so a new session in any worktree starts knowing them. Details in
+[docs/decisions.md](docs/decisions.md).
 
 ## Quickstart
 
@@ -162,7 +193,20 @@ register the hooks); what to have first, options, update and uninstall are in
 irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1 | iex
 ```
 
-On Linux, macOS and WSL:
+On Linux, macOS and WSL, the stable installer command is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.sh | sh
+```
+
+This command also requires `curl`, POSIX `sh`, and Bash. The project is
+developed and run daily on Linux; macOS is untested. WSL behaves like Linux
+when Claude Code runs inside WSL.
+
+The command clones into `~/.local/share/agenfk-squad` by default, links the
+agents, skills and hooks, and merges the hook manifest into Claude Code's
+settings after making a backup. Run the same command again to update. For a
+manual development clone instead:
 
 ```bash
 # 1. AgenFK first: the squad assumes its CLI is on your PATH
@@ -200,6 +244,7 @@ Then open a project that has an AgenFK board and ask for something:
 | [docs/architecture.md](docs/architecture.md) | Hooks and events, state on disk, one card from start to finish |
 | [docs/agents.md](docs/agents.md) | Each agent: role, tools, model, limits, when it is dispatched |
 | [docs/watcher.md](docs/watcher.md) | The handoff arithmetic, the dispatch brake, the soft stop, the session switch, the merge queue |
+| [docs/decisions.md](docs/decisions.md) | The project's decision store, `squad-decisions`, and the `SessionStart` hook that prints the index of active decisions at the start of every session |
 | [docs/agenfk-integration.md](docs/agenfk-integration.md) | Flow step → agent → AgenFK command → evidence; how to activate the flow |
 | [docs/configuration.md](docs/configuration.md) | Every `SQUAD_*` variable and its default |
 | [docs/installation.md](docs/installation.md) | Requirements, what the installer links, the `settings.json` hooks, uninstalling, and the Windows section |
@@ -260,8 +305,9 @@ and 11, with its own installer and CI job (see
 [herdr](docs/installation.md#optional-dependencies) pane manager, which
 Windows does not have; without it the watcher still
 orders the handoff and you type `/clear` and `/clear-pickup pickup` yourself.
-The session report reads Codex, pi and oh-my-pi transcripts too, but the hooks
-only drive Claude Code. [ROADMAP.md](ROADMAP.md) lists what that leaves open.
+The session report reads Codex, pi and oh-my-pi transcripts too. The Claude
+Code hooks drive only that harness; oh-my-pi has its own port.
+[ROADMAP.md](ROADMAP.md) lists what that leaves open.
 
 ## Contributing
 
@@ -345,13 +391,23 @@ evidence from two projects. The full requirements are in
 **Safety and community:** follow the
 [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately using
 [GitHub's vulnerability reporting](https://github.com/eduardopin/agenfk-squad/security/advisories/new),
-not public issues. By contributing, you agree to license your contribution
-under the project's [ISC license](LICENSE).
+not public issues. Every pull request must state that you agree to the
+[Contributor License Agreement](CLA.md).
 
 ## License and credits
 
-[ISC](LICENSE), the same license as AgenFK. Third-party skills under
-`skills/vendor/` keep their own license; see [NOTICE](NOTICE).
+[Functional Source License 1.1, ALv2 Future License](LICENSE) (FSL-1.1-ALv2).
+You may use, change and share the squad for anything except offering it, or
+something substantially similar, as a commercial product or service that
+competes with it. Two years after each version is published, that version
+also becomes available under the Apache License 2.0. Releases up to and
+including v0.1.0 remain under the ISC License.
+
+The name "agenfk-squad" is not licensed with the code: a fork you publish
+takes another name. See [TRADEMARKS.md](TRADEMARKS.md).
+
+Third-party skills under `skills/vendor/` keep their own license; see
+[NOTICE](NOTICE). AgenFK keeps its own ISC License.
 
 AgenFK is developed by [CG/lab](https://github.com/cglab-public/agenfk). This
 project is an independent companion to it, not part of it.

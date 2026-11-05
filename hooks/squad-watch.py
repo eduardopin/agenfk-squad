@@ -37,6 +37,14 @@ back).
                     handoff was written: the session is told to rewrite the
                     handoff with it, once, before the switch.
                     SQUAD_SWITCH=0 turns the switch off.
+                    Outside handoff, carry on: while a defined delivery is open (a
+                    `[squad] GOAL:` line from the owner or the session, or a last
+                    reply that hands the work back: a next step or card, an offer
+                    to do it, waiting for the owner) the stop is refused until
+                    the session ends with `[squad] DONE:` (refused while a goal card
+                    is open in AgEnFK), `BLOCKED:` or `END:`. The owner asking to
+                    stop wins; SQUAD_CARRY_MAX stops in a row without progress, or
+                    SQUAD_CARRY_CAP holds per goal, let go and leave a note.
                     Outside handoff, with context >= SQUAD_COMPACT_MIN (150000),
                     schedules squad-compact.py: /compact, with instructions on
                     what to keep, SQUAD_COMPACT_BEFORE (120) s before the cache of
@@ -96,6 +104,11 @@ Thresholds, by environment variable:
                                 in the session itself; from here up, handoff with
                                 the plan and a new session
   SQUAD_MAX_REVIEWS   (6)       reviewer dispatches for the same card
+  SQUAD_CARRY_MAX     (3)       stops in a row without progress before carry on lets go
+  SQUAD_CARRY_CAP     (200)     carry-on holds per goal
+  SQUAD_CARRY_AGE     (43200)   seconds without progress after which an explicit goal expires
+  SQUAD_CARRY_BLOCKED_AGE (604800) the same for a goal waiting in BLOCKED
+  SQUAD_CARRY=0                 turns carry on off
   SQUAD_WATCH=0                 turns it off
 
 A denied dispatch is never just a "no": the message says where the work continues.
@@ -109,6 +122,26 @@ A denied dispatch is never just a "no": the message says where the work continue
                                      verdict; the watcher announces SLOT FREE when
                                      there is a slot
   7th reviewer on the same card      the owner's decision, with what keeps failing
+
+Review gate (main session only): `agenfk verify <id>` (or the MCP validate_progress)
+on a review step with no reviewer dispatch recorded for that card since it entered
+that step is denied (REVIEW REQUIRED): one dispatch unlocks one review step, and a
+re-review after FIX_FIRST needs a new one. The way forward is to dispatch the
+verifier with the card id and the branch.
+  SQUAD_REVIEW_STEPS  (REVIEW,ADVERSARIAL)  steps that need a reviewer; empty = off
+  SQUAD_REVIEW_MEMORY_DAYS (14)  how long a reviewer dispatch is remembered, across
+                                 sessions (~/.claude/squad/reviews/<card>.json); no
+                                 session writes there with a tool, only the watcher
+  SQUAD_SELF_REVIEW_OK=<card id> the owner lets that card through once; logged
+  The step and its entry time come from `agenfk get <id> --json` (3 s per card, 7 s
+  per call, the kill of a slow agenfk included; only the first 64 KB of a command are
+  parsed, the rest is searched for `agenfk verify <id>`). Without an entry time (no
+  history, agenfk not asked), any recorded dispatch counts, logged. It fails
+  OPEN: agenfk missing, slow, failing or unreadable, or an id that is not one, lets
+  the call through, and the reason goes to ~/.claude/squad/review-gate.jsonl (capped
+  at 200 KB). A card left unasked because earlier cards used the 7 s is denied
+  instead: advance one card per call. It guards against mistakes and shortcuts, not
+  a determined bypass: eval, aliases and other indirection are not parsed.
 
 Merge turn (one per repository, ~/.claude/squad/turn/): the turn covers only the
 merge call itself (`gh pr merge`, direct push to the trunk, merge_pull_request), not
@@ -157,12 +190,16 @@ The dispatch ceilings exist because of one week of October 2026: orchestrators
 with 420-966k of context, 249 sub-agents (64% of the consumption), five projects
 orchestrating overnight and one card judged five times.
 """
+import datetime
 import errno
 import hashlib
 import json
+import ntpath
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -218,13 +255,58 @@ DISPATCH = {"Agent", "Task"}
 REVIEWER = re.compile(r"verif|review|revis|segur|secur|audit|advers", re.I)
 CARD = re.compile(r"\b(?:[A-Z][A-Z0-9]{1,6}-\d+[a-z]?|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
 ORCH_LIVE = 600        # seconds: a sub-session with activity within this interval counts as live
+# Review gate. Empty SQUAD_REVIEW_STEPS turns it off. HEAVY_REVIEW is not in the default: the flow gives that step
+# to the main session, which runs `squad-review` (another model, via Bash), so no Agent/Task dispatch ever exists.
+REVIEW_STEPS = {s.strip().upper() for s in os.environ.get(
+    "SQUAD_REVIEW_STEPS", "REVIEW,ADVERSARIAL").split(",") if s.strip()}
+REVIEW_DAYS = max(env_int("SQUAD_REVIEW_MEMORY_DAYS", 14), 1)
+# Outside STATE: every reader of STATE (here, squad-wake, squad-compact, squad-switch) takes its entries for sessions
+REVIEWS = os.path.join(BASE, "reviews")
+REVIEW_LOG = os.path.join(BASE, "review-gate.jsonl")   # not metrics.jsonl: `--tasks` reads every row there as a sub-session
+AGENFK_WAIT = 3        # s for one `agenfk get` (measured at 0.7 s)
+AGENFK_TOTAL = 7       # s for every card in one call, the kill of a slow one included; the hook's whole budget is 10 s
+KILL_WAIT = 2          # s taskkill may take to end a slow agenfk's tree on Windows (POSIX: killpg, at once)
+PARSE_MAX = 65536      # characters of a command shlex reads: it is superlinear (1.1 MB took 21.9 s)
+CARD_ID = re.compile(r"[A-Za-z0-9][\w-]*")    # what may reach `agenfk get`: no option, no expansion
+SHORT_ID = re.compile(r"\b[0-9a-f]{8}\b")     # the 8-character prefix of an AgenFK id
+HEX_ID = re.compile(r"[0-9a-f]{8}[0-9a-f-]*")
+VERIFY_VALUED = {"--evidence", "--wait-minutes", "--check", "--check-note"}
+VERIFY_DRY = {"--plan", "-h", "--help"}
+# Words that leave the next one in command position. A wrapper's options are skipped; the valued ones take
+# the next word with them, and `timeout` takes its duration.
+WRAPPER = {"npx", "env", "command", "exec", "time", "nohup", "sudo", "timeout", "nice", "xargs"}
+WRAPPER_VALUED = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from",
+             "-D", "--chdir", "-r", "--role", "-t", "--type", "-U", "--other-user", "-T", "--command-timeout"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "nice": {"-n", "--adjustment"},
+    "xargs": {"-I", "-n", "--max-args", "-P", "--max-procs", "-L", "--max-lines",
+              "-d", "--delimiter", "-E", "-s", "--max-chars", "-a", "--arg-file"},
+    "npx": {"-p", "--package", "-c", "--call"},
+    "exec": {"-a"},
+}
+WRAPPER_ARGS = {"timeout": 1}
+KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "{", "!"}
+SHELLS = {"bash", "sh", "zsh", "dash"}
+ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# The path before agenfk stops at a separator: `\S*/` scanned to the end of the line from every `;` (64 KB of
+# `;a` took 3 s), and this fallback is what runs on a command shlex cannot read. Blanks after the separator
+# are spaces and tabs only: with `\s*` every newline of a run scanned the rest of the run (24,000 took 10 s).
+VERIFY_LOOSE = re.compile(r"(?:^|[;&|(\n])[ \t]*(?:[^\s;&|(]*/)?agenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")
+VERIFY_TAIL = re.compile(r"\bagenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")   # past PARSE_MAX: anywhere, loosely
+# Past PARSE_MAX, every `agenfk ... verify` with no separator between them counts as a verify (see
+# verify_mentions): blanks and continuations folded first, then only these words and separators are visited.
+FOLD = re.compile(r"(?:[ \t]|\\\n)+")
+MENTION_WORDS = re.compile(r"[\n;&|]|\bagenfk\b|\bverify\b")
+MENTION_SPAN = 300     # characters, after folding, from agenfk to its verify (options, a path, an --evidence value)
 
 
 TURN = os.path.join(BASE, "turn")
 SEALS = os.path.join(BASE, "seals")
 TURN_HOLD = env_int("SQUAD_TURN_HOLD", 120)    # seconds: a turn held longer than this died with its merge call
 INTENT_TTL = 3600      # seconds an intent from `squad-turn request` stays listed
-AT = r"(?:^|[;&|(\n])\s*"                 # command position, for the squad-turn CLI only
+AT = r"(?:^|[;&|(\n])[ \t]*"              # command position, for the squad-turn CLI only (a newline is a separator)
 # The merge patterns match ANYWHERE in the text (bash -c, ssh, eval, xargs, watch...):
 # only spans proven to be data are blanked out first, see merge_text().
 PR_MERGE = re.compile(r"\bgh(?:[ \t]+[^\s;&|]+)*?[ \t]+pr\s+merge\b((?:[ \t]+-[^\s;&|]+)*[ \t]+(?:#?(\d+)\b|\S*/pull/(\d+)))?")
@@ -239,7 +321,9 @@ LITERAL_DIR = re.compile(r"[A-Za-z0-9._/~+,@%=-]+")
 # Git Bash on Windows: C:/work/repo, or /c/work/repo. A backslash path is not literal: bash reads \ as an escape.
 WIN_DIR = re.compile(r"[A-Za-z]:/[A-Za-z0-9._/~+,@%=-]*")
 MSYS_DRIVE = re.compile(r"/([A-Za-z])(?=/|$)")
-TURN_CLI = re.compile(AT + r"(?:\S*/)?squad-turn(?:\.py)?\s+(request|release|status)\b(?:\s+#?(\d+))?")
+# The path stops at a separator, as in VERIFY_LOOSE: `\S*/` scanned to the end of the line from every `;`
+# (100 KB of `;a` took 9.6 s, before either guard ran).
+TURN_CLI = re.compile(AT + r"(?:[^\s;&|(]*/)?squad-turn(?:\.py)?\s+(request|release|status)\b(?:\s+#?(\d+))?")
 # What merge_text() may treat as data. Anything else on the line, or any doubt, counts as code.
 OPAQUE = re.compile(r"\$[({'\[]|`|[<>]\(|<<")      # substitutions, ANSI-C quotes, heredocs
 REDIR_OK = re.compile(r"(?:\d*|&)>(?:&\d|>?[ \t]*/dev/null)(?=[\s;&|]|$)")
@@ -711,6 +795,7 @@ def pre_dispatch(p):
                    "take the choice to the owner: fix it another way, split the card or accept the risk")
     if why:
         st["blocked"] = st.get("blocked", 0) + 1
+        st["denied_ts"] = time.time()     # fan_out() keeps quiet for DENIED_QUIET: the brake just said no
         again = ""
         if handoff:                       # the watcher ordered a handoff: the switch on Stop is armed
             if st.get("ordered"):
@@ -743,6 +828,538 @@ def dispatch_notice(session, st, ctx):
                    f"and this session is at {k(ctx)}. {tail} A reviewer waits for the SLOT FREE notice.")
     st["orch_warned"] = full
     return out
+
+
+# --------------------------------------------------------------- review gate
+def same_card(a, b):
+    """Two ways of writing the same card: equal, or one AgenFK id the prefix of
+    the other (8 characters at least). A key like ABC-1 is never a prefix of ABC-12."""
+    a, b = str(a or "").lower(), str(b or "").lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return bool(HEX_ID.fullmatch(a) and HEX_ID.fullmatch(b) and (a.startswith(b) or b.startswith(a)))
+
+
+def review_log(p, card, step, decision, why):
+    """Every pass the gate lets through without a reviewer, and every denial, with the reason."""
+    try:
+        os.makedirs(BASE, exist_ok=True)
+        if os.path.exists(REVIEW_LOG) and os.path.getsize(REVIEW_LOG) >= 200_000:
+            return
+        row = {"ts": time.time(), "session": safe(p.get("session_id")), "card": safe(card), "step": safe(step),
+               "decision": decision, "why": why}
+        with open(REVIEW_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
+
+
+def review_files(card):
+    """(path, record) of every card file that names this card, the stale ones left out."""
+    out, now = [], time.time()
+    try:
+        names = os.listdir(REVIEWS)
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(REVIEWS, name)
+        if not name.endswith(".json") or not same_card(name[:-5], card):
+            continue
+        d = load(path)
+        if same_card(d.get("card"), card):
+            ds = d.get("dispatches")
+            d["dispatches"] = [e for e in (ds if isinstance(ds, list) else []) if isinstance(e, dict)
+                               and isinstance(e.get("ts"), (int, float)) and now - e["ts"] < REVIEW_DAYS * 86400]
+            out.append((path, d))
+    return out
+
+
+def remember_review(p, key):
+    """Records a reviewer dispatch per card, in a file every session reads: a handoff
+    opens a new session, and the review done before it still counts. The card is the
+    one review_key() found; with none there, the first 8-character id of the brief."""
+    card = key.partition(":")[2]
+    if card == "no-card":
+        inp = p.get("tool_input") or {}
+        m = SHORT_ID.search(str(inp.get("prompt") or "") + " " + str(inp.get("description") or ""))
+        if not m:
+            return                        # a reviewer with no card id unlocks no card
+        card = m.group(0)
+    now, ttl = time.time(), REVIEW_DAYS * 86400
+    os.makedirs(REVIEWS, exist_ok=True)
+    path = os.path.join(REVIEWS, f"{safe(card)}.json")
+    d = next((d for f, d in review_files(card) if f == path), None) or {"card": card, "dispatches": []}
+    d["dispatches"] = (d["dispatches"] + [{"ts": now, "session": safe(p.get("session_id")),
+                                           "kind": key.partition(":")[0]}])[-20:]
+    save(path, d)
+    for name in os.listdir(REVIEWS):     # cards nobody touched within the memory window go
+        f = os.path.join(REVIEWS, name)
+        try:
+            if now - os.path.getmtime(f) >= ttl:
+                os.remove(f)
+        except OSError:
+            pass
+
+
+def taskkill_exe(env=None):
+    """taskkill by its full path: a bare name is looked up in the current directory first on Windows,
+    and the hook runs in the session's directory, a repository anyone could put a taskkill.exe in."""
+    env = os.environ if env is None else env
+    root = env.get("SystemRoot") or env.get("SYSTEMROOT") or env.get("windir") or "C:\\Windows"
+    return ntpath.join(root, "System32", "taskkill.exe")
+
+
+def kill_tree(proc):
+    """Kill the child and what it started, and never wait on its pipe again. On Windows this
+    may take up to KILL_WAIT seconds, and the caller counts them in AGENFK_TOTAL."""
+    if WINDOWS:
+        # agenfk is a .cmd shim: cmd.exe -> node -> ... TerminateProcess ends cmd.exe alone and leaves the rest
+        # holding the pipe; taskkill /T walks the tree while its parents are still there to walk.
+        try:
+            subprocess.run([taskkill_exe(), "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=KILL_WAIT,
+                           creationflags=0x08000000)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        # no close(): communicate() reads the pipe in a daemon thread that holds the file's lock until EOF,
+        # and close() would wait for it (30 s with a grandchild that escaped the kill). The thread is abandoned.
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)   # start_new_session: its children go with it
+    except OSError:
+        pass
+    try:
+        proc.stdout.close()
+    except OSError:
+        pass
+
+
+def epoch(v):
+    """Seconds since the epoch from what agenfk writes as a time: ISO 8601 (`...Z`), or a number
+    (milliseconds when it is that large). None for anything else."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return v / 1000 if v > 1e11 else float(v)
+    if not isinstance(v, str) or not v.strip():
+        return None
+    s = v.strip()
+    s = s[:-1] + "+00:00" if s[-1:] in "Zz" else s
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)).timestamp()
+
+
+def entered_at(d, step):
+    """When the card last entered `step`, from the history `agenfk get --json` returns (each move a
+    fromStatus, toStatus and timestamp). A move from a step to itself (the TODO -> TODO of creation)
+    counts only when there is no other. None when the history does not say."""
+    hist = d.get("history") if isinstance(d, dict) else None
+    if not isinstance(hist, list):
+        return None
+    moves, stays = [], []
+    for e in hist:
+        if not isinstance(e, dict) or str(e.get("toStatus") or "").strip().upper() != step:
+            continue
+        ts = epoch(e.get("timestamp"))
+        if ts is not None:
+            (stays if str(e.get("fromStatus") or "").strip().upper() == step else moves).append(ts)
+    return max(moves or stays) if moves or stays else None
+
+
+def card_step(card, cwd, wait=AGENFK_WAIT):
+    """(step, entered, "", False) from `agenfk get <id> --json`, where entered is when the card
+    last moved into that step (None when agenfk does not say), or (None, None, why it could not be
+    read, broken): broken is True when agenfk itself could not be run (missing, did not start, too
+    slow), False when it ran and had no step for this id (a non-zero exit, output it cannot read).
+    On Windows a slow agenfk costs `wait` plus up to KILL_WAIT to kill."""
+    if wait < 0.5:
+        return None, None, "no time left in the hook's budget", True
+    exe = shutil.which("agenfk")
+    if not exe:
+        return None, None, "agenfk not found", True
+    try:
+        proc = subprocess.Popen([exe, "get", card, "--json"], cwd=cwd if cwd and os.path.isdir(cwd) else None,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, encoding="utf-8", errors="replace", **detached_kwargs())
+    except OSError as exc:
+        return None, None, f"agenfk did not start ({type(exc).__name__})", True
+    try:
+        out, _ = proc.communicate(timeout=wait)
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)                   # never communicate() again: a child holding the pipe would hang it
+        return None, None, f"agenfk get took more than {wait:.1f} s", True
+    if proc.returncode != 0:
+        return None, None, f"agenfk get exited {proc.returncode}", False
+    step, d = None, None
+    i = out.find("{")
+    if i >= 0:
+        try:
+            d = json.JSONDecoder().raw_decode(out[i:])[0]
+            step = d.get("status") if isinstance(d, dict) else None
+        except ValueError:
+            pass
+    if not isinstance(step, str) or not step.strip():
+        d = None                          # the text form has no history
+        m = re.search(r"^\s*Status:\s*([A-Za-z_]+)\s*$", out, re.M)
+        step = m.group(1) if m else None
+    if not step:
+        return None, None, "agenfk get output unreadable", False
+    step = step.strip().upper()
+    return step, entered_at(d, step), "", False
+
+
+def verify_ids(cmd, depth=0):
+    """Card ids that `agenfk verify <id>` in this command would advance (a dry run
+    with --plan does not). None when the command cannot be read."""
+    flat = cmd.replace("\\\n", " ").replace("\n", " ; ")
+    try:
+        lx = shlex.shlex(flat, posix=True, punctuation_chars=";&|()")
+        lx.whitespace_split = True
+        # no comments: the lines are joined with " ; " first, so a `#` line would swallow every line after it
+        # (`# note\nagenfk verify <id>` read as nothing). A `#` word is read as a word: stricter, never looser.
+        lx.commenters = ""
+        toks = list(lx)
+    except ValueError:
+        return [m.group(1) for m in VERIFY_LOOSE.finditer(cmd)] or None
+    ids, at, wrap, need, i = [], True, "", 0, 0
+    sep = lambda t: bool(t) and all(c in ";&|()" for c in t)   # noqa: E731
+    while i < len(toks):
+        t = toks[i]
+        name = re.sub(r"(?<=.)@[^/]*$", "", os.path.basename(t))    # npx agenfk@latest
+        if sep(t):
+            at, wrap, need = True, "", 0
+        elif at and wrap and t.startswith("-") and len(t) > 1:
+            if t in WRAPPER_VALUED.get(wrap, ()):
+                i += 1                    # `sudo -u root`, `timeout -s KILL`: the value goes with the option
+        elif at and wrap and need:
+            need -= 1                     # `timeout 30 agenfk ...`: the duration
+        elif at and (ASSIGN.match(t) or t in KEYWORDS):
+            pass                          # `VAR=x agenfk ...`, `if agenfk ...`: still the command position
+        elif at and name in WRAPPER:
+            wrap, need = name, WRAPPER_ARGS.get(name, 0)
+        elif at:
+            at, wrap = False, ""
+            if name in SHELLS and depth < 2:          # bash -c "agenfk verify ..."
+                j = i + 1
+                while j < len(toks) and not sep(toks[j]):
+                    if re.fullmatch(r"-[A-Za-z]*c", toks[j]) and j + 1 < len(toks):
+                        inner = verify_ids(toks[j + 1], depth + 1)
+                        if inner is None:
+                            return None
+                        ids += inner
+                        break
+                    j += 1
+            elif name == "agenfk":
+                j = i + 1
+                while j < len(toks) and toks[j].startswith("-"):
+                    j += 1
+                if j < len(toks) and toks[j] == "verify":
+                    card, dry, j = None, False, j + 1
+                    while j < len(toks) and not sep(toks[j]):
+                        a = toks[j]
+                        if a in VERIFY_DRY:
+                            dry = True
+                        elif a in VERIFY_VALUED:
+                            j += 1
+                        elif not a.startswith("-") and card is None:
+                            card = a
+                        j += 1
+                    if card and not dry:
+                        ids.append(card)
+                    i = j
+                    continue
+        i += 1
+    return ids
+
+
+def verify_mentions(cmd):
+    """How many times the command says `agenfk ... verify`: the two words with no separator between
+    them and at most MENTION_SPAN characters apart, once blanks and line continuations are folded.
+    It counts every verify the parser reads (options, quotes, a path, a wrapper before it) and text
+    that only names one. Linear: one pass over the folded text."""
+    n, last = 0, None
+    for m in MENTION_WORDS.finditer(FOLD.sub(" ", cmd)):
+        w = m.group()
+        if w == "agenfk":
+            last = m.end()
+        elif w == "verify":
+            if last is not None and m.start() - last <= MENTION_SPAN:
+                n, last = n + 1, None
+        else:
+            last = None                   # a separator: the next verify needs an agenfk of its own
+    return n
+
+
+def review_check(p, card, wait=AGENFK_WAIT, answered=False):
+    """(denial or "", how, note). how: "" when agenfk was not asked; "answered" when agenfk
+    ran, including a non-zero exit or output it cannot read for this id (that id fails open,
+    logged); "broken" when agenfk could not be run (fails open, logged, note says why);
+    "unchecked" when the card needed agenfk and was not checked: no time left (`wait` under
+    0.5 s, or 0 after agenfk broke for an earlier card), or agenfk answered for an earlier card
+    of this call and then broke on this one (note says which). Only a later card of a call can
+    be unchecked, and a recorded dispatch does not change that.
+
+    A reviewer dispatch counts for the step the card is on only when it is newer than the card's
+    entry into that step: a second review step, or the same step again after FIX_FIRST, needs a
+    dispatch of its own. When agenfk cannot say when the first card of a call entered the step
+    (no history, or agenfk broken), any dispatch recorded in the memory window counts, as it did
+    before the entry time was read: a record is the best evidence left, and it fails open."""
+    if not CARD_ID.fullmatch(card):
+        review_log(p, card, "", "allow", "not a card id")   # `$ID`, `--`: never handed to agenfk
+        return "", "", ""
+    if wait < 0.5:
+        # never the first card of a call (it gets AGENFK_WAIT): a record does not let a later one through,
+        # since the record alone does not say which step it was for
+        return "", "unchecked", ""
+    seen = [e["ts"] for _, d in review_files(card) for e in d["dispatches"]]
+    step, entered, why, broken = card_step(card, str(p.get("cwd") or ""), wait)
+    if step is None and broken and answered:
+        return "", "unchecked", why       # agenfk works in this call: one card per call, never let through
+    if step is None and seen:
+        review_log(p, card, "", "allow", f"{why}; a reviewer dispatch is recorded for the card")
+        return "", "broken" if broken else "answered", why
+    if step is None:
+        review_log(p, card, "", "allow", why)       # fail open: a broken agenfk must not hold the flow
+        return "", "broken" if broken else "answered", why
+    if step not in REVIEW_STEPS:
+        return "", "answered", ""
+    if entered is None and seen:
+        review_log(p, card, step, "allow", "agenfk gave no step history; a reviewer dispatch is recorded "
+                                           "for the card")
+        return "", "answered", ""
+    if entered is not None and any(ts > entered for ts in seen):
+        return "", "answered", ""
+    owner = os.environ.get("SQUAD_SELF_REVIEW_OK", "").strip()
+    used = ""
+    if owner and same_card(owner, card):
+        files = review_files(card)
+        spent = [d["override"] for _, d in files if isinstance(d.get("override"), (int, float))
+                 and time.time() - d["override"] < REVIEW_DAYS * 86400]
+        if not spent:
+            os.makedirs(REVIEWS, exist_ok=True)
+            path, d = files[0] if files else (os.path.join(REVIEWS, f"{safe(card)}.json"),
+                                              {"card": card, "dispatches": []})
+            d["override"] = time.time()
+            save(path, d)
+            review_log(p, card, step, "allow", "SQUAD_SELF_REVIEW_OK")
+            return "", "answered", ""
+        used = (" SQUAD_SELF_REVIEW_OK for this card was already used once, at "
+                f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(max(spent)))}.")
+    if seen:
+        at = lambda t: time.strftime("%Y-%m-%d %H:%M", time.localtime(t))   # noqa: E731
+        review_log(p, card, step, "deny", "no reviewer dispatch since the card entered the step")
+        what = (f"card {card} is on {step} since {at(entered)}, and the last reviewer dispatch recorded for it "
+                f"({at(max(seen))}) came before that. One dispatch unlocks the step the card was on when it "
+                "was made: each review step, and each re-review after FIX_FIRST, needs a dispatch of its own.")
+    else:
+        review_log(p, card, step, "deny", "no reviewer recorded")
+        what = (f"card {card} is on {step}, and no reviewer dispatch for it has been recorded in the last "
+                f"{REVIEW_DAYS} days, in this session or any other.")
+    return (f"[squad-watch] REVIEW REQUIRED: {what} Whoever writes does not "
+            "approve: the main session does not advance a review step on its own reading." + used + " Where the "
+            "work continues: dispatch the verifier (the project's own reviewer agent if it has one, else "
+            f"`verifier`) in a clean context, with the card id {card} and the branch in the brief, never the "
+            "implementer's narrative. When it returns SHIP, run `agenfk verify` again with its verdict as the "
+            "evidence; FIX_FIRST or REJECT goes back to whoever implemented. Do not work around this with "
+            "another tool."), "answered", ""
+
+
+# Commands that only read: with one of these at every command position and no redirection into a file,
+# a command naming the review records passes. Not here, because they can write a file: sort -o, uniq's
+# second operand, tree -o, and less or more saving the buffer (find's writing actions are refused below).
+READERS = {"cat", "ls", "head", "tail", "jq", "grep", "rg", "wc", "stat", "file", "find", "cd",
+           "echo", "printf", "diff", "du", "realpath", "readlink", "test", "["}
+FIND_WRITES = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+REVIEWS_NAMED = re.compile(r"\.claude[\\/]+squad[\\/]+reviews(?![\w.-])")
+
+
+def inside_reviews(path):
+    try:
+        real, root = os.path.realpath(os.path.expanduser(path)), os.path.realpath(REVIEWS)
+        return os.path.normcase(real) == os.path.normcase(root) or os.path.normcase(real).startswith(
+            os.path.normcase(root) + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
+# Values that are only text to the program that takes them: a commit message, a PR's body or title, a card
+# comment, the evidence of a verify. Naming the records there writes nothing (October 2026: a commit message
+# about the gate was denied as a write). Only these, and only for these programs: `git worktree add -d <path>`
+# shows why a short option is not text everywhere.
+TEXT_VALUED = {
+    ("git", "commit"): {"-m", "--message"},
+    ("gh", "pr"): {"-b", "--body", "-t", "--title"},
+    ("gh", "issue"): {"-b", "--body", "-t", "--title"},
+    ("agenfk", ""): {"--evidence", "--check-note", "-d", "--description", "--title"},
+}
+
+
+def text_blanked(cmd):
+    """The command with the spans that are only text blanked out (see TEXT_VALUED, and the content of
+    `agenfk comment <id> ...`). The command as it is when it cannot be read word by word: a substitution,
+    a heredoc, a subshell or a redirection into a file leaves nothing as text."""
+    cmds = None if OPAQUE.search(cmd) else shell_split(cmd)
+    if not cmds:
+        return cmd
+    out = list(cmd)
+    for words in cmds:
+        names = [w[2] for w in words]
+        name = names[0]                   # the bare name only: `./agenfk`, `/tmp/x/git` are any program
+        k = 1
+        while k < len(names) and names[k].startswith("-"):
+            k += 2 if names[k] in ("-C", "-c", "-R", "--repo") else 1
+        sub = names[k] if k < len(names) else ""
+        opts = TEXT_VALUED.get((name, sub)) or TEXT_VALUED.get((name, ""))
+        if not opts:
+            continue
+        text = set()
+        if name == "agenfk" and sub == "comment":
+            text = set(range(k + 2, len(words)))       # agenfk comment <id> <text...>
+        for j in range(k + 1, len(words)):
+            w = names[j]
+            if w in opts:
+                text.add(j + 1)
+            elif w.startswith("--") and "=" in w and w.split("=", 1)[0] in opts:
+                text.add(j)
+            elif name == "git" and re.fullmatch(r"-[A-Za-z]+", w) and "m" in w:
+                text.add(j + 1 if w.endswith("m") else j)   # -am <msg>, -mfix
+        for j in text:
+            if j < len(words):
+                a, b, _ = words[j]
+                out[a:b] = " " * (b - a)
+    return "".join(out)
+
+
+def names_reviews(cmd, cwd):
+    return bool(REVIEWS_NAMED.search(cmd) or REVIEWS in cmd or REVIEWS.replace("\\", "/") in cmd
+                or (cwd and inside_reviews(cwd)) or (cwd and inside_reviews(os.path.join(cwd, "reviews"))
+                                                     and re.search(r"(?<![\w.-])reviews(?![\w.-])", cmd)))
+
+
+def writes_reviews(p):
+    """True when this call writes into the review records with a tool. Reading them passes, and so does
+    a command that names them only in text (a commit message, a card comment)."""
+    tool, inp = p.get("tool_name") or "", p.get("tool_input") or {}
+    if not isinstance(inp, dict):
+        return False
+    if tool in MUTATING:
+        return any(inside_reviews(str(v)) for v in (inp.get("file_path"), inp.get("path"), inp.get("notebook_path"))
+                   if v)
+    if tool != "Bash":
+        return False
+    cmd = str(inp.get("command") or "")
+    cwd = str(p.get("cwd") or "")
+    if not names_reviews(cmd, cwd) or not names_reviews(text_blanked(cmd), cwd):
+        return False
+    if len(cmd) > PARSE_MAX:
+        return True                       # too long to read inside the hook's budget: it does not pass
+    try:
+        lx = shlex.shlex(cmd.replace("\\\n", " ").replace("\n", " ; "), posix=True, punctuation_chars=True)
+        lx.whitespace_split = True
+        lx.commenters = ""                # as in verify_ids: a `#` line must not hide the lines after it
+        toks = list(lx)
+    except ValueError:
+        return True                       # a command naming the records that cannot be read does not pass
+    at = True
+    for i, t in enumerate(toks):
+        if t and all(c in ";&|()" for c in t):
+            at = True
+        elif t and all(c in "<>&|" for c in t) and ">" in t:
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            # 2>&1, >&- and >/dev/null write no file; `>& file` and `&> file` do
+            if not ((t.endswith(">&") and re.fullmatch(r"\d+|-", nxt)) or nxt == "/dev/null"):
+                return True
+        elif at and ASSIGN.match(t):
+            continue
+        elif at:
+            at = False
+            if os.path.basename(t) not in READERS:
+                return True
+        elif t in FIND_WRITES:
+            return True                   # find that writes
+    return False
+
+
+def review_gate(p):
+    """PreToolUse of the main session: True when it denied an advance past a review step."""
+    tool, inp = p.get("tool_name") or "", p.get("tool_input") or {}
+    if not REVIEW_STEPS or not isinstance(inp, dict):
+        return False
+    if tool == "Bash":
+        cmd = str(inp.get("command") or "")
+        if "agenfk" not in cmd or "verify" not in cmd:
+            return False                  # the hot path: every Bash call of the main session
+        cards = verify_ids(cmd[:PARSE_MAX])
+        if len(cmd) > PARSE_MAX:
+            # past the cap the rest is only searched for `agenfk verify <id>` (linear), and a mention past
+            # the cap is asked about like a command would be. Padding can still hide the id from both (an
+            # option or a quote before it, a quote cut open at the cap), so every `agenfk ... verify` in the
+            # whole command must be matched by a card id read: a verify whose card was not read is denied
+            tail = [m.group(1) for m in VERIFY_TAIL.finditer(cmd, max(PARSE_MAX - 256, 0))]
+            read, said = (cards or []) + tail, verify_mentions(cmd)
+            review_log(p, "", "", "cut", f"command of {len(cmd)} characters: the first {PARSE_MAX} parsed, "
+                                         f"the rest searched for `agenfk verify <id>` ({len(tail)} found)")
+            if said > len(set(read)):
+                review_log(p, "", "", "deny", f"over {PARSE_MAX} characters: `agenfk ... verify` {said} times, "
+                                              f"{len(set(read))} card ids read")
+                deny(f"[squad-watch] VERIFY NOT READ: this command has {len(cmd)} characters, more than the "
+                     f"{PARSE_MAX} the watcher reads word by word inside the hook's time, and it says "
+                     f"`agenfk ... verify` {said} time(s) where only {len(set(read))} card id(s) could be read. "
+                     "A verify whose card is not known is not let past a review step. Where the work "
+                     "continues: run `agenfk verify <id>` on its own, with a short --evidence (a long one goes "
+                     "in a file the evidence points to); if the command only mentions verify in text, shorten "
+                     "that text.")
+                return True
+            cards = read
+        if cards is None:
+            review_log(p, "", "", "allow", "command not readable")
+            return False
+        if not cards:                     # a dry run, a mention, or a form the parser does not read
+            review_log(p, "", "", "allow", "agenfk and verify in the command, no card id read")
+            return False
+    elif re.search(r"(?:^|__)(?:validate_progress|review_changes|test_changes)$", tool):
+        if tool.endswith("validate_progress") and inp.get("plan"):
+            return False                  # the MCP form of --plan: a dry run
+        card = str(inp.get("itemId") or inp.get("item_id") or inp.get("id") or "").strip()
+        cards = [card] if card else []
+    else:
+        return False
+    todo = list(dict.fromkeys(cards))
+    start, answered, broken = time.time(), False, ""
+    kill = KILL_WAIT if WINDOWS else 0
+    for card in todo:                     # 3 s per card, 7 s for them all, the kill of a slow one included
+        # once agenfk could not be run at all, no card after it is asked: only the first card a call
+        # asks about may fail open unchecked, or `verify <id> && verify <REVIEW card>` would slip by
+        wait = 0 if broken else min(AGENFK_WAIT, AGENFK_TOTAL - kill - (time.time() - start))
+        why, how, note = review_check(p, card, wait, answered)
+        if how == "unchecked":
+            if broken:
+                left = (f"agenfk could not be asked for a card before it ({broken}), and only the first card "
+                        "a call asks about passes unchecked")
+            elif note:
+                left = f"agenfk answered for the cards before it, then failed for this one ({note})"
+            else:
+                left = (f"the hook's {AGENFK_TOTAL} s for asking agenfk ran out (agenfk answered for the cards "
+                        "before it)")
+            review_log(p, card, "", "deny", f"left unchecked: advance one card per call ({left})")
+            why = (f"[squad-watch] ONE CARD PER CALL: this call advances {len(todo)} cards, and card {card} was "
+                   f"left unchecked: {left}. Where the work continues: advance one card per call, "
+                   f"`agenfk verify {card} ...` on its own.")
+        if why:
+            deny(why)
+            return True
+        broken = broken or (note if how == "broken" else "")
+        answered = answered or how == "answered"
+    return False
 
 
 # --------------------------------------------------------------- merge queue
@@ -1414,9 +2031,27 @@ def pre_tool(p):
                  "repeat the merge; if it keeps failing, the decision is the owner's.")
             return
         raise
+    try:
+        if writes_reviews(p):
+            what = "command" if p.get("tool_name") == "Bash" else "call"
+            deny(f"[squad-watch] REVIEW RECORD: this {what} names the review records ({REVIEWS}); reading is "
+                 "fine, writing is the watcher's. A record appears on its own when a reviewer (the verifier) is "
+                 "dispatched for the card, so there is nothing to write there by hand. Where the work continues: "
+                 "read with the Read tool, or cat, ls, jq or grep with no redirection into a file. If the path "
+                 "is only text here, it can go in a commit message (`git commit -m`), a card comment "
+                 "(`agenfk comment <id> \"...\"`) or the --evidence of `agenfk verify`, which are read as "
+                 "text; not in a heredoc, a substitution, or a script's argument.")
+            return
+    except Exception:                     # a broken guard does not cost the rest of the hook
+        pass
     if not agent:
         if p.get("tool_name") in DISPATCH:
             pre_dispatch(p)
+            return
+        try:
+            review_gate(p)
+        except Exception as exc:          # fails open, with the reason where the gate logs
+            review_log(p, "", "", "allow", f"gate error ({type(exc).__name__})")
         return
     st = load(state_path(p.get("session_id"), agent))
     tool = p.get("tool_name") or ""
@@ -1463,6 +2098,10 @@ def post_tool(p):
         if key:
             rev = st.setdefault("rev", {})
             rev[key] = rev.get(key, 0) + 1
+            try:
+                remember_review(p, key)
+            except Exception as exc:      # a broken record must not cost the rest of this PostToolUse
+                review_log(p, key, "", "unrecorded", f"reviewer dispatch not saved ({type(exc).__name__})")
             if rev[key] == 3 and not key.endswith(":no-card"):
                 out.append(f"[squad-watch] 3rd reviewer round for {key}. The rule is at most 2 "
                            f"correction rounds; dispatch number {MAX_REV + 1} is denied. If the same "
@@ -1611,13 +2250,20 @@ def subagent_stop(p):
         save(mpath, main)
     try:
         os.remove(spath)
-        cutoff = time.time() - 2 * 86400
-        for name in os.listdir(STATE):
-            f = os.path.join(STATE, name)
-            if os.path.getmtime(f) < cutoff:
-                os.remove(f)
     except OSError:
         pass
+    cutoff = time.time() - 2 * 86400
+    try:
+        names = os.listdir(STATE)
+    except OSError:
+        names = []
+    for name in names:                    # one entry that cannot go (a folder, a file in use) keeps none of the others
+        f = os.path.join(STATE, name)
+        try:
+            if os.path.isfile(f) and os.path.getmtime(f) < cutoff:
+                os.remove(f)
+        except OSError:
+            pass
 
 
 HANDOFF_PATH = re.compile(r"[A-Za-z0-9_./-]+/handoffs/[A-Za-z0-9_.-]+\.md")
@@ -1750,6 +2396,7 @@ def prompt(p):
     st["asked_stop"] = bool(ASKED_TO_STOP.search(text)) and not RESUME.search(text)
     st["last_prompt"] = text[:3000]
     st.pop("early_block", None)
+    carry_prompt(st, text, p["session_id"])
     save(path, st)
 
 
@@ -1926,6 +2573,432 @@ def switch_note(session, tasks):
     return path
 
 
+# Carry on: a session with a defined delivery works it to the end. Sessions stopped at
+# every milestone with "the next step is card X" and waited for a person who was not
+# reading the pane (2026-11-04). The Stop is refused while the delivery is open, the
+# way jthack/claude-goal holds an active /goal and levi-openclaw/taskmaster re-checks
+# the transcript (both MIT; the idea, not their code).
+CARRY = os.environ.get("SQUAD_CARRY") != "0"
+CARRY_MAX = env_int("SQUAD_CARRY_MAX", 3)      # stops in a row without progress before the hold lets go
+CARRY_CAP = env_int("SQUAD_CARRY_CAP", 200)    # holds per goal, progress or not
+CARRY_AGE = env_int("SQUAD_CARRY_AGE", 12 * 3600)   # an explicit goal without progress this long has expired
+CARRY_BLOCKED_AGE = env_int("SQUAD_CARRY_BLOCKED_AGE", 7 * 86400)   # a BLOCKED goal nobody answered
+AGENFK = os.environ.get("SQUAD_AGENFK") or "agenfk"
+# only at the start of a line and with real content: quoting the template ("<what ...>") does not count
+GOAL = re.compile(r"(?m)^[\s>*`-]*\[squad\]\s*GOAL\s*:\s*([^<\s`][^\n]{0,400})$", re.I)
+# squad-wake's MARK, copied so that a Stop without a goal never loads squad-wake.py
+MARK = re.compile(r"(?m)^[\s>*`-]*\[squad\]\s*(END|DONE|BLOCKED)\s*:\s*([^<\s`][^\n]{0,200})$", re.I)
+# A reply that hands the delivery back instead of doing it. Bilingual: sessions answer in the owner's
+# language. STEP (it announces the next piece) holds by itself. OFFER (it offers the work, or waits for
+# the owner) holds only when it speaks of delivery work or follows work done in the turn, so "want me
+# to go deeper?" at the end of an explanation is not taken for a delivery.
+STEP = re.compile(
+    r"\bpr[óo]xim[oa]s?\s+(?:passos?|etapas?|cards?|cart(?:ão|ões|ao|oes)|tarefas?|fases?|ondas?|itens|item"
+    r"|milestones?|marcos?|entregas?)\b"
+    r"|\bnext\s+(?:steps?|cards?|tasks?|phases?|waves?|items?|milestones?|up)\b", re.I)
+OFFER = re.compile(
+    r"\bposso\s+(?:j[aá]\s+)?(?:abrir|seguir|come[cç]ar|fazer|continuar|iniciar|disparar|tocar|criar|rodar"
+    r"|executar|subir|mandar|implementar|prosseguir)\b[^\n]{0,120}?(?:se\s+(?:voc[eê]|vc)\s+quiser|\?)"
+    r"|\bquer\s+que\s+eu\b|\bse\s+(?:voc[eê]\s+)?quiser,?\s+(?:eu\s+)?(?:abro|sigo|come[cç]o|fa[cç]o"
+    r"|continuo|disparo|crio|rodo)\b|\besperando\s+(?:por\s+)?(?:voc[eê]|vc)\b"
+    r"|\b(?:do\s+you\s+)?want\s+me\s+to\b|\bshall\s+I\b|\bwould\s+you\s+like\s+me\s+to\b"
+    r"|\bshould\s+I\s+(?:go\s+ahead|proceed|continue|start|open)\b"
+    r"|\bI\s+can\s+(?:start|open|continue|proceed|do|run|take)\b[^\n]{0,120}?\bif\s+you\s+(?:want|like)\b"
+    r"|\blet\s+me\s+know\s+if\s+you(?:'d)?\s+(?:want|like)\s+me\s+to\b|\bwaiting\s+(?:on|for)\s+you\b", re.I)
+DELIVERY = re.compile(
+    r"\b(?:cards?|cart(?:ão|ões|ao|oes)|frentes?|fronts?|PRs?|pull\s+requests?|merges?|mergear|push|ondas?"
+    r"|waves?|deploys?|worktrees?|releases?|follow-up)\b|#\d+", re.I)
+FENCE = re.compile(r"```.*?(?:```|\Z)", re.S)
+QUOTE = re.compile(r"(?m)^\s*>.*$")
+
+
+AGENFK_ID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+# The squad names a card by its 8-character prefix too (`agenfk get` resolves it). Needs a digit and a
+# letter, so a date (20261104) or a word is not a card; a commit sha that gets through is looked up, found
+# unknown and counts as closed. External ids (INFRA-419) are not looked up: the goal carries the AgEnFK id.
+CARD_PREFIX = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{8}\b(?!-)")
+CLOSED_CARD = {"DONE", "ARCHIVED", "CLOSED", "CANCELLED", "CANCELED"}
+CARRY_CARDS = 4        # goal cards looked up at DONE, in parallel, inside the hook's 10 s
+CARRY_EXITS = ("Before you call anything the owner's, do every part you can do yourself: push, open or reopen "
+               "a session or pane, merge where the project's rules let the session merge (a green gate and "
+               "SHIP, through the merge queue), start the next front. Stop only by ending a reply with one of "
+               "these lines: `[squad] DONE: PR #64 merged, cards DONE` when everything the delivery "
+               "defines is done, `[squad] BLOCKED: merge approval on PR #64 is the owner's` for a human gate (a merge "
+               "approval the project reserves for the owner, approval on the board, a decision or an answer "
+               "only the owner has, a production apply), or `[squad] END: no card is left that I can take`. "
+               "These are examples: write your own text after the colon, never a <placeholder>.")
+GOAL_KEEP = ("holds", "idle", "refused", "releases", "blocked", "released", "offset", "progress_ts", "fanned", "fan_checked")
+
+
+def wake_lib():
+    """squad-wake's notion of progress (edits, dispatches, commits, PRs, agenfk moves): one definition."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("squad_wake", here("squad-wake.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def fleet_lib():
+    """skills/architect/scripts/fleet.py, loaded by path; None on any failure (no fan-out, never a broken hook)."""
+    try:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
+                            "skills", "architect", "scripts", "fleet.py")
+        spec = importlib.util.spec_from_file_location("squad_fleet", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+DENIED_QUIET = 300     # seconds after a denied dispatch in which no FAN OUT is ordered
+FAN_CHECK = 300        # seconds a verdict other than FAN OUT stands: AgEnFK is not asked on every event
+
+
+def fan_out(goal, session, st=None):
+    """The FAN OUT order for a goal with AgEnFK cards, or "": two or more open cards without a
+    session of their own and nothing running in parallel. At most once per goal (goal["fanned"]),
+    and not within DENIED_QUIET of a denied dispatch: the order would only ask for what the brake
+    refuses. Bounded to 6 s for AgEnFK so the hook keeps its timeout."""
+    if not isinstance(goal, dict) or not goal.get("cards") or goal.get("fanned"):
+        return ""
+    try:
+        denied = float((st or {}).get("denied_ts") or 0)
+    except (TypeError, ValueError):
+        denied = 0       # a corrupt state file must not cost the session its order
+    if time.time() - denied < DENIED_QUIET:
+        return ""
+    try:
+        checked = float(goal.get("fan_checked") or 0)
+    except (TypeError, ValueError):
+        checked = 0
+    if 0 <= time.time() - checked < FAN_CHECK:
+        return ""                # a dead AgEnFK costs 5 s an event; the hook has 10
+    try:
+        fleet = fleet_lib()
+        if fleet is None:
+            return ""
+        leaves, read, total = fleet.goal_leaves(goal["cards"], AGENFK, deadline=6)
+        leaves = fleet.unfanned(leaves)
+        subs = fleet.live_subs(session, STATE)
+        if fleet.verdict(goal, leaves, subs) != "FAN OUT":
+            goal["fan_checked"] = time.time()
+            return ""
+        order = fleet.fan_out_order(goal, leaves, read, total)
+        if read >= total:
+            goal["fanned"] = True       # an order on part of the goal is not recorded: the rest is still due
+        return order
+    except Exception:
+        return ""
+
+
+def goal_text(text):
+    return "".join(c for c in str(text) if c.isprintable()).strip()[:400]
+
+
+def goal_cards(text):
+    """The AgEnFK cards a goal names: full ids and 8-character prefixes, a prefix of a full id listed once."""
+    full = list(dict.fromkeys(AGENFK_ID.findall(text)))
+    stems = [c for c in dict.fromkeys(CARD_PREFIX.findall(AGENFK_ID.sub(" ", text)))
+             if not any(f.startswith(c) for f in full)]
+    return (full + stems)[:10]
+
+
+def new_goal(text, source):
+    now = time.time()
+    return {"text": goal_text(text), "source": source, "cards": goal_cards(text),
+            "holds": 0, "idle": 0, "ts": now, "progress_ts": now}
+
+
+def adopt_goal(prev, text, source):
+    """A goal line in a session reply. Restating the current goal changes nothing, a session
+    never replaces the owner's goal, and a new session goal keeps the guard's counters: writing
+    the line again must not reset the brake on a session that makes no progress."""
+    if prev and (goal_text(text) == prev.get("text") or
+                 (source == "session" and prev.get("source") == "owner")):
+        return prev
+    g = new_goal(text, source)
+    for key in GOAL_KEEP:
+        if prev and key in prev:
+            g[key] = prev[key]
+    return g
+
+
+def stale(g):
+    """An explicit goal with no progress for CARRY_AGE. A BLOCKED goal waits for the owner, however long."""
+    age = time.time() - g.get("progress_ts", g.get("ts", 0))
+    return g.get("source") != "implicit" and age > (CARRY_BLOCKED_AGE if g.get("blocked") else CARRY_AGE)
+
+
+def hands_back(text, worked):
+    """Does the reply hand the delivery back? Code blocks and quoted lines are not the session speaking."""
+    text = QUOTE.sub("", FENCE.sub("", text))
+    if STEP.search(text):
+        return True
+    for m in OFFER.finditer(text):
+        line = text[text.rfind("\n", 0, m.start()) + 1:(text.find("\n", m.end()) + 1 or len(text) + 1) - 1]
+        if worked() or DELIVERY.search(line):
+            return True
+    return False
+
+
+def carry_log(session, msg):
+    try:
+        os.makedirs(BASE, exist_ok=True)
+        with open(os.path.join(BASE, "carry.log"), "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {safe(session)} {msg}\n")
+    except OSError:
+        pass
+
+
+def carry_prompt(st, text, session=""):
+    """The owner spoke: an explicit goal is opened or kept, re-armed after BLOCKED or
+    after the guard let go; an implicit one (a reply that named a next step) ends here,
+    because the owner's new request decides what comes next. An explicit goal with no
+    progress for CARRY_AGE has expired: the owner moved on."""
+    st.pop("closed_goal", None)           # the owner speaks: a closed goal may be opened again
+    st.pop("closed_implicit", None)
+    m = GOAL.search(text)
+    if m:
+        st["goal"] = new_goal(m.group(1), "owner")
+        order = fan_out(st["goal"], session, st)
+        if order:
+            st.setdefault("pending", []).append(order)
+        return
+    g = st.get("goal")
+    if not isinstance(g, dict):
+        return
+    if g.get("source") == "implicit" or stale(g):
+        if stale(g):
+            carry_log(session, "goal expired: no progress for SQUAD_CARRY_AGE")
+        st.pop("goal", None)
+        return
+    if g.pop("blocked", None):
+        g["progress_ts"] = time.time()    # the owner answered the gate: the wait is not idleness
+    g.pop("released", None)
+    g["idle"] = 0
+
+
+def replies_since(path, offset):
+    """(texts of the main thread's replies after `offset`, size of the transcript)."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(offset if offset <= size else 0, size - 20_000_000))
+            data = fh.read()
+    except OSError:
+        return [], 0
+    texts = []
+    for raw in data.split(b"\n"):
+        if b'"assistant"' not in raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if rec.get("type") != "assistant" or rec.get("isSidechain"):
+            continue
+        content = (rec.get("message") or {}).get("content") or []
+        parts = [b.get("text") or "" for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        if parts:
+            texts.append("\n".join(parts))
+    return texts, size
+
+
+def agenfk_argv(cmd=None, windows=os.name == "nt"):
+    """SQUAD_AGENFK (or "agenfk") as argv. On Windows a backslash is a path separator, not an escape
+    (POSIX shlex read C:\\a\\b.exe as C:ab.exe), and the quotes stay for us to strip; the first word
+    goes through shutil.which so that an agenfk.cmd launcher runs by name."""
+    try:
+        words = shlex.split(AGENFK if cmd is None else cmd, posix=not windows)
+    except ValueError:
+        return []
+    if windows:
+        words = [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w for w in words]
+    if words:
+        words[0] = shutil.which(words[0]) or words[0]
+    return words
+
+
+def card_status(card):
+    try:
+        argv = agenfk_argv()
+        if not argv:
+            return ""
+        r = subprocess.run([*argv, "get", card, "--json"], capture_output=True, text=True,
+                           timeout=6, stdin=subprocess.DEVNULL)
+        return str(json.loads(r.stdout).get("status") or "") if r.returncode == 0 else ""
+    except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):
+        return ""
+
+
+def open_cards(cards):
+    """[(card, status)] for the goal's AgEnFK cards not closed: the first CARRY_CARDS, looked
+    up in parallel so the hook answers inside its 10 s. Any doubt (CLI missing, server down,
+    unknown card, no answer in time) counts as closed: the hook never holds on a guess."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+    cards = list(cards)[:CARRY_CARDS]
+    if not cards:
+        return []
+    pool = ThreadPoolExecutor(max_workers=len(cards))
+    jobs = {pool.submit(card_status, c): c for c in cards}
+    done, _ = wait(jobs, timeout=7)
+    pool.shutdown(wait=False)
+    out = []
+    for job in done:
+        status = job.result()
+        if status and status.upper() not in CLOSED_CARD:
+            out.append((jobs[job], status))
+    return sorted(out)
+
+
+def carry_note(session, st, why):
+    """The hold let go: the session hears it at the next request, the owner in carry.log and herdr."""
+    note = (f"[squad-watch] CARRY ON released: {why}. The delivery is not done; the owner decides "
+            "what comes next.")
+    st.setdefault("pending", []).append(note)
+    carry_log(session, f"released: {why}")
+    if can_switch():
+        try:
+            subprocess.run([os.environ.get("HERDR_BIN_PATH") or "herdr", "notification", "show",
+                            "squad: session stopped before delivering", "--body", why[:300]],
+                           capture_output=True, timeout=5, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def carry_on(p, path, st):
+    """Refuses the main session's stop while a defined delivery has work left: an open
+    `[squad] GOAL:` (the owner's or the session's own), or a last reply that names a
+    next step or card. True when it held the session.
+
+    Lets go on `[squad] DONE:` (refused while a goal card is open in AgEnFK),
+    `[squad] BLOCKED:` (until the owner speaks) and `[squad] END:`; when the owner
+    asked to stop; after CARRY_MAX stops in a row without progress (squad-wake's
+    notion: edits, dispatches, commits, PRs, agenfk moves) or CARRY_MAX refused DONEs,
+    and after CARRY_CAP holds per goal. Handoff level never reaches here."""
+    if not CARRY or harness(p) != "claude":
+        return False
+    transcript = str(p.get("transcript_path") or "")
+    if st.get("asked_stop"):
+        try:                              # the next implicit hold must not look back across this turn
+            st["carry_scan"] = os.path.getsize(transcript)
+            save(path, st)
+        except OSError:
+            pass
+        return False
+    scanned = st.get("carry_scan", 0)
+    texts, size = replies_since(transcript, scanned)
+    if not size:
+        return False
+    st["carry_scan"] = size
+    session = p["session_id"]
+    goal = st.get("goal") if isinstance(st.get("goal"), dict) else None
+    if goal and stale(goal):
+        carry_log(session, "goal expired: no progress for SQUAD_CARRY_AGE")
+        goal = None
+    for t in texts:
+        m = GOAL.search(t)
+        if m and goal_text(m.group(1)) != st.get("closed_goal"):
+            goal = adopt_goal(goal, m.group(1), "session")
+    last = texts[-1] if texts else ""
+    end = None
+    for m in MARK.finditer(last):
+        end = m.group(1).upper()
+
+    def keep(g):
+        if g is None:
+            st.pop("goal", None)
+        else:
+            st["goal"] = g
+        save(path, st)
+
+    if end in ("END", "DONE"):
+        if end == "DONE" and goal:
+            still = open_cards(goal.get("cards") or [])
+            if still and goal.get("refused", 0) < CARRY_MAX:
+                goal["refused"] = goal.get("refused", 0) + 1
+                keep(goal)
+                card, status = still[0]
+                print(json.dumps({"decision": "block", "reason": (
+                    f"[squad-watch] DONE refused: card {card} is in {safe(status)} in AgEnFK, not DONE. "
+                    "Finish it through its flow (`agenfk verify`), or, if a person has to act, end with "
+                    "`[squad] BLOCKED: merge approval on PR #64 is the owner's` (your own text, not a <placeholder>).")}))
+                return True
+        keep(None)
+        return False
+    if end == "BLOCKED":
+        if goal:
+            goal["blocked"] = True
+            goal["progress_ts"] = time.time()
+        keep(goal)
+        return False
+    if goal and goal.get("blocked"):
+        keep(goal)
+        return False
+    wake = None
+
+    def worked_since(offset):
+        nonlocal wake
+        wake = wake or wake_lib()
+        return wake.progress_since(transcript, offset)
+
+    if goal is None or goal.get("source") == "implicit":
+        # an implicit goal lives only while replies keep handing work back
+        if st.get("closed_implicit") or not hands_back(last, lambda: worked_since(scanned)):
+            keep(None)
+            return False
+        goal = goal or new_goal("", "implicit")
+    # the first hold of an implicit goal looks back to the previous stop, so a Q&A reply that only
+    # mentions a next step is not taken for work in progress
+    progress = worked_since(goal.get("offset", scanned))
+    goal["offset"] = size
+    if progress:
+        goal["progress_ts"] = time.time()
+        goal["releases"] = 0
+    if goal.get("released"):
+        if not progress:
+            keep(goal)
+            return False
+        goal.pop("released", None)
+    goal["idle"] = 0 if progress else goal.get("idle", 0) + 1
+    if goal["idle"] >= CARRY_MAX or goal.get("holds", 0) >= CARRY_CAP:
+        why = (f"{goal['idle']} stops in a row without progress" if goal["idle"] >= CARRY_MAX
+               else f"{goal['holds']} holds on this goal (SQUAD_CARRY_CAP)")
+        goal["released"] = True
+        goal["releases"] = goal.get("releases", 0) + 1
+        if goal.get("holds", 0) >= CARRY_CAP:
+            why += ", so the goal is closed"
+            if goal.get("source") == "implicit":      # it has no text to close by: close the kind until the owner speaks
+                st["closed_implicit"] = True
+            st["closed_goal"], goal = goal.get("text"), None
+        elif goal["releases"] >= 2 and goal.get("source") != "implicit":
+            why += "; released twice in a row without progress, so the goal is closed"
+            st["closed_goal"], goal = goal.get("text"), None
+        keep(goal)
+        carry_note(session, st, why)
+        save(path, st)
+        return False
+    goal["holds"] = goal.get("holds", 0) + 1
+    keep(goal)
+    what = (f"The goal: \"{goal['text']}\". " if goal.get("text") else
+            "Your last reply hands the delivery back (a next step, an offer, or waiting for the owner): "
+            "that work is yours. ")
+    order = fan_out(goal, session, st)
+    save(path, st)                        # goal["fanned"], goal["fan_checked"]: keep() saved the goal before them
+    print(json.dumps({"decision": "block", "reason": (
+        "[squad-watch] CARRY ON" + (" + FAN OUT" if order else "") + ": the delivery is not finished. " +
+        (order + " " if order else "") + what +
+        "Do the next step now instead of stopping or offering it: nobody reads this pane between "
+        "milestones. Take the next card through its flow, and dispatch parallel fronts where the files are "
+        "disjoint. " + CARRY_EXITS + f" (hold {goal['holds']} of {CARRY_CAP}; {CARRY_MAX} stops in a row "
+        "without progress release it.)")}))
+    return True
+
+
 def stop(p):
     """The main session stopped. At handoff level, either it writes the handoff,
     or (already written) the session switch is launched: now, or scheduled when
@@ -1939,7 +3012,7 @@ def stop(p):
     st["last_stop"] = {"ts": time.time(), "bg": len(running(p))}
     save(path, st)
     if st.get("ctx_level", 0) < 2 and not st.get("switched"):
-        if not early_handoff(p, path, st):
+        if not early_handoff(p, path, st) and not carry_on(p, path, st):
             compact_schedule(p, path, st)
         return
     if p.get("squad_rearm"):              # squad-switch gave up before clearing: the next Stop decides again

@@ -24,6 +24,10 @@ Checks, in this order:
               be read)
   squad-turn  the merge-queue command is on PATH and runs this clone's script
               (FAIL also names a dangling ~/.local/bin/squad-turn)
+  squad-decisions
+              the command squad-router.py tells a session to run to record a
+              decision is on PATH and runs this clone's script (same FAILs as
+              squad-turn)
   herdr       herdr is on PATH (WARN only: without it the session switch after a
               handoff needs the owner)
   project     a .agenfk/project.json from --project up (WARN outside a project,
@@ -34,7 +38,11 @@ Checks, in this order:
               Claude Code's environment, which the hook sees, can differ. WARN
               when a number is not one, when the watcher clamps it (the value it
               really uses is shown), or when SQUAD_WATCH=0 / SQUAD_TURN=0 turns
-              part of the squad off.
+              part of the squad off, or SQUAD_REVIEW_STEPS names no step (the
+              review gate is off).
+  decisions   the SQUAD_* names in hooks/squad-decisions.py (SQUAD_DECISIONS,
+              SQUAD_DECISIONS_DIR, SQUAD_DECISIONS_BUDGET), read the same way;
+              WARN when SQUAD_DECISIONS=0 turns the session-start index off.
 
 Exit code 0 when no check FAILs, 1 otherwise. --json prints the same results as
 one JSON object. Standard library only; reads, never writes (not even the
@@ -60,15 +68,23 @@ import squad_settings as ss  # noqa: E402  (defines functions and constants only
 
 WINDOWS = os.name == "nt"
 WATCH = os.path.join(ROOT, "hooks", "squad-watch.py")
+DECISIONS = os.path.join(ROOT, "hooks", "squad-decisions.py")
 OK, WARN, FAIL = "ok", "WARN", "FAIL"
-CHECKS = ("python", "agenfk", "links", "hooks", "squad-turn", "herdr", "project", "thresholds")
+CHECKS = ("python", "agenfk", "links", "hooks", "squad-turn", "squad-decisions", "herdr", "project",
+          "thresholds", "decisions")
 NAME = re.compile(r"\bSQUAD_[A-Z0-9_]*[A-Z0-9]")
 # Values the watcher reads as a mode, not as a number (squad-watch.py main_window(), MAIN_WARN).
 SENTINELS = {"SQUAD_WINDOW": {0: "auto: the model's window, 1000000 for Claude"},
              "SQUAD_CTX_WARN": {0: "off"}, "SQUAD_CTX_HANDOFF": {0: "off"}}
 # "0" turns a part of the squad off (squad-watch.py main() and the merge-turn guard).
-KILL_SWITCHES = {"SQUAD_WATCH": "watcher disabled: no handoff order, no dispatch limit, no loop guard",
-                 "SQUAD_TURN": "merge queue disabled: no turn, no conflict check, no seal"}
+KILL_SWITCHES = {"SQUAD_WATCH": "watcher disabled: no handoff order, no dispatch limit, no loop guard, "
+                                "no review gate",
+                 "SQUAD_TURN": "merge queue disabled: no turn, no conflict check, no seal",
+                 "SQUAD_DECISIONS": "decisions hook disabled: no index of the active decisions at session start"}
+# A list the watcher splits on commas and drops the blanks from: a set value with no entry left turns
+# the part off (squad-watch.py REVIEW_STEPS).
+EMPTY_LIST_OFF = {"SQUAD_REVIEW_STEPS": "review gate disabled: no step needs a reviewer before `agenfk verify`"}
+SWITCHES = dict(KILL_SWITCHES, **EMPTY_LIST_OFF)
 
 
 def q(path):
@@ -252,26 +268,38 @@ def check_hooks(config, manifest=ss.MANIFEST):
 # ---------------------------------------------------------------- PATH, herdr, project
 
 def check_squad_turn(which=shutil.which, root=ROOT, home=None):
-    exe = which("squad-turn")
-    script = os.path.join(root, "hooks", "squad-turn.py")
+    return check_command("squad-turn", "squad-turn.py", "the merge queue (`squad-turn request`)",
+                         which, root, home)
+
+
+def check_squad_decisions(which=shutil.which, root=ROOT, home=None):
+    return check_command("squad-decisions", "squad-decisions.py",
+                         "the command the router tells the session to run (`squad-decisions add`)",
+                         which, root, home)
+
+
+def check_command(name, script_name, purpose, which=shutil.which, root=ROOT, home=None):
+    """A command install.sh links into ~/.local/bin: on PATH, and running this clone's hooks/<script_name>."""
+    exe = which(name)
+    script = os.path.join(root, "hooks", script_name)
     installer = os.path.join(root, "install.ps1" if WINDOWS else "install.sh")
     if exe:
         if WINDOWS or os.path.normcase(os.path.realpath(exe)) == os.path.normcase(os.path.realpath(script)):
-            return result("squad-turn", OK, f"on PATH ({exe})")
-        return result("squad-turn", WARN, f"{exe} runs {os.path.realpath(exe)}, not {script}", f"run {q(installer)}")
-    local = os.path.join(home or os.path.expanduser("~"), ".local", "bin", "squad-turn")
+            return result(name, OK, f"on PATH ({exe})")
+        return result(name, WARN, f"{exe} runs {os.path.realpath(exe)}, not {script}", f"run {q(installer)}")
+    local = os.path.join(home or os.path.expanduser("~"), ".local", "bin", name)
     if os.path.islink(local) and not os.path.exists(local):
-        return result("squad-turn", FAIL, f"{local} is a dangling link (to {os.readlink(local)})",
+        return result(name, FAIL, f"{local} is a dangling link (to {os.readlink(local)})",
                       f"run {q(installer)}")
     if os.path.lexists(local):
         on_path = os.path.normcase(os.path.dirname(local)) in {
             os.path.normcase(d) for d in os.environ.get("PATH", "").split(os.pathsep) if d}
         if on_path:
-            return result("squad-turn", FAIL, f"{local} is in a directory on PATH but is not an executable file",
+            return result(name, FAIL, f"{local} is in a directory on PATH but is not an executable file",
                           f"run {q(installer)}")
-        return result("squad-turn", FAIL, f"{local} exists but its directory is not on PATH",
+        return result(name, FAIL, f"{local} exists but its directory is not on PATH",
                       f"add {q(os.path.dirname(local))} to PATH")
-    return result("squad-turn", FAIL, "not on PATH: the merge queue (`squad-turn request`) is called by name",
+    return result(name, FAIL, f"not on PATH: {purpose} is called by name",
                   f"run {q(installer)}")
 
 
@@ -410,12 +438,16 @@ def watcher_env(path=WATCH, environ=None):
             low, high = bounds.get(name, (None, None))
             if parsed and (
                     (low is not None and effective < low) or (high is not None and effective > high)):
-                effective = min(max(effective, low if low is not None else effective),
-                                high if high is not None else effective)
+                if low is not None:
+                    effective = max(effective, low)
+                if high is not None:
+                    effective = min(effective, high)
                 status, detail = WARN, (f"{raw} (set; out of range {'' if low is None else low}.."
                                         f"{'' if high is None else high}: the watcher uses {label(name, effective)})")
         if raw == "0" and name in KILL_SWITCHES:      # exactly "0", as the watcher compares it
             status, detail = WARN, f"0 (set): {KILL_SWITCHES[name]}"
+        if name in EMPTY_LIST_OFF and not any(part.strip() for part in raw.split(",")):
+            status, detail = WARN, f"{raw!r} (set): {EMPTY_LIST_OFF[name]}"
         items.append(item(name, status, detail, value=raw, default=default, is_default=False, effective=effective))
     return items
 
@@ -431,26 +463,42 @@ def label(name, value):
     return f"{value} ({mode})" if mode else str(value)
 
 
+def env_fixes(items):
+    """The fixes for a list of watcher_env() items: unset what switches a part off, fix what is not a number."""
+    off = [i["name"] for i in items if i["status"] == WARN and i["name"] in SWITCHES]
+    fixes = [f"unset {' and '.join(off)} unless you turned that off on purpose"] if off else []
+    if any(i["status"] == WARN and i["name"] not in SWITCHES for i in items):
+        fixes.insert(0, "set each WARN variable to a whole number in its range, or unset it")
+    return "; ".join(fixes) or None
+
+
 def check_thresholds(path=WATCH, environ=None):
     items = watcher_env(path, environ)
     set_here = sum(1 for i in items if not i["is_default"])
-    status = worst(i["status"] for i in items)
-    off = [i["name"] for i in items if i["status"] == WARN and i["name"] in KILL_SWITCHES]
-    fixes = [f"unset {' and '.join(off)} unless you turned that off on purpose"] if off else []
-    if any(i["status"] == WARN and i["name"] not in KILL_SWITCHES for i in items):
-        fixes.insert(0, "set each WARN variable to a whole number in its range, or unset it")
-    return result("thresholds", status,
+    return result("thresholds", worst(i["status"] for i in items),
                   f"{len(items)} SQUAD_* variables in {os.path.relpath(path, ROOT)}, {set_here} set in this shell "
                   "(the hook sees Claude Code's environment)",
-                  "; ".join(fixes) or None, items)
+                  env_fixes(items), items)
+
+
+def check_decisions(path=DECISIONS, environ=None):
+    """The SQUAD_* variables of the decisions hook, read the way the watcher's are."""
+    items = watcher_env(path, environ)
+    set_here = sum(1 for i in items if not i["is_default"])
+    return result("decisions", worst(i["status"] for i in items),
+                  f"{len(items)} SQUAD_* variables in {os.path.relpath(path, ROOT)}, {set_here} set in this shell "
+                  "(the hook sees Claude Code's environment)",
+                  env_fixes(items), items)
 
 
 # ---------------------------------------------------------------- report
 
 def run_checks(config, project):
     steps = (("python", check_python), ("agenfk", check_agenfk), ("links", lambda: check_links(config)),
-             ("hooks", lambda: check_hooks(config)), ("squad-turn", check_squad_turn), ("herdr", check_herdr),
-             ("project", lambda: check_project(project)), ("thresholds", check_thresholds))
+             ("hooks", lambda: check_hooks(config)), ("squad-turn", check_squad_turn),
+             ("squad-decisions", check_squad_decisions), ("herdr", check_herdr),
+             ("project", lambda: check_project(project)), ("thresholds", check_thresholds),
+             ("decisions", check_decisions))
     out = []
     for name, fn in steps:
         try:
@@ -464,9 +512,9 @@ def run_checks(config, project):
 def render(checks):
     lines = []
     for c in checks:
-        lines.append(f"{c['status']:<5} {c['check']:<11} {c['summary']}")
+        lines.append(f"{c['status']:<5} {c['check']:<15} {c['summary']}")
         for i in c["items"]:
-            if c["check"] == "thresholds" or i["status"] != OK:
+            if c["check"] in ("thresholds", "decisions") or i["status"] != OK:
                 lines.append(f"{'':<6}{i['status']:<5} {i['name']}: {i['detail']}")
         if c["status"] != OK and c["fix"]:
             lines.append(f"{'':<6}fix:  {c['fix']}")

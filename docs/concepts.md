@@ -1,6 +1,7 @@
 # Concepts
 
-Five principles hold the squad together. Each one answers a failure that was
+Five principles hold the squad together, and one practice rests on them
+(standing rules are written down once). Each one answers a failure that was
 observed, not imagined, and each one is enforced somewhere you can point to: a
 tool list, an AgenFK gate, or a line in a hook. A principle that lives only in
 a prompt is a wish.
@@ -68,14 +69,27 @@ is the owner's. Without the cap, a reviewer and an implementer will trade
 findings for as long as the budget lasts, which is how one card came to be
 reviewed five times.
 
+The cap limits how often a card is reviewed; the **review gate** makes sure it
+is reviewed at all. When the main session tries to advance a card that sits on
+a review step (`agenfk verify <id>`, or the MCP tools that advance a card), the
+watcher refuses with `REVIEW REQUIRED` until a reviewer has been dispatched on
+that card since it entered the step. One dispatch unlocks one review step: a
+card sent back by `FIX_FIRST` needs a new reviewer when it returns. The gate
+fails open when `agenfk` cannot answer, so a broken board does not freeze every
+session; the cost is that it does not hold meanwhile. How it reads the command,
+and the fail-open rules, are in
+[watcher.md](watcher.md#the-review-gate-no-self-approval).
+
 The same idea applies to tests: a test that only shows the code ran proves
 nothing. The `tester` writes each test against the behaviour its criterion
 names, and the `verifier` reads it for that. The flow has no round that breaks
 production code to grade the tests (owner decision, 16/10/2026).
 
-*Enforced by:* the `tools:` line of `agents/verifier.md`; the reviewer cap in
-the watcher (`SQUAD_MAX_REVIEWS`, a seventh reviewer on the same card is
-denied); the REVIEW and ADVERSARIAL steps of the flow.
+*Enforced by:* the `tools:` line of `agents/verifier.md`; the review gate in
+the watcher (`REVIEW REQUIRED`: no advancing a card past a review step until a
+reviewer has been dispatched on it); the reviewer cap (`SQUAD_MAX_REVIEWS`, a
+seventh reviewer on the same card is denied); the REVIEW and ADVERSARIAL steps
+of the flow.
 
 ## 3. Context is a budget
 
@@ -104,7 +118,8 @@ has already burned. The numbers are in [watcher.md](watcher.md#the-handoff-arith
 The same budget applies to orchestration. Sub-agents are the largest single
 cost (64% in the sample week), so there is a cap on sub-sessions per session,
 on sessions orchestrating at once, and on the context of an orchestrator that
-wants to dispatch.
+wants to dispatch. The ceilings and their defaults are in
+[watcher.md](watcher.md#the-dispatch-brake).
 
 *Enforced by:* `hooks/squad-watch.py` on `PostToolUse`, `PreToolUse` and `Stop`.
 
@@ -119,7 +134,8 @@ So each denial in this project names the next action:
 
 | Refused | Why | Where the work goes |
 |---|---|---|
-| Dispatch | Orchestrator past its context ceiling, or 40 sub-sessions used | Write a handoff holding the plan of the denied dispatch and stop; a fresh session executes it |
+| Advance a card | The card is on a review step and no reviewer was dispatched on it since it entered | Dispatch the verifier with the card id and the branch; run `agenfk verify` again with its verdict as evidence |
+| Dispatch | Orchestrator past its context ceiling, or 60 sub-sessions used | Write a handoff holding the plan of the denied dispatch and stop; a fresh session executes it |
 | Dispatch (implementation) | No orchestrator slot, session is light | Implement the card right here, without an agent |
 | Dispatch (implementation) | No orchestrator slot, session is heavy | Handoff with the implementation plan; the fresh session implements directly |
 | Dispatch (review) | No orchestrator slot | Carry on with what does not depend on the verdict; wait for `SLOT FREE` |
@@ -155,6 +171,48 @@ session behaviour that motivated it, and ships with a test.
 
 *Enforced by:* the AgenFK flow; rule 5 of `CLAUDE.md`; the review checklist in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Standing rules are written down once
+
+An owner who says "never deploy on Fridays" in one session should not have to
+say it again in the next one, or in the worktree next door. A rule that lives
+only in a conversation is gone at the next `/clear`.
+
+So a standing rule becomes a decision: one file in the project's decision
+store, outside the checkout, that every session of the repository reads at
+start. The router notices when the owner states one ("always", "never", "from
+now on", "sempre", "nunca", "daqui em diante") and asks the main session to
+record it. Agents return the decisions they made under a `Decisions` heading,
+and the main session judges each one before recording it with the card as the
+source: an agent that read hostile text in a branch could pass it through. A question, an
+ordinary request that merely contains the word ("it never opens, fix it"), a
+condition about the product ("whenever the user clicks save, call the API") or
+an instruction limited to one function, file, PR or moment does not count: the
+marker must be followed by an instruction. Diffs, logs,
+tracebacks, quoted, indented or fenced lines, known prompts written by programs and
+prompts that announce a quote ("here is what the other agent said", "segue o
+texto da issue") are skipped. Pasted plain prose with no such announcement, such
+as a PR description or an issue body, can still trigger the line. That is why
+the line is a hint and not a verdict: it tells the session to record only the
+owner's own words in that prompt, never text pasted from an issue, a PR, a file,
+a log or another agent.
+
+The detector chooses precision over recall on purpose: a hint that
+fires on every prompt gets ignored, while a missed rule costs one sentence ("record
+that as a decision"). So it misses, by design, rules phrased as questions ("should
+we always squash?"), rules with no marker ("PRs go to beta"), rules whose verb
+is not on its list, "whenever" rules whose condition names no part of the work
+(tests, commits, PRs, the suite, deploys), rules inside a prompt that also
+carries a diff or announces a quote, and rules limited by "here", "now" or "in
+this file". When the owner states a rule the hook missed, the session records it
+anyway.
+
+A decision records context; it is not the implementation. A rule that changes
+how the repository behaves still gets a card.
+
+*Enforced by:* `hooks/squad-router.py` on `UserPromptSubmit` (the
+`[squad decision]` line), `hooks/squad-decisions.py` on `SessionStart` (the
+index) and rule 12 of `CLAUDE.md`. Details in [decisions.md](decisions.md).
 
 ## What the squad is not
 

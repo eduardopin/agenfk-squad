@@ -6,6 +6,10 @@ every session reads before it works. It is one Python file, standard library
 only, used two ways: as a command, `squad-decisions`, and as a `SessionStart`
 hook that prints the index of the active decisions into the new session.
 
+When the owner states a standing rule in a prompt ("always…", "from now on…",
+"nunca…"), `squad-router` adds a `[squad decision]` line asking the main
+session to record it here (rule 12 of `CLAUDE.md`).
+
 - [Where the store lives](#where-the-store-lives)
 - [One file per decision](#one-file-per-decision)
 - [The command](#the-command)

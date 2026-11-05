@@ -90,6 +90,7 @@ MAX = env_int("SQUAD_WAKE_MAX", 6)
 BATCH = env_int("SQUAD_WAKE_BATCH", 3)
 BLOCKED = env_int("SQUAD_WAKE_BLOCKED", 900)
 AGE = env_int("SQUAD_WAKE_AGE", 43_200)
+CARRY_AGE = env_int("SQUAD_CARRY_AGE", 12 * 3600)       # the watcher's own limit for an explicit goal
 SWITCH_AFTER = env_int("SQUAD_WAKE_SWITCH", 900)
 SWITCH_AGE = env_int("SQUAD_WAKE_SWITCH_AGE", 21_600)   # a switch older than this is not redone
 PICKUP_AFTER = env_int("SQUAD_WAKE_PICKUP", 120)
@@ -123,7 +124,55 @@ def changes_state(cmd):
     return False
 
 
-def text(minutes):
+def open_goal(watch):
+    """The watcher's open goal for the session (`[squad] GOAL:`): not blocked, not let go, and not
+    expired (an explicit goal with no progress for SQUAD_CARRY_AGE, as squad-watch's stale())."""
+    g = (watch or {}).get("goal")
+    if not isinstance(g, dict) or g.get("blocked") or g.get("released"):
+        return None
+    try:
+        age = time.time() - float(g.get("progress_ts", g.get("ts", 0)))
+    except (TypeError, ValueError):
+        return None
+    return None if g.get("source") != "implicit" and age > CARRY_AGE else g
+
+
+DENIED_QUIET = 300     # as squad-watch's: no FAN OUT for this long after a denied dispatch
+
+
+def goal_line(goal, watch=None, st=None):
+    """One line: the goal, and the fan-out order when its cards should be running in parallel. No
+    order within DENIED_QUIET of a denied dispatch (the brake would refuse it again), and none for a
+    goal whose order an earlier wake already gave (st["fan_goal"] is that goal's ts); giving one is
+    recorded on `st`."""
+    line = f"The open goal: \"{str(goal.get('text') or '')[:300]}\"."
+    try:
+        denied = float((watch or {}).get("denied_ts") or 0)
+    except (TypeError, ValueError):
+        denied = 0       # a corrupt state file must not cost the session its order
+    st = st if st is not None else {}
+    if goal.get("fanned") or time.time() - denied < DENIED_QUIET or (
+            goal.get("ts") is not None and st.get("fan_goal") == goal.get("ts")):
+        return line
+    try:
+        import importlib.util
+        here = os.path.dirname(os.path.realpath(__file__))
+        spec = importlib.util.spec_from_file_location(
+            "squad_fleet", os.path.join(os.path.dirname(here), "skills", "architect", "scripts", "fleet.py"))
+        fleet = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fleet)
+        leaves, read, total = fleet.goal_leaves(goal.get("cards") or [], os.environ.get("SQUAD_AGENFK") or "agenfk", 6)
+        leaves = fleet.unfanned(leaves)
+        if fleet.verdict(goal, leaves, 0) == "FAN OUT":
+            line += " " + fleet.fan_out_order(goal, leaves, read, total)
+            if read >= total and goal.get("ts") is not None:
+                st["fan_goal"] = goal.get("ts")
+    except Exception:
+        pass
+    return line
+
+
+def text(minutes, extra=""):
     # One line. No "handoff", "pause", "/clear", "pickup", "you can stop", "for today":
     # squad-watch reads the prompt and must not take it for the owner asking to stop
     # (it also skips this prefix; tests/test_wake.py checks both).
@@ -134,8 +183,8 @@ def text(minutes):
             "cards in DONE, and then the project's open cards. If you are waiting for something that will "
             "call you back on its own (the merge turn, a live background command), say in one line what you "
             "are waiting for and stop. Only stop for good by ending with one of these lines: "
-            "`[squad] BLOCKED: <what only the owner can do>` or "
-            "`[squad] END: <why nothing is left that you can do>`.")
+            "`[squad] BLOCKED: merge approval on PR #64 is the owner's` or "
+            "`[squad] END: no card is left that I can take` (your own text, not a <placeholder>)." + (" " + extra if extra else ""))
 
 
 def log(pane, msg):
@@ -420,7 +469,9 @@ def decide(a, now, dry_run=False):
         return "reswitch", f"switch stuck for {int((now - ref) // 60)} min: redoing it", ctx
     if watch.get("ctx_level", 0) >= 2:
         return "none", "handoff with the watcher", ctx
-    if quiet > AGE:
+    goal = open_goal(watch)
+    ctx["goal"], ctx["watch"] = goal, watch   # the line is built in wake(): it asks AgEnFK, up to 6 s
+    if quiet > AGE and not goal:
         return "none", f"idle for {int(quiet // 3600)} h: old conversation", ctx
     asked, reply = last_reply(tr)
     if not asked:
@@ -461,11 +512,14 @@ def wake(ctx):
     before = dict(st)
     st.update(n=int(st.get("n") or 0) + 1, ts=time.time(), size=os.path.getsize(ctx["tr"]))
     save(ctx["path"], st)                 # counted before sending: a full disk does not become a wake loop
-    rc, _ = herdr("agent", "prompt", pane, text(int(ctx["quiet"] // 60)))
+    extra = goal_line(ctx["goal"], ctx.get("watch"), st) if ctx.get("goal") else ""
+    rc, _ = herdr("agent", "prompt", pane, text(int(ctx["quiet"] // 60), extra))
     if rc != 0:
         save(ctx["path"], before)
         log(pane, f"{sid[:8]} gave up: the prompt failed")
         return False
+    if st.get("fan_goal") != before.get("fan_goal"):
+        save(ctx["path"], st)             # the order went out: the next wake does not repeat it
     return True
 
 

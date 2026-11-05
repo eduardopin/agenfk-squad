@@ -4,7 +4,8 @@
     "UserPromptSubmit": "*",
     "PreToolUse": "*",
     "PostToolUse": "*",
-    "PostToolUseFailure": "*"
+    "PostToolUseFailure": "*",
+    "PermissionRequest": "Write|Edit|MultiEdit|NotebookEdit"
   },
   "hooks": [
     {
@@ -32,6 +33,11 @@
       "timeout": 5,
       "events": ["PreToolUse"],
       "matchers": {"PreToolUse": "Bash|Grep|Read|Glob"}
+    },
+    {
+      "script": "squad-allow.py",
+      "timeout": 5,
+      "events": ["PermissionRequest"]
     }
   ]
 }

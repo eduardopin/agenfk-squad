@@ -329,7 +329,7 @@ foreach ($d in $skillDirs) {
 if (-not (Link (Join-Path $Squad 'CLAUDE.md') (Join-Path $Claude 'CLAUDE.md'))) { $rc = 1 }
 # squad-graph.py is linked so its manifest entry never points at a missing file; graphify itself is
 # not installed here (docs/installation.md, Known limitations on Windows), and without it the hook prints nothing
-foreach ($h in @('squad-router.py', 'squad-watch.py', 'squad-switch.py', 'squad-turn.py', 'squad-graph.py')) {
+foreach ($h in @('squad-router.py', 'squad-watch.py', 'squad-switch.py', 'squad-turn.py', 'squad-graph.py', 'squad-allow.py')) {
   if (-not (Link (Join-Path (Join-Path $Squad 'hooks') $h) (Join-Path (Join-Path $Claude 'hooks') $h))) { $rc = 1 }
 }
 # squad-decisions.py: the SessionStart hook of hooks/manifest.json (docs/decisions.md)

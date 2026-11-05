@@ -196,6 +196,16 @@ def test_a_fan_out_names_every_card_of_a_six_card_goal_and_is_recorded():
     assert json.load(open(path))["goal"].get("fanned")
 
 
+def test_a_parked_goal_card_takes_its_children_out_of_the_leaves():
+    h = W.home()
+    fleet = module(FLEET, "fleet_low_c")
+    paused = {"id": "81000000-0000-4000-8000-000000000000", "type": "STORY", "status": "PAUSED",
+              "title": "Parked", "projectId": PROJECT}
+    child = {"id": "82000000-0000-4000-8000-000000000000", "type": "TASK", "status": "TODO",
+             "title": "Under it", "parentId": paused["id"], "projectId": PROJECT}
+    assert fleet.open_leaves([paused["id"]], fake_agenfk(h, [paused, child])) == []
+
+
 def test_a_cut_project_list_makes_the_read_incomplete():
     h = W.home()
     fleet = module(FLEET, "fleet_m2")
@@ -457,6 +467,17 @@ def test_an_agenfk_that_does_not_answer_is_not_asked_again_on_every_hold():
     s.work("More.")
     s.stop()
     assert calls() == asked, "a dead AgEnFK was asked again inside the window"
+
+
+def test_a_fan_check_stamped_in_the_future_does_not_silence_the_goal():
+    h = W.home()
+    s = Session(h, fake_agenfk(h))
+    path = open_goal_without_order(h, s)
+    st = json.load(open(path))
+    st["goal"]["fan_checked"] = time.time() + 3600       # a clock that moved back must not mute the order
+    json.dump(st, open(path, "w"))
+    s.work("Wrote the cart.")
+    assert "FAN OUT" in s.stop()
 
 
 def log_fanout(h, card, ago=0):

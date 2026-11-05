@@ -51,13 +51,16 @@ the git toplevel, and a session started in `/`, in `$HOME` or in a parent of `$H
 has no project.
 
 - **A. A new plain file in the project.** Write only, the file does not exist (a
-  dangling symlink counts as existing), and the extension is one of `.md .txt .csv
-  .tsv .log .png .jpg .jpeg .pdf`. No path component under the root starts
-  with a dot or is named `node_modules`, `vendor`, `.terraform`, `bin`, `sbin`,
-  `hooks`, `githooks` or `.githooks`, and the name is not `CLAUDE*.md`, `AGENTS*.md`, `GEMINI*.md`, `COPILOT*.md`,
-  `SKILL.md`, `CONVENTIONS.md`, or a build or dependency spec (`CMakeLists.txt`, `llms*.txt`,
-  `robots.txt`, and any file or folder matching `*requirements*`, `*constraints*`,
-  `*.egg-info` or `*.dist-info`). No component of the whole absolute path, root included,
+  dangling symlink counts as existing), and the extension is one of `.md .csv .tsv
+  .log .png .jpg .jpeg .pdf`. No `.txt`: pytest runs `test*.txt` as doctests, and
+  pip, CMake, Conan, apt and buildpacks read `requirements.txt`, `CMakeCache.txt`,
+  `conanfile.txt`, `packages.txt`, `apt.txt` and `runtime.txt` as specs. No path
+  component under the root starts with a dot or is named `node_modules`, `vendor`,
+  `.terraform`, `bin`, `sbin`, `hooks`, `githooks` or `.githooks`, and the name is not
+  `CLAUDE*.md`, `AGENT*.md`, `GEMINI*.md`, `COPILOT*.md`, `JULES*.md`, `QWEN*.md`,
+  `CRUSH*.md`, `WARP*.md`, `SKILL.md`, `CONVENTIONS.md` or `README*.md` (agents load
+  the first ones as instructions, doctest and rustdoc run READMEs). No component of the
+  whole absolute path, root included,
   may start with a dot, and the path may not sit under a claude dir or `~/.config`;
   B has the same checks. A session rooted in a dot folder such as `~/.claude` gets nothing.
 - **B. Architect plan files.** Write of a new, or Edit and MultiEdit of an existing,

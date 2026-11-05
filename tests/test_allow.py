@@ -75,7 +75,7 @@ def rel(base, r):
 def test_a_new_inert_file_in_the_project_is_allowed():
     h = tmp()
     p = project(h)
-    for r in ("docs/notes.md", "notes.txt", "a/b/data.csv", "d.tsv", "x.log", "i.png", "i.jpg", "i.jpeg",
+    for r in ("docs/notes.md", "a/b/data.csv", "d.tsv", "x.log", "i.png", "i.jpg", "i.jpeg",
               "r.pdf", "UPPER.MD"):
         assert allowed(ask(h, "Write", rel(p, r))), r
 
@@ -211,7 +211,27 @@ def test_build_and_dependency_files_with_an_inert_extension_are_not_allowed():
                  "build_constraints.txt"):
         p = os.path.join(h, "proj", "sub", *name.split("/"))
         assert ask(h, "Write", p) == "", name
-    assert ask(h, "Write", os.path.join(h, "proj", "sub", "notes.txt")) != ""
+    assert ask(h, "Write", os.path.join(h, "proj", "sub", "notes.md")) != ""
+
+
+def test_no_txt_file_is_allowed_since_tools_read_them_as_code_or_specs():
+    h = tmp()
+    for name in ("notes.txt", "test_x.txt", "tests/test_notes.txt", "CMakeCache.txt", "conanfile.txt",
+                 "packages.txt", "apt.txt", "runtime.txt"):
+        assert ask(h, "Write", os.path.join(h, "proj", *name.split("/"))) == "", name
+
+
+def test_agent_instruction_names_and_readme_are_not_allowed():
+    h = tmp()
+    for name in ("AGENT.md", "agent.md", "JULES.md", "QWEN.md", "CRUSH.md", "WARP.md", "README.md", "readme.md"):
+        assert ask(h, "Write", os.path.join(h, "proj", "sub", name)) == "", name
+
+
+def test_plans_and_handoffs_named_after_requirements_are_still_allowed():
+    h = tmp()
+    for r in ("proj/docs/architect/requirements.md", "proj/docs/architect/constraints.json",
+              "proj/.claude/handoffs/requirements-notes.md", "proj/docs/requirements.md"):
+        assert ask(h, "Write", os.path.join(h, *r.split("/"))) != "", r
 
 
 def test_steering_and_secret_paths_are_never_allowed_even_when_new():

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Journey QA"
+  short_description: "Agentic QA of user journeys, business rules and architecture with auditable evidence"
+  default_prompt: "Use $journey-qa to test this product through complete user journeys and review the relevant architecture decisions, with evidence in the ledger."
+policy:
+  allow_implicit_invocation: true

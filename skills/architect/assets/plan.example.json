@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "project": "Illustrative example: multi-tenant SaaS with AI-assisted search",
+  "max_workers": 5,
+  "contracts": [
+    {"id": "API", "version": "1.0.0", "status": "stable", "owner": "architect"},
+    {"id": "DATA", "version": "1.0.0", "status": "stable", "owner": "architect"},
+    {"id": "DEPLOY", "version": "1.0.0", "status": "stable", "owner": "platform"},
+    {"id": "AI", "version": "1.0.0", "status": "stable", "owner": "ai-engineer"}
+  ],
+  "tasks": [
+    {
+      "id": "CONTRACTS",
+      "title": "Define minimal contracts for API, data, deployment and AI",
+      "owner": "architect",
+      "status": "done",
+      "depends_on": [],
+      "writes": ["contracts/**"],
+      "locks": ["contract-registry"],
+      "requires_contracts": [],
+      "produces": ["OpenAPI with examples and errors", "tenant_id and isolation invariants", "image, port, healthcheck, variables and infrastructure outputs", "AI response schema and evaluation set"],
+      "acceptance": ["Consumers reviewed versions 1.0.0 and the mocks pass the contract", "Decisions and unknowns with implementation impact are recorded"],
+      "estimate_minutes": 45
+    },
+    {
+      "id": "APP-API",
+      "title": "Implement the first API slice using the contracts and local fixtures",
+      "owner": "backend",
+      "status": "todo",
+      "depends_on": ["CONTRACTS"],
+      "writes": ["apps/api/**", "db/migrations/**", "tests/api/**"],
+      "locks": ["db-migration-numbering"],
+      "requires_contracts": ["API", "DATA", "DEPLOY"],
+      "produces": ["API runnable locally", "additive migration", "application image"],
+      "acceptance": ["Contract tests pass", "Cross-tenant access is denied", "Healthcheck matches the deploy contract"],
+      "estimate_minutes": 90
+    },
+    {
+      "id": "APP-WEB",
+      "title": "Implement the main user flow using a mock generated from the contract",
+      "owner": "frontend",
+      "status": "todo",
+      "depends_on": ["CONTRACTS"],
+      "writes": ["apps/web/**", "tests/web/**"],
+      "locks": [],
+      "requires_contracts": ["API"],
+      "produces": ["Navigable flow", "handling of empty, loading and error states"],
+      "acceptance": ["Main flow works with valid fixtures", "Keyboard interaction and form validation verified"],
+      "estimate_minutes": 80
+    },
+    {
+      "id": "PLATFORM",
+      "title": "Prepare the infrastructure and the development environment plan",
+      "owner": "platform",
+      "status": "todo",
+      "depends_on": ["CONTRACTS"],
+      "writes": ["infra/**"],
+      "locks": ["terraform:dev"],
+      "requires_contracts": ["DEPLOY", "DATA"],
+      "produces": ["Infrastructure modules and composition", "change plan", "typed outputs", "cost estimate with assumptions"],
+      "acceptance": ["Static validation and plan are reviewable", "Privileges, network and secrets meet the contract", "Does not require an application image that does not exist yet to validate the plan"],
+      "estimate_minutes": 70
+    },
+    {
+      "id": "DELIVERY",
+      "title": "Prepare a reusable pipeline with federated identity",
+      "owner": "delivery",
+      "status": "todo",
+      "depends_on": ["CONTRACTS"],
+      "writes": [".github/workflows/**", "build/**"],
+      "locks": [],
+      "requires_contracts": ["DEPLOY"],
+      "produces": ["Build and validation workflow", "artifact promotion contract by digest"],
+      "acceptance": ["Minimal permissions declared", "Jobs do not depend on static credentials", "Deploy does not start without the planned artifact and environment"],
+      "estimate_minutes": 40
+    },
+    {
+      "id": "AI-RETRIEVAL",
+      "title": "Implement optional AI search with evaluation and isolation",
+      "owner": "ai-engineer",
+      "status": "todo",
+      "depends_on": ["CONTRACTS"],
+      "writes": ["services/retrieval/**", "tests/evals/**"],
+      "locks": [],
+      "requires_contracts": ["AI", "DATA"],
+      "produces": ["Retrieval adapter and structured response", "offline evaluation with fixtures", "configurable cost and timeout limits"],
+      "acceptance": ["Retrieval filters by tenant before returning context", "Provider failure preserves the main function", "Quality and abstention metrics are computed with a versioned dataset"],
+      "estimate_minutes": 60
+    },
+    {
+      "id": "ASSURANCE",
+      "title": "Prepare isolation, security and acceptance evidence cases",
+      "owner": "quality",
+      "status": "todo",
+      "depends_on": ["CONTRACTS"],
+      "writes": ["tests/security/**", "tests/fixtures/**", "policies/**"],
+      "locks": [],
+      "requires_contracts": ["API", "DATA", "AI"],
+      "produces": ["Traceable positive and negative scenarios", "fixtures per tenant", "applicable policies"],
+      "acceptance": ["Each critical risk has a validation case and an expected result", "Fixtures contain no secrets or real personal data"],
+      "estimate_minutes": 35
+    },
+    {
+      "id": "INTEGRATE-DEV",
+      "title": "Integrate application, AI and platform in development",
+      "owner": "integrator",
+      "status": "todo",
+      "depends_on": ["APP-API", "APP-WEB", "PLATFORM", "DELIVERY", "AI-RETRIEVAL", "ASSURANCE"],
+      "writes": ["tests/e2e/**", "deployments/dev/**"],
+      "locks": ["terraform:dev", "environment:dev"],
+      "requires_contracts": ["API", "DATA", "DEPLOY", "AI"],
+      "produces": ["Release candidate in an authorized environment", "E2E results", "demonstrable telemetry and rollback"],
+      "acceptance": ["Complete flow passes with the real implementation", "Isolation between tenants validated", "Infrastructure plan matches the reviewed commit", "Deploy respects the authorization recorded in the project"],
+      "estimate_minutes": 30
+    },
+    {
+      "id": "RELEASE-EVIDENCE",
+      "title": "Consolidate evidence, gaps and the readiness decision",
+      "owner": "architect",
+      "status": "todo",
+      "depends_on": ["INTEGRATE-DEV"],
+      "writes": ["reports/release/**"],
+      "locks": [],
+      "requires_contracts": ["API", "DATA", "DEPLOY", "AI"],
+      "produces": ["Acceptance report with verifiable references", "residual risks and next steps"],
+      "acceptance": ["All critical criteria have evidence", "Items not run appear as not verified", "Do not claim a production release from a development test"],
+      "estimate_minutes": 20
+    }
+  ]
+}

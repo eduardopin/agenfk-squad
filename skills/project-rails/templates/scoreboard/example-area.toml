@@ -1,0 +1,11 @@
+# Checklist for one area. status = done | partial | missing.
+# `done` only if it is true on the trunk, with file:line evidence. When in doubt, `partial`.
+
+area = "Reports"
+
+[[item]]
+id = "REP-1"
+target = "Report exports PDF with the same sections as the screen"
+status = "partial"
+note = "backend/src/reports/pdf.py:40 exports; charts still missing"
+card = ""

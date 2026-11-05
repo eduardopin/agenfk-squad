@@ -48,7 +48,7 @@ def omp_session(home, sid=SID):
 
 
 def run(home, event):
-    env = dict(os.environ, HOME=home)
+    env = dict(os.environ, HOME=home, USERPROFILE=home)
     for key in list(env):
         if key.startswith("SQUAD_") or key.startswith("HERDR_"):
             del env[key]
@@ -87,7 +87,8 @@ def test_omp_tool_names_reach_the_watcher_brakes_in_its_dialect():
     # the translation is what the watcher's brakes key on
     assert "Write" in sw.MUTATING and "Edit" in sw.MUTATING
     merge = br.payload({**base, "tool_name": "bash", "tool_input": {"command": "gh pr merge 99"}})
-    assert sw.turn_kind(merge) == ("merge", "99"), sw.turn_kind(merge)
+    # turn_kind is (merge, shown, target, dir) since the merge-seal change: the PR and its target must reach the brake
+    assert sw.turn_kind(merge)[:3] == ("merge", "99", ("99", "")), sw.turn_kind(merge)
 
 
 def test_payload_carries_client_omp_and_the_agent():
@@ -119,7 +120,7 @@ def test_own_handoff_reads_an_omp_transcript():
         os.makedirs(d)
         written = os.path.join(d, "20261013-000000-x.md")
         content = "# Handoff\n\nreal content\n"
-        with open(written, "w") as fh:
+        with open(written, "w", newline="") as fh:
             fh.write(content)
         transcript = os.path.join(home, "s.jsonl")
         rec = {"type": "message", "id": "m9", "message": {
@@ -177,7 +178,7 @@ def test_an_over_ceiling_dispatch_is_denied_and_the_brief_is_kept():
         watch = os.path.join(home, ".claude", "squad", "watch")
         os.makedirs(watch)
         with open(os.path.join(watch, f"{SID}.main.json"), "w") as fh:
-            json.dump({"ctx": 700_000}, fh)          # above MAIN_CEIL (600k)
+            json.dump({"ctx": 850_000}, fh)          # above MAIN_CEIL (800k)
         r = run(home, {"event": "before_subagent_spawn", "session_id": SID,
                        "transcript_path": path, "cwd": "/work/proj", "agent": "verifier",
                        "prompt": "Review card e3351732 on the branch feat/x."})

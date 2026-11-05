@@ -1,6 +1,6 @@
 ---
 name: design-reference
-description: The squad's single method for interface design and visual art — direction before code, a verifiable quality floor, anti-patterns that give away AI-generated UI, motion with rules, tokens as the source of truth, and routing to the right skill already installed (frontend-design, ui-ux-pro-max, sumi, design-system, ui-styling, figma, canvas/algorithmic-art). Use when creating or redoing any screen, component, landing page, dashboard, mobile app, poster, graphic piece, generative art, canvas or design system, and when auditing existing UI. Merges the best of frontend-design (Anthropic), Impeccable, Emil Kowalski, Web Interface Guidelines (Vercel), UI/UX Pro Max and DESIGN.md (Stitch).
+description: The squad's single method for interface design and visual art — a sweep of the design system of the project at hand (scripts/sweep.py, which every rendered piece uses), direction before code, a verifiable quality floor, anti-patterns that give away AI-generated UI, motion with rules, tokens in three layers with a component spec, visual identity and graphic pieces (banner, social, print), and routing to the right skill already installed (frontend-design, ui-ux-pro-max, sumi, design-system, ui-styling, figma, canvas/algorithmic-art, cloud-diagram). Use when creating or redoing any screen, component, landing page, dashboard, mobile app, poster, banner, graphic piece, generative art, canvas, rendered document or design system, and when auditing existing UI. Merges the best of frontend-design (Anthropic), Impeccable, Emil Kowalski, Web Interface Guidelines (Vercel), UI/UX Pro Max and DESIGN.md (Stitch).
 ---
 
 # design-reference — an interface that becomes a reference, not a template
@@ -11,13 +11,32 @@ enemy is the default: what any model would produce for any similar brief.
 
 ## 0. The project rules
 
-Before any decision, look for and read, in this order: `DESIGN.md` or
-`PRODUCT.md` at the root; the brand guide (`brand/`, `docs/design*`); tokens
-that already exist (`globals.css`, `tailwind.config.*`, `tokens.json`, theme);
-the shared components the new screen will use. **The brief and the visual
-world already committed to beat any taste of yours and any rule in here.**
-Refining preserves identity, copy and behaviour; redesigning replaces the
-whole visual world — never polish the look that was discarded.
+**The first step of any rendered piece** — screen, component, HTML document,
+Artifact, PDF, deck, diagram (`cloud-diagram`), banner — is the sweep of the
+project's design system, once per project per session:
+
+```bash
+python3 -I ~/.claude/skills/design-reference/scripts/sweep.py <root>         # summary
+python3 -I ~/.claude/skills/design-reference/scripts/sweep.py <root> --css   # :root with --ds-*
+```
+
+It reads the written spec (`DESIGN.md`, `docs/design*`), tokens
+(`tailwind.config.*`, CSS with `:root`/`@theme`, `*.tokens.json`), the
+component theme, `package.json`, `components.json`, Storybook and Figma links,
+and returns the verdict: **project** (the piece wears its tokens) or
+**neutral** (the squad's neutral palette). `--css` emits `--ds-bg --ds-surface
+--ds-fg --ds-fg-2 --ds-accent --ds-border --ds-font-display --ds-font-body
+--ds-font-mono` and the dark block; the squad's templates read those
+variables. `--json` returns the full finding. Precedence on conflict: spec >
+tokens > components. One system per page. Say in one line which system the
+piece wears and where it was found. A client's or third party's brand: ask
+first. Detail in `references/design-system-sweep.md`.
+
+Then read the shared components the new screen will use. **The brief and the
+visual world already committed to beat any taste of yours and any rule in
+here.** Refining preserves identity, copy and behaviour; redesigning replaces
+the whole visual world — never polish the look that was discarded. A design
+skill of the project's own (`.claude/skills/`) wins over this one.
 
 Without a `DESIGN.md` the project is not necessarily greenfield: the evidence
 is the code and the existing screens, not the file name.
@@ -80,16 +99,22 @@ reference engine, not an art director — the decision is still yours.
   one (tokens in YAML + the reason for each value in prose) — it is what keeps
   the next session coherent with this one.
 
-To generate the complete system: `sumi:tokens` (DTCG + CSS/Tailwind) or the
-`design-system` skill (component specs). One of the two, not both.
+Scale, component spec (variants, sizes, states with priority, anatomy) and
+notes on shadcn/Tailwind/dark mode: `references/tokens-and-components.md`.
+To generate the complete system in DTCG + CSS/Tailwind: `sumi:tokens`.
 
 ## 4. Build
 
-- Stack and components: the project's. shadcn/Tailwind → `ui-styling`; a
-  design coming from Figma → `figma:figma-design-to-code` (MCP) or the
+- Stack and components: the project's. shadcn/Tailwind →
+  `references/tokens-and-components.md` and the live docs through `context7`;
+  a design coming from Figma → `figma:figma-design-to-code` (MCP) or the
   project's own local skill (for example `implement-from-figma`,
   `refactor-frontend-component`); writing to Figma → `figma:figma-use`.
 - Native mobile: respect the platform (HIG / Material) before the brand.
+- A cloud or infrastructure architecture diagram (AWS, OCI, GCP, Azure,
+  Cloudflare): `cloud-diagram`, always. It is the design skill for the task;
+  copy its kit (the `template.html` in that skill's references) and measure
+  with its `render.sh`. No mermaid, generic boxes or external image icons.
 - Real content from the start: test short, medium and very long copy; empty
   state; loading; error; no permission. Lorem placeholder is a defect.
 - Copy is design material: a control says what happens ("Save changes", not
@@ -101,6 +126,27 @@ To generate the complete system: `sumi:tokens` (DTCG + CSS/Tailwind) or the
 - Browser surfaces are design too: text selection, caret, scrollbar, focus,
   underline offset, tabular numerals. Theme them from the palette — it is the
   cheapest sign that the page was *built*.
+
+### Product UI execution companion
+
+For native or responsive product UI, use the available `mobile-design-studio`
+skill as the **one** optional design companion: small implementation units,
+mobile ergonomics (touch targets, safe areas, keyboard, text scaling, back),
+state/recovery checks and platform evidence. `design-reference` remains the
+single design-direction source: reuse its approved brief, tokens and
+components; do not run a second branding/direction process or create
+duplicate token files. Read only the companion reference needed for the
+current unit. It is not the route for decks, art, posters or cloud diagrams;
+those keep their dedicated skills.
+
+Resolve the companion's directory from the selected skill's original inventory
+path, never from a generated prompt cache or an assumed `~/.claude`
+installation. If the companion is absent or manual-only, do not advertise or
+auto-load it; continue with the project method. Project skills and mandatory
+platform/Figma prerequisites (e.g. the Expo overview, React Native and Figma
+design-to-code/use) still apply; they are not optional competing design
+directions. Keep the two-design-skill ceiling: this method plus one
+companion, never an extra Sumi/UI style stack.
 
 ## 5. Quality floor (verified in the result, not in the intention)
 
@@ -161,9 +207,11 @@ nothing overlaps.
 | static PNG/PDF (poster, art, cover) | `vendor/canvas-design` (Anthropic) |
 | 2D generative art, flow fields, particles | `vendor/algorithmic-art` (p5.js, reproducible seed, sliders) |
 | 3D / shader / interactive scene | three.js (r160+), GLSL `ShaderMaterial`; **always** `dispose()` and listener removal on teardown |
-| piece for social media / ad / banner | `banner-design` or `design` (claudekit) |
+| piece for social media / ad / banner / print | `references/identity-and-pieces.md` (sizes, safe area, call to action) + HTML captured at the exact size |
 | slides | `slides` |
-| logo, icon, identity | `design` (logo/CIP/icon) + `brand` |
+| cloud architecture diagram | `cloud-diagram` |
+| brand guide, palette, logo rules | `references/identity-and-pieces.md`; brand voice and copy → `writing` |
+| logo, icon, identity mockup generated by AI | `design` (claudekit: generation scripts with an API, needs a key) |
 | side-by-side variants on an infinite canvas | `superdesign` plugin (paid; needs login — the owner's decision) |
 | generated image/video | `sumi:generate` or the configured image MCPs |
 

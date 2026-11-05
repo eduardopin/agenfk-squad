@@ -1,0 +1,243 @@
+---
+name: presentation
+description: The squad's method for a presentation deck (pitch, investor update, epic review, readout, board briefing) as a single-file HTML built from the skill's template, with slides side by side that any arrow key changes, dots on the right edge and in the footer, dressed in the project's design system through the design-reference sweep, and exported to a 16:9 PDF and one PNG per slide by a script that measures overflow and checks one page per slide. Asks first whether the register is technical or non-technical; a title is a sentence that states the point; every number has a source; illustrative and simulated content is labelled on the slide; status chips now / next / partner. Use when asked for a "deck", "presentation", "slides", "slide deck", "pitch deck", "investor update", "board briefing", "epic review", or to "export the deck to PDF/PNG".
+---
+
+# presentation: each slide states one thing, and shows where it came from
+
+The failure this method prevents: the deck that looks finished and does not
+survive the first question. A title that is a label ("Market") instead of a
+claim, a number with no source, a simulation shown as data, a screen preview
+the audience takes for a finished product, and the PDF that comes out with the
+last paragraph cut or two slides on one page, found by the owner in front of
+the investor.
+
+## 0. The project rules
+
+Before you open the template, read `CLAUDE.md` / `AGENTS.md` and look for a
+skill of the project's own in `.claude/skills/` (e.g. an investor report
+skill). **A project skill replaces this one.** This skill is the default for
+when the project has none.
+
+The deck wears the design system of the project at hand. Run the sweep once
+per project per session and keep its output:
+
+```bash
+python3 -I ~/.claude/skills/design-reference/scripts/sweep.py <project-root>        # says what it found
+python3 -I ~/.claude/skills/design-reference/scripts/sweep.py <project-root> --css  # block to paste
+```
+
+Say in one line which system the deck wears and where the sweep found it (or
+"neutral palette: the project has no design system"). If
+`design-reference/scripts/sweep.py` is not installed, the built-in neutral
+palette stays and the line says the sweep was not run. A customer's or a third
+party's brand: ask before using it.
+
+Deck language: what the owner asked for > the language of the material the
+deck summarises > the repository's policy (CLAUDE.md, or the latest PR and
+commit titles) > English.
+
+## 1. Who does what in the squad
+
+| Part | Who | Rule |
+|---|---|---|
+| Visuals, template, export | `frontend` agent | `design-reference` + this skill, and no other design skill (rule 8) |
+| Slide text | `writing` skill | the draft goes through it before it goes on the slide |
+| Cost, price, margin figures | `finops` / `finance` | the slide quotes the number they returned; never an estimate made in the deck |
+| Publish as an Artifact, send, present | the main session, with the owner | no agent publishes or sends |
+| Review the deck | `verifier` | whoever built it does not approve it |
+
+A deck that shows product code (a new screen, a mockup that becomes a
+feature) goes through an AgenFK card like any other work; the card says where
+the HTML lives.
+
+## 2. Start from the template
+
+Copy `templates/deck.html` (next to this file) to the session's scratchpad, or
+to wherever the card says, and build by editing the copy. It already has:
+
+- **the `--ds-*` block** at the top of the `<style>`: replace it whole with the
+  output of `sweep.py --css` (dark blocks included). The built-in default is
+  the squad's neutral palette. The semantic tokens (`--color-*`, `--font-*`)
+  read only `--ds-*`, and the components read only the semantic tokens:
+  nothing else changes. A project font from Google Fonts goes in the
+  commented `<link>` in the `<head>`;
+- the slide grammar (claim title, `split`, `ledger`, `sources`, `note`,
+  `label`, `chip`, `status`, `steps`, `phone`);
+- **sideways navigation**: the slides sit side by side and the change is a
+  horizontal shift (instant with `prefers-reduced-motion`). **Any arrow
+  changes slide**: → ↓ PageDown Space go forward; ← ↑ PageUp Shift+Space go
+  back; Home and End go to the ends. With focus in a text field, or with
+  Ctrl/Alt/Meta held, the keyboard is not taken over. Horizontal swipe on
+  touch. `deck.html#3` opens slide 3 and the URL follows the navigation;
+- **dots in two places, kept in sync**: a vertical rail on the right edge and
+  a row in the footer, next to the "3 / 12" counter. Clickable,
+  `aria-current="step"` on the current slide, `aria-label` "Go to slide n of
+  N", a 24×24 px target, visible focus; the current dot is larger and in the
+  accent colour, so it does not depend on colour alone. On a screen up to
+  640px wide the right rail goes away (it would cover the text) and the
+  footer row stays, where the thumb reaches. A slide out of view is `inert`:
+  Tab does not enter it;
+- the "02 / 05" number on each slide, generated by the script (do not write it
+  by hand);
+- the `html.render` mode the script depends on: in it the deck becomes a stack
+  of pages again and the rails disappear.
+
+Do not rename `.deck`, `.slide`, `.rail`, `.footer-dots`, `.counter` or
+`window.deck`: the test and the export use those names.
+
+**Brand.** The template has no logo. If the project provides an SVG logo, it
+goes in **once** as `<symbol id="brand">` and is used through
+`<use href="#brand">` on the cover and in the footer (the comment at the top
+of the `<body>` shows how). Without a project logo, the name as text is
+enough. Never draw or recreate a logo. Google Fonts are fine; a paid or
+third-party font only with its licence recorded on the card.
+
+## 3. Ask the register before writing
+
+Before any slide text, ask with `AskUserQuestion` whether the deck is
+**technical** or **non-technical**. Do not infer it from the kind of deck:
+"board" and "review" go either way, depending on who is in the room.
+
+- **Non-technical** is the default for investors, customers, the board and
+  anyone outside the team that built the thing. Codenames, component names,
+  environment names and engineering jargon become the name the audience would
+  give the thing.
+- **Technical** is for an engineering or architecture audience: service,
+  model and environment names stay, because they are the shortest and most
+  exact way to say it to that room.
+
+If the request already named the register, take it and say which one you
+took, without asking again. The register changes only the vocabulary; the
+sentence rules of section 4 apply to both.
+
+## 4. Write the slides
+
+Read `references/deck-language.md` before the first slide; to choose the
+deck's outline, each slide's layout, and for a Chart.js chart, read
+`references/charts-and-outlines.md`. The summary:
+
+- **One idea per slide.** The title is a full sentence that states the point,
+  never a category label. There is no eyebrow ("kicker") above the title.
+- Whole sentences, the way a person would speak. No mnemonics, no "punchy"
+  fragments, no abbreviation to save a word, no `=` in prose.
+- No sentence needs a second reading, and none is defined by what it is not.
+  Where there is a statistical idea, write the plain consequence and let the
+  number beside it carry the evidence.
+- **Every number has its source on the slide itself**: `<sup class="ref">` on
+  the value and the matching line in `<ol class="sources">`. One number per
+  concept, owned by a single slide.
+- **Illustrative, simulated and preview content is labelled where it
+  appears** (`<span class="label">`), not in a footnote at the end of the
+  deck. Never invent a partner, customer, testimonial or named logo: use the
+  kind of institution, labelled as illustrative.
+- **Status chips**, always with the same meaning across the deck:
+
+  | Class | Suggested text | Means |
+  |---|---|---|
+  | `chip now` | Exists today | it already exists and can be shown |
+  | `chip next` | Team can do it alone | the team builds it without depending on anyone |
+  | `chip partner` | Depends on a partner | blocked by someone outside; say by whom |
+
+  On a landing page or a pitch, "now" only counts for what the code does
+  today, checked in the repository, not from memory.
+- **Everything fits on a 16:9 stage.** Check it with the script (section 6):
+  on the 1440x830 screen, `slide.scrollHeight - innerHeight` must be ≤ 0 on
+  every slide, and on the exported page no slide may be cut.
+
+**Product mockup.** A capability slide convinces more as the product's screen
+than as a table. Use the template's `.phone` and replace the `--app-*` tokens
+with the real tokens of the product's design system (colour, font, radius,
+components), never with an invented look. What does not exist yet carries a
+`label` "Preview · depends on X" inside the screen itself. Two phones side by
+side ("ours today" and "depends on a partner") mark well the line between what
+belongs to the team and what does not.
+
+## 5. Publish
+
+The HTML is the deck; publishing it as an Artifact gives it a stable URL for
+review. **The main session publishes, with the owner**, not the agent that
+built it. To keep the URL across revisions, republish the same file path.
+
+## 6. Export with the script
+
+```bash
+S=~/.claude/skills/presentation/scripts
+"$S/export-deck.sh" deck.html --measure                       # measure only (screen and page)
+"$S/export-deck.sh" deck.html --pdf /tmp/x/deck.pdf           # 16:9 PDF, one slide per page
+"$S/export-deck.sh" deck.html --png-dir /tmp/x/slides         # 2560x1440 PNG per slide
+"$S/export-deck.sh" deck.html --png-dir /tmp/x/t --theme dark --transparent
+```
+
+Chrome comes from `--chrome`, `$CHROME`, then `google-chrome`,
+`google-chrome-stable`, `chromium` or `chromium-browser` on the PATH, the
+default macOS path and, under Git Bash, the default Windows install folders
+(Program Files and the per-user LocalAppData). With none of them the script
+stops with exit code 2 and says where it looked. It runs with a throwaway
+profile and never touches the user's own.
+
+On Windows, run it with Git Bash (`bash export-deck.sh ...` from Git Bash, or
+Git's `bash.exe` by full path; a bare `bash` from PowerShell or cmd can start
+the WSL launcher instead). There every path handed to Chrome goes through
+`cygpath`: files as `C:\...`, URLs as `file:///C:/...`, never the `/c/...` of
+Git Bash. The deck checks and the exit codes below hold there, and the export
+tests run on the Windows CI, but the Chrome export (measure, PDF, PNG) is not
+yet verified on Windows: until a green Windows run, export from Linux, macOS or
+WSL.
+
+The script's gates (exit code other than 0; never work around them):
+
+| Code | When |
+|---|---|
+| 2 | deck without `<section class="slide" id>`, a slide without an id, deck without `html.render`, no Chrome, wrong usage |
+| 1 | a slide overflows the 16:9 page (measured before every export), or the 1440x830 screen with `--measure`, or the PDF does not have exactly one page per slide |
+
+Do not export by hand. The `html.render` mode exists because each of these
+failures really happened:
+
+- **A blurred shadow and a large gradient turn into hard bands** in
+  print-to-pdf and in the headless screenshot. Render mode removes the
+  shadow; keep any new decorative effect out of it too.
+- **Fragment navigation (`#id`) does not scroll in headless mode.** The script
+  builds a variant with a single visible slide for each PNG.
+- **A translucent fill breaks on a transparent background**: the PNG keeps
+  the colour at 7% alpha and the box comes out a different colour. That is
+  why no template token is translucent; if the deck needs one, give it an
+  opaque twin under `html.render`, pre-mixed with the background colour.
+- **A media query is evaluated against the print viewport** and would collapse
+  the columns; render mode pins the desktop grid with `!important`. Mirror
+  that in every new responsive layout.
+- **Headless `--window-size` includes the window frame**, so the viewport
+  comes out smaller than requested; the script measures inside an iframe of
+  the exact size.
+- **The theme cannot depend on the exporter's system**: the script pins
+  `data-theme="light"` unless the deck pinned another; `--theme dark`
+  switches it.
+- **A PDF viewer caches `file://`**: reload for real before diagnosing a
+  "broken" export.
+
+A transparent PNG carries the theme's ink: light suits a light destination,
+and `--theme dark --transparent` suits a dark one.
+
+## 7. Look before you say it is done
+
+The script proves the arithmetic; your eyes prove the rest. Open the PDF and
+at least two PNGs (with the image reading tool, not just `ls`) and check: no
+bands or seams, the right background, legible chips, no cut text, one slide
+per page, a page count equal to the slide count, punctuation without gaps.
+Run `--measure` again after every round of text. Test and export output goes
+to a temporary directory, never to the repository.
+
+For a non-technical deck, also run the jargon sweep from the reference
+(`deck-language.md`, section Register).
+
+## Origin
+
+Adapted from a private slide-deck skill: the protocol, the writing rules, the
+chips and the render-mode lessons came from there. Rewritten for the squad
+without that company's brand and assets, with neutral tokens aligned with
+`design-reference`, a Linux export and the measurement and page-count gates in
+the script. The idea of outlines, layouts, copy formulas and a chart pattern
+came from the claudekit `slides` skill, which this one replaces; it is restated
+in own words, nothing is copied and no licence is claimed. The sideways
+navigation with two rails and the `--ds-*` sweep contract belong to the squad.

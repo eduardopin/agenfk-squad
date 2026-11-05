@@ -9,10 +9,10 @@ one of the things it links is your global `CLAUDE.md`.
 | Needed | Why |
 |---|---|
 | [Claude Code](https://claude.com/claude-code) | The harness the agents and hooks run in |
-| Python 3.10 or newer, as `python3` | The hooks and the session report. Standard library only |
+| Python 3.10 or newer, as `python3` (`python` on Windows) | The hooks and the session report. Standard library only |
 | `git` | Worktrees, the merge queue, the handoff's ground truth |
 | [AgenFK](https://github.com/cglab-public/agenfk) | Cards, flow and gates. The agents call its CLI |
-| Linux or macOS | The hooks use POSIX file locking. Developed and run daily on Linux; macOS is untested |
+| Linux, macOS or Windows 10/11 | POSIX file locking (`fcntl`) on Linux and macOS, `msvcrt` file locking on Windows. Developed and run daily on Linux; macOS is untested; Windows has its own installer and its own CI job: see [Windows](#windows) |
 
 ### Optional dependencies
 
@@ -23,6 +23,9 @@ one of the things it links is your global `CLAUDE.md`.
 | A status line that writes `~/.claude/cache/session-tokens/<session>.json` with a `window` field | The watcher learns a window larger than 1M | Set `SQUAD_WINDOW` yourself |
 
 ## Install
+
+On Windows, skip to [Windows](#windows): the commands below are for Linux,
+macOS and WSL.
 
 ```bash
 git clone https://github.com/eduardopin/agenfk-squad.git
@@ -42,15 +45,30 @@ It links, into `${CLAUDE_CONFIG_DIR:-~/.claude}`:
 | `agents/<name>.md` | each file in `agents/` |
 | `skills/<name>` | each skill directory that has a `SKILL.md`, including those in `skills/vendor/` |
 | `CLAUDE.md` | `CLAUDE.md` |
-| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py` | the four files in `hooks/` |
+| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py`, `squad-decisions.py` | the files in `hooks/` |
 
-and, so that the merge queue can be called by name:
+and, so that the merge queue and the project decisions can be called by name:
 
 | Link | Target |
 |---|---|
 | `~/.local/bin/squad-turn` | `hooks/squad-turn.py` |
+| `~/.local/bin/squad-decisions` | `hooks/squad-decisions.py` ([Project decisions](decisions.md)) |
+
+On Windows, `install.ps1` writes `squad-turn.cmd` and `squad-decisions.cmd`
+shims in `%USERPROFILE%\.local\bin` instead (see [Windows](#windows)).
 
 Make sure `~/.local/bin` is on your `PATH`.
+
+On Linux, when the systemd user manager runs with your `HOME`, it also writes
+`~/.config/systemd/user/squad-wake.service` and `squad-wake.timer` and enables
+the timer (a unit already there is rewritten only if this installer wrote it,
+marked on its first line; otherwise `SKIPPED`): `squad-wake.py` scans the herdr panes every 2 minutes and wakes a
+session that stopped without delivering (see
+[Waking a stopped session](watcher.md#waking-a-stopped-session)). The service
+reads `~/.claude/squad/wake.env`, if present, for `SQUAD_WAKE=0` and the
+thresholds. Elsewhere (macOS, a container, no user manager) the installer
+prints `SKIPPED squad-wake.timer` with the command to run every 2 minutes from
+cron or launchd, and does not fail. Windows is not covered yet.
 
 ### What it will not do
 
@@ -112,6 +130,14 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 10 }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [
@@ -125,6 +151,20 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
           { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 10 }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 20 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-decisions.py", "timeout": 5 }
+        ]
+      }
     ]
   }
 }
@@ -133,13 +173,54 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 | Script | Events |
 |---|---|
 | `squad-router.py` | `UserPromptSubmit` |
-| `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `Stop` |
+| `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `PreCompact` |
+| `squad-decisions.py` | `SessionStart`: prints the index of the project's active decisions ([Project decisions](decisions.md)) |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
-them when needed.
+them when needed. `squad-wake.py` is not a hook either: the timer runs it.
+
+`PreCompact` has no matcher, so it covers both a manual `/compact` and an
+auto-compact. Its timeout is longer because it runs three `git` commands
+before writing the handoff; a timeout never blocks the compaction.
 
 You can adopt the squad in stages. The agents and skills work without any
 hook. The router works without the watcher. The watcher works without herdr.
+
+## Check the install
+
+A half-installed squad fails silently: a hook missing from `settings.json`
+simply never runs. From the clone you installed, run the doctor:
+
+```bash
+python3 scripts/squad_doctor.py            # one line per check: ok, WARN or FAIL, and the fix
+python3 scripts/squad_doctor.py --json     # the same results as JSON
+```
+
+It reads and never writes, not even a `__pycache__`. It checks, in this order:
+
+| Check | FAIL when | WARN when |
+|---|---|---|
+| `python` | this interpreter is older than 3.10 | |
+| `agenfk` | | `agenfk` is not on PATH, or `agenfk health` does not answer or prints a `FAILED` / "potential issue" line (server down: it still exits 0) |
+| `links` | an agent, skill, `CLAUDE.md` or manifest hook is missing from `${CLAUDE_CONFIG_DIR:-~/.claude}`, is a real file, or links somewhere other than this clone | a copy `install.ps1` marked as its own no longer matches the clone |
+| `hooks` | a hook from `hooks/manifest.json` is not registered in `settings.json` for one of its events, is registered with a matcher that is not a string, or `settings.json` cannot be read (not JSON, a dangling link, a symlink loop) | it is registered under another matcher than the manifest's (no matcher, `""` and `"*"` count as the same one) |
+| `squad-turn` | the merge-queue command is not on PATH, or `~/.local/bin/squad-turn` is a dangling link | it runs a `squad-turn.py` from another clone |
+| `squad-decisions` | the command the router tells the session to run is not on PATH, or `~/.local/bin/squad-decisions` is a dangling link, not an executable file, or in a directory that is not on PATH | it runs a `squad-decisions.py` from another clone |
+| `herdr` | | herdr is not on PATH (the owner switches the session after a handoff) |
+| `project` | | there is no `.agenfk/project.json` from here up (pass `--project DIR` to look elsewhere), or it has no `projectId` |
+| `thresholds` | | a numeric `SQUAD_*` variable holds something that is not a number or that the watcher clamps (the line shows the value it really uses), or `SQUAD_WATCH=0` / `SQUAD_TURN=0` turns the watcher (handoff, dispatch limit, loop guard and review gate) or the merge queue off, or `SQUAD_REVIEW_STEPS` is empty (the review gate is off) |
+| `decisions` | | `SQUAD_DECISIONS=0` turns the session-start index of the active decisions off; the other `SQUAD_*` names of `hooks/squad-decisions.py` are listed with their value |
+
+The `thresholds` lines list every `SQUAD_*` variable `hooks/squad-watch.py`
+reads, with the value your shell gives it and whether that is the default
+(`SQUAD_WINDOW=0` reads as auto: the model's window). The fix lines quote
+their paths, so they paste as they are. The
+hooks run in Claude Code's environment, so a variable exported only in this
+shell does not reach them.
+
+The exit code is 0 when no check fails, 1 otherwise; a WARN alone keeps it at
+0. Pass `--config DIR` to check a config dir other than
+`${CLAUDE_CONFIG_DIR:-~/.claude}`.
 
 ## Check it
 
@@ -186,11 +267,207 @@ find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.local/bin" -maxdepth 2 -type 
 State under `~/.claude/squad/` is plain files; delete the directory if you
 want it gone.
 
+## Windows
+
+The squad runs natively on Windows 10 and 11 with Claude Code for Windows.
+`get.ps1` and `install.ps1` are the twins of `get.sh` and `install.sh`: same
+steps, same refusals, no administrator rights.
+
+### Requirements on Windows
+
+| Needed | Notes |
+|---|---|
+| PowerShell 5.1 (the one every Windows has, and the one the CI tests) or PowerShell 7 | The commands below work in either |
+| Python 3.10 or newer | Install it from python.org or `winget`. A stock Windows has a `python3` that is the **Microsoft Store** stub: it prints nothing and does nothing. Turn it off in Settings → Apps → Advanced app settings → App execution aliases (`python.exe` and `python3.exe`), or the installer will not trust it. The installer uses `SQUAD_PYTHON` if set, else a real `python`, else `py -3`; with none of them it stops and says what is missing |
+| `git` | [Git for Windows](https://gitforwindows.org) |
+| [AgenFK](https://github.com/cglab-public/agenfk) | As on Linux |
+| Developer Mode (optional) | Settings → System → For developers. It lets the installer create symbolic links without administrator rights. Without it, directories become junctions and files become [marked copies](#known-limitations-on-windows) |
+
+`core.autocrlf=true`, the default of Git for Windows, is fine: the
+repository's `.gitattributes` keeps text files at LF (only `.cmd` and `.bat` files are CRLF), because
+`skills/vendor/LOCK` pins the sha256 of LF bytes.
+
+### Install on Windows
+
+In a PowerShell window, not as administrator. A stock Windows client does not
+let PowerShell run script files (execution policy `Restricted`), and the
+installer runs the clone's `install.ps1`, so allow scripts for this window
+only; it changes nothing permanent:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1 | iex
+```
+
+It checks `git` and Python, clones the repository to
+`%USERPROFILE%\.local\share\agenfk-squad` (`SQUAD_HOME` moves it), runs the
+clone's `install.ps1`, and registers the hooks from `hooks/manifest.json` in
+`settings.json` with `scripts/squad_settings.py` (merge, idempotent, a backup
+first, a `settings.json` that is not valid JSON is left alone). It never
+closes your window: an error is reported and the prompt comes back.
+
+To choose what to install, pass options through a script block (a pipe cannot
+carry them):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1))) -Beta
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1))) -Ref main
+```
+
+| Option | Same as | Installs |
+|---|---|---|
+| `-Stable` (default) | `SQUAD_CHANNEL=stable` | The latest `vX.Y.Z` tag on `main`, or `main` while there is none |
+| `-Beta` | `SQUAD_CHANNEL=beta` | The `beta` branch |
+| `-Ref <name>` | `SQUAD_REF=<name>` | A tag, a branch or a commit |
+
+An option wins over its variable. `SQUAD_REPO` changes where to clone from,
+`SQUAD_PYTHON` names the Python to use, `CLAUDE_CONFIG_DIR` moves Claude
+Code's configuration directory (default `%USERPROFILE%\.claude`).
+
+By hand, from a clone you made yourself, `install.ps1` links the files and,
+like `install.sh`, leaves `settings.json` to you:
+
+```powershell
+git clone https://github.com/eduardopin/agenfk-squad.git
+cd agenfk-squad
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+python scripts\squad_settings.py check
+python scripts\squad_settings.py install
+```
+
+`install.ps1 -NoSymlink` skips symbolic links (junctions and marked copies
+only); `-ConfigDir <path>` installs somewhere other than `%USERPROFILE%\.claude`.
+
+What `install.ps1` makes, and what it refuses, is what `install.sh` does:
+a real file in the way is `SKIPPED` and the exit code is 1; a source that
+resolves outside the repository is `REFUSED`. Two things are Windows-only:
+
+- `squad-turn` and `squad-decisions` are a `squad-turn.cmd` and a
+  `squad-decisions.cmd` in `%USERPROFILE%\.local\bin` that run
+  `hooks\squad-turn.py` and `hooks\squad-decisions.py` with the interpreter it
+  found. Put that directory on your `PATH` (Settings → System → About →
+  Advanced system settings → Environment Variables → your user's `Path` →
+  Edit → New), then open a new window; `squad-turn status` in the check below
+  fails until you do. The installer warns while it is missing.
+- The hook commands in `settings.json` read `python "C:/.../hooks/squad-watch.py"`
+  (forward slashes, `python` rather than `python3`). An old entry written as
+  `python3 ...` is rewritten, because on Windows it would run the Store stub
+  and do nothing.
+
+Check it the way [Check it](#check-it) says, with `python` for `python3`:
+
+```powershell
+python skills\session-context\scripts\session_context.py
+squad-turn status
+python tests\test_watch_windows.py
+```
+
+### Update on Windows
+
+Run the same command again, with the same option: without one it means
+`-Stable`, so a `-Beta` or `-Ref` install would be moved to the latest stable
+tag. It fetches, checks out what you asked for and runs `install.ps1`. A clone with local changes is refused, never overwritten. If
+you installed by hand: `git pull`, then `install.ps1` again, as in the previous section.
+
+### Uninstall on Windows
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1))) -Uninstall
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1))) -Uninstall -Purge
+```
+
+`-Uninstall` removes the squad's entries from `settings.json` (and nobody
+else's: the one exception is an empty list on an event the hook manifest
+names, which an older install could leave behind; it goes only when uninstall
+removed a squad entry from the file, and an empty list on any other event
+stays), the links into the clone, the `squad-turn.cmd` and
+`squad-decisions.cmd` shims, and the marked copies that you did not edit (an
+edited copy is kept, with a warning); the clone stays. `-Purge` deletes the
+clone too, unless it has local changes: then it refuses and you delete it by
+hand. By hand:
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall`
+and `python scripts\squad_settings.py uninstall`.
+State under `%USERPROFILE%\.claude\squad` is plain files; delete the
+directory if you want it gone.
+
+### Known limitations on Windows
+
+- **No herdr.** There is no herdr on Windows, so the automatic session
+  switch does not run. The watcher still orders the handoff and writes it;
+  you type `/clear` and then `/clear-pickup pickup`. Everything else in the
+  watcher is the same.
+- **No squad-wake.** `hooks/squad-wake.py` calls back idle sessions through
+  herdr panes, so it does not run on Windows either: `install.ps1` does not
+  install it and no timer is set up. A session that stops without
+  delivering waits until you look at it.
+- **No chmod.** The squad's state under `%USERPROFILE%\.claude\squad` is
+  protected by your profile's folder permissions (ACLs), not by mode bits:
+  the `0600` and `0700` the Linux hooks set are not applied, and the
+  "owned by me" checks rely on that profile boundary. Do not point
+  `CLAUDE_CONFIG_DIR` at a folder other users can write to.
+- **A marked copy is not a link.** Without Developer Mode a file cannot be a
+  symbolic link, so `install.ps1` copies it and records the copy and its
+  sha256 in `%USERPROFILE%\.claude\squad\copies.txt`. `git pull` does not
+  update a copy: run the installer again, which refreshes the copies you did
+  not edit and leaves an edited one alone (it prints `SKIPPED`). The
+  installer does not turn a copy into a link after you enable Developer Mode:
+  run `install.ps1 -Uninstall` once, then install again.
+- **A hook command that falls back to an absolute interpreter path** (neither
+  `python` nor `py -3` found) is a quoted path
+  (`"C:/.../python.exe" "C:/.../hooks/squad-watch.py"`). A shell like Git Bash
+  runs that; PowerShell would need a `&` in front, so the entry does nothing
+  if your hooks run through PowerShell. Install a Python that puts `python`
+  on `PATH` and that case never happens.
+- **Clones made with CRLF line endings.** A clone made before the repository
+  had `.gitattributes`, with `core.autocrlf=true`, holds CRLF files and fails
+  the vendor check. Commit or stash your changes, update the clone to a
+  commit that has `.gitattributes` (run the install command again), then
+  renormalize it. This rewrites the work tree, so nothing uncommitted
+  survives:
+
+  ```powershell
+  git rm --cached -r -q .
+  git reset --hard -q
+  ```
+
+  A fresh clone is already right.
+- **Detached helpers.** The session switch starts as a detached process,
+  without a console window. If a tool runs your terminal inside a job object
+  that kills its children when it closes, the helper dies with the window.
+- **Not yet verified on Windows:** the board heartbeat
+  (`skills/board-heartbeat`), the heavy review (`hooks/squad-review.py`), the
+  merge seal (`hooks/squad-seal.py`, `git config squad.seal`), and the
+  scripts of the cloud-resource pricing guard, the design bridge, the
+  pull-request skill and the writing skill, and the blind trials of
+  `skills/skill-trial` (they need bubblewrap). Their
+  tests say so and exit 0 on Windows. Leave the
+  seal off there.
+- **Not yet verified on Windows, tests running:** the Chrome export of the
+  presentation skill. Under Git Bash it hands Chrome Windows paths
+  (`C:\...`, `file:///C:/...`) and its tests run on the Windows CI, which fails
+  without a Chrome rather than skip; until a green Windows run, export from
+  Linux, macOS or WSL.
+- **Paths in a Bash command.** The merge turn follows `cd C:/work/repo` and
+  `cd /c/work/repo`, the forms Git Bash takes. A backslash path
+  (`cd C:\work\repo`) is not followed, because bash reads the backslash as an
+  escape, so the merge or push is denied as one whose directory the watcher
+  cannot tell (unless `SQUAD_SEAL=0`). Write the path with forward slashes.
+
+### WSL
+
+WSL is for when Claude Code itself runs **inside WSL**: there it is Linux, so
+use `get.sh` and `install.sh` and the instructions above this section, and
+nothing here applies. WSL and Windows have separate homes (`/home/<you>` and
+`%USERPROFILE%`), so a squad installed on one is not installed on the other,
+and the two do not share `~/.claude`. Claude Code for Windows with the squad
+in WSL, or the reverse, does not work: install it where Claude Code runs.
+
 ## Turning parts off without uninstalling
 
 ```bash
 export SQUAD_WATCH=0     # the whole watcher
 export SQUAD_SWITCH=0    # only the automatic session switch
+# squad-wake runs from the timer, outside your shell: put SQUAD_WAKE=0 in ~/.claude/squad/wake.env
 export SQUAD_TURN=0      # only the merge queue
 ```
 
@@ -211,6 +488,6 @@ itself.
 | No `[squad-watch]` messages at all | Is the hook registered for the event? Is `SQUAD_WATCH=0` set? `~/.claude/squad/watch-errors.log` |
 | The handoff was ordered but the session did not switch | `~/.claude/squad/switches.log` says which check gave up. Outside herdr, this is expected |
 | `squad-turn: command not found` | `~/.local/bin` is not on your `PATH` |
-| A merge is denied and nobody seems to hold the turn | `squad-turn status`. A stale turn clears by itself after `SQUAD_TURN_IDLE` seconds |
+| A merge is denied and nobody seems to hold the turn | `squad-turn status`. A turn whose merge call never came back clears after `SQUAD_TURN_HOLD` (120) seconds; register `PostToolUseFailure` so a failed merge gives it back at once |
 | The handoff comes too early or too late | `session_context.py --session <id> --detail` shows the numbers the watcher used. Then [configuration.md](configuration.md#choosing-your-own-numbers) |
 | An agent is not picked for a request | A project agent with the same role wins. Otherwise check the `description` in `agents/<name>.md` |

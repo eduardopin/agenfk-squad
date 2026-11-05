@@ -17,6 +17,7 @@ Self-checking: the exit code is the verdict. Throwaway HOME, fake agenfk and her
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -59,7 +60,7 @@ ITEMS = [
 ]
 
 
-def fake_agenfk(h, items=ITEMS, slow=()):
+def fake_agenfk(h, items=ITEMS, slow=(), slow_list=False):
     data = os.path.join(h, "items.json")
     with open(data, "w") as fh:
         json.dump(items, fh)
@@ -77,6 +78,7 @@ def fake_agenfk(h, items=ITEMS, slow=()):
             "    if not hit: sys.exit(1)\n"
             "    print(json.dumps(hit[0])); sys.exit(0)\n"
             "if a[:1] == ['list'] and '--project' in a:\n"
+            f"    if {slow_list!r}: time.sleep(30)\n"
             "    pid = a[a.index('--project') + 1]\n"
             "    print(json.dumps([i for i in items if i['projectId'] == pid])); sys.exit(0)\n"
             "sys.exit(1)\n")
@@ -158,7 +160,8 @@ def test_a_deadline_that_cuts_the_read_short_is_reported_and_bounds_the_wait():
     start = time.time()
     leaves, read, total = fleet.goal_leaves(ids, fake_agenfk(h, items, slow=ids[4:]), deadline=1.5)
     assert time.time() - start < 4, "the deadline is the bound"
-    assert (read, total) == (4, 6) and sorted(c["id"] for c in leaves) == sorted(ids[:4]), (leaves, read, total)
+    # the project list names the two slow cards too, so they may appear as leaves; what the cut changes is `read`
+    assert (read, total) == (4, 6) and set(ids[:4]) <= {c["id"] for c in leaves}, (leaves, read, total)
     order = fleet.fan_out_order(goal("x", ids), leaves, read, total)
     assert "4 of the 6 named cards" in order, order
 
@@ -191,6 +194,19 @@ def test_a_fan_out_names_every_card_of_a_six_card_goal_and_is_recorded():
     reason = s.stop()
     assert "6 open cards" in reason and ids[5] in reason and "named cards" not in reason, reason
     assert json.load(open(path))["goal"].get("fanned")
+
+
+def test_fanout_logs_where_the_hooks_state_lives_so_the_survey_sees_the_card_as_fanned():
+    h = W.home()
+    wt = tempfile.mkdtemp(dir=h)
+    subprocess.run(["git", "init", "-q", wt], check=True)
+    herdr, _ = fake_herdr_tabs(h)
+    r = subprocess.run([sys.executable, FANOUT, "--card", T1, "--worktree", wt], capture_output=True, text=True,
+                       env=env(h, fake_agenfk(h), HERDR_BIN_PATH=herdr, HERDR_PANE_ID="w1:p1",
+                               CLAUDE_CONFIG_DIR=os.path.join(h, "elsewhere")))
+    assert r.returncode == 0, r.stdout + r.stderr
+    fleet = module(FLEET, "fleet_m1")
+    assert T1 in fleet.fanned_cards(os.path.join(h, ".claude", "squad", "watch")), os.listdir(h)
 
 
 def test_open_leaves_fail_open_when_agenfk_does_not_answer():
@@ -377,15 +393,16 @@ def test_a_corrupt_denied_time_does_not_cost_the_fan_out():
     assert "CARRY ON" in reason and "FAN OUT" in reason, reason
 
 
-def counting_agenfk(h):
-    """The fake agenfk, logging each `list` (the call only fleet.py makes) to <h>/list-calls."""
-    ag = fake_agenfk(h)
+def counting_agenfk(h, verb="list", base=None):
+    """The fake agenfk (or `base`), logging each `verb` call to <h>/list-calls; `list` is the call only
+    fleet.py makes."""
+    ag = base or fake_agenfk(h)
     log = os.path.join(h, "list-calls")
     wrapper = os.path.join(h, "count.py")
     open(wrapper, "w").write(
         "import subprocess, sys\n"
-        f"if sys.argv[1:2] == ['list']: open({log!r}, 'a').write('x\\n')\n"
-        f"sys.exit(subprocess.call({ag.split()!r} + sys.argv[1:]))\n")
+        f"if sys.argv[1:2] == [{verb!r}]: open({log!r}, 'a').write('x\\n')\n"
+        f"sys.exit(subprocess.call({shlex.split(ag)!r} + sys.argv[1:]))\n")
     return f"{sys.executable} {wrapper}", lambda: len(W.lines(h, "list-calls"))
 
 
@@ -415,15 +432,20 @@ def test_a_negative_fan_out_check_is_remembered_for_a_few_minutes():
 def test_an_agenfk_that_does_not_answer_is_not_asked_again_on_every_hold():
     h = W.home()
     dead = f"{sys.executable} -c 'import sys; sys.exit(1)'"
-    s = Session(h, dead)
-    path = os.path.join(h, ".claude", "squad", "watch", f"{SID}.main.json")
-    open_goal_without_order(h, s)
+    agenfk, calls = counting_agenfk(h, "get", dead)
+    s = Session(h, agenfk)
+    path = open_goal_without_order(h, s)
     st = json.load(open(path))
     st["goal"]["cards"] = [LONE]
     json.dump(st, open(path, "w"))
     s.work("Half done.")
     s.stop()
     assert json.load(open(path))["goal"].get("fan_checked"), "the doubt was not recorded"
+    asked = calls()
+    assert asked >= 1, asked
+    s.work("More.")
+    s.stop()
+    assert calls() == asked, "a dead AgEnFK was asked again inside the window"
 
 
 def log_fanout(h, card, ago=0):

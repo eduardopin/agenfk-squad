@@ -22,7 +22,8 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-BASE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude"), "squad")
+# where the hooks keep their state (fleet.py reads fanout.log from here), whatever CLAUDE_CONFIG_DIR says
+BASE = os.path.join(HOME, ".claude", "squad")
 HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
 
 

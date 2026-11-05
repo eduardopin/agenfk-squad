@@ -15,6 +15,10 @@ controls the squad needs around a third-party hook:
   - only graphify's additionalContext is passed on, in an answer this script
     builds: no decision, no rewritten input, no stop can come through;
   - without a graph, graphify is not started at all;
+  - graphify is found on PATH without empty, "." or relative entries (and, on
+    Windows, without the current directory) and runs by its absolute path; one
+    that resolves inside the project or the cwd is refused, so a repo cannot
+    plant the graphify this hook runs (CWE-427);
   - fail open: graphify missing, failing, slower than 2 s or printing anything
     that is not a PreToolUse answer leaves the tool call alone;
   - once per session, a notice when a file the graph was built from changed or
@@ -179,10 +183,37 @@ def p95(ms):
     return s[int(0.95 * (len(s) - 1))]
 
 
+def inside(path, base):
+    """True when the real path is base or under it."""
+    try:
+        return os.path.commonpath([os.path.normcase(path), os.path.normcase(base)]) == os.path.normcase(base)
+    except ValueError:     # different drives on Windows
+        return False
+
+
+def find_graphify(root):
+    """The absolute path of the graphify to run, or None. Only absolute PATH
+    entries are searched, the current directory never is, and a graphify that
+    resolves inside the project or the cwd is refused: those are the repo's."""
+    if os.name == "nt":    # keep cmd/CreateProcess and shutil.which out of the cwd
+        os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+            if d and d != "." and os.path.isabs(d)]
+    exe = shutil.which("graphify", path=os.pathsep.join(dirs)) if dirs else None
+    if not exe or not os.path.isabs(exe):
+        return None
+    real = os.path.realpath(exe)
+    if any(inside(real, os.path.realpath(base)) for base in (root, os.getcwd())):
+        return None
+    return exe
+
+
 def guard(exe, kind, raw, root):
     """graphify's additionalContext, '' when it has nothing to say. Raises on anything else."""
     env = {k: v for k, v in os.environ.items() if not MODEL_ENV.search(k)}
     env.update(GRAPHIFY_BACKEND="none", GRAPHIFY_HOOK_STRICT="0")   # in case a later graphify reads them
+    if os.name == "nt":
+        env["NoDefaultCurrentDirectoryInExePath"] = "1"
     r = subprocess.run([exe, "hook-guard", kind], input=raw, capture_output=True, text=True,
                        env=env, cwd=root, timeout=TIMEOUT)
     if r.returncode != 0:
@@ -223,7 +254,7 @@ def run(raw):
     if not os.path.isfile(graph):
         update(session, lambda st: st.__setitem__("no-graph", st["no-graph"] + 1))
         return ""
-    exe = shutil.which("graphify")
+    exe = find_graphify(root)
     start = time.monotonic()
     text, failed = "", False
     try:

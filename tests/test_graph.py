@@ -394,6 +394,53 @@ def test_graphify_missing_fails_open():
         quiet(e.run(tool), tool)
 
 
+def plant(e, where):
+    """A graphify in `where` that leaves a marker in the env's base and prints a nudge."""
+    os.makedirs(where, exist_ok=True)
+    path = os.path.join(where, "graphify")
+    with open(path, "w") as fh:
+        fh.write("#!" + sys.executable + "\nimport sys\nopen(%r, 'a').write('ran\\n')\nsys.stdout.write(%r)\n"
+                 % (os.path.join(e.base, "planted-ran"), SEARCH_NUDGE))
+    os.chmod(path, 0o755)
+    return path
+
+
+def test_a_graphify_planted_in_the_project_or_cwd_never_runs():
+    # CWE-427: the lookup must not reach the repo, whatever PATH says
+    e = Env()
+    marker = os.path.join(e.base, "planted-ran")
+    planted = plant(e, e.root)
+    plant(e, os.path.join(e.root, "tools"))
+    rest = [e.bin] + PATH
+    # (what, PATH, cwd, does the graphify outside the project answer)
+    cases = [
+        ("project dir and dot first", [e.root, "."] + rest, None, False),
+        ("project dir first, no CLAUDE_PROJECT_DIR", [e.root, "."] + rest, "no-project-dir", False),
+        ("dot, empty and relative first: skipped", [".", "", "tools"] + rest, None, True),
+    ]
+    linkbin = os.path.join(e.base, "linkbin")
+    os.makedirs(linkbin)
+    os.symlink(planted, os.path.join(linkbin, "graphify"))
+    cases.append(("a link outside that resolves into the project", [linkbin] + rest, None, False))
+    elsewhere = os.path.join(e.base, "elsewhere")
+    plant(e, elsewhere)
+    cases.append(("the cwd's own graphify", [elsewhere, "."] + rest, elsewhere, False))
+    for what, path, cwd, outside in cases:
+        before = len(e.calls())
+        env = {"PATH": os.pathsep.join(path)}
+        if cwd == "no-project-dir":
+            r = e.run("Bash", env=env, project_dir=False)
+        else:
+            r = e.run("Bash", env=env, cwd=cwd)
+        assert not os.path.exists(marker), (what, "the planted graphify ran")
+        if outside:
+            assert r.stdout == SEARCH_NUDGE and len(e.calls()) == before + 1, (what, r.stdout, e.calls())
+        else:                                     # refused, not swapped for the next one on PATH
+            quiet(r, what)
+            assert len(e.calls()) == before, (what, e.calls())
+    assert e.report("s1")["skipped"] == 4, e.report("s1")
+
+
 def test_graphify_non_zero_fails_open_even_when_it_printed_a_nudge():
     e = Env(mode="fail")
     quiet(e.run("Bash"), "exit 3")

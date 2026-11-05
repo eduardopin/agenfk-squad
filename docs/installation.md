@@ -419,10 +419,13 @@ directory if you want it gone.
   settings script registers it, like every hook in `hooks/manifest.json`,
   but neither installs graphify. Without a `graphify` on `PATH` the hook
   prints nothing and every call goes ahead as before; `SQUAD_GRAPHIFY=0`
-  turns it off. With a graphify you installed yourself it is not yet
-  verified: there are no POSIX locks, so its per-session counters may
-  undercount and a once-per-session notice may show twice. Its tests say so
-  and exit 0 on Windows.
+  turns it off. Windows searches the current folder before `PATH`, so the
+  hook sets `NoDefaultCurrentDirectoryInExePath=1`, skips relative `PATH`
+  entries and refuses a graphify inside the project or the current folder:
+  a repository cannot plant the one it runs. With a graphify you installed
+  yourself it is not yet verified: there are no POSIX locks, so its
+  per-session counters may undercount and a once-per-session notice may
+  show twice. Its tests say so and exit 0 on Windows.
 - **No chmod.** The squad's state under `%USERPROFILE%\.claude\squad` is
   protected by your profile's folder permissions (ACLs), not by mode bits:
   the `0600` and `0700` the Linux hooks set are not applied, and the

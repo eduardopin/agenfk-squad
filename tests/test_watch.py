@@ -2308,6 +2308,138 @@ def test_a_record_does_not_let_a_later_card_of_the_call_through_unchecked():
     assert w.review_files(CARD_A), w.REVIEWS                         # the record is there
     assert w.review_check({"session_id": sid, "cwd": ROOT}, CARD_A, 0.2, True) == ("", "unchecked", "")
 
+# ---------------------------------------------------------------- handoff on burn and age
+def main_state(h, sid, hours, idle_s=0):
+    """A main session that already has `hours` of work counted, last measured `idle_s` ago."""
+    d = os.path.join(h, ".claude", "squad", "watch")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, f"{sid}.main.json"), "w") as fh:
+        json.dump({"active": hours * 3600, "seen": time.time() - idle_s}, fh)
+
+
+def watch_turn(ctx, env=None, hours=None, idle_s=0, sid="abcdef12-0020"):
+    """One PostToolUse of a main session at `ctx` with no reread; what the watcher said."""
+    h = home()
+    if hours is not None:
+        main_state(h, sid, hours, idle_s)
+    tr = session(h, sid, ctx, 0)
+    return h, kind(said(run(h, "PostToolUse", sid, tr, env=env)))
+
+
+def test_burn_above_its_line_hands_off():
+    # ctx 300k, nothing reread: not a handoff by context or reread, only the burn can order it
+    _, got = watch_turn(300_000, {"SQUAD_MAIN_BURN": "100000"})
+    assert got == "PROACTIVE HANDOFF", got
+
+
+def test_burn_reason_is_in_the_message():
+    h = home()
+    sid = "abcdef12-0021"
+    tr = session(h, sid, 300_000, 0)
+    text = said(run(h, "PostToolUse", sid, tr, env={"SQUAD_MAIN_BURN": "100000"}))
+    assert "PROACTIVE HANDOFF" in text and "weighted >= 100k" in text, text
+
+
+def test_burn_below_its_line_does_not_hand_off():
+    _, got = watch_turn(300_000)           # default line is 15M
+    assert got != "PROACTIVE HANDOFF", got
+
+
+def test_burn_exactly_on_its_line_hands_off():
+    h = home()
+    sid = "abcdef12-0022"
+    tr = session(h, sid, 300_000, 0)
+    run(h, "PostToolUse", sid, tr)
+    burn = state(h, sid)["burn"]
+    assert burn > 0
+    for line, handoff in ((burn, True), (burn + 1, False)):
+        h2 = home()
+        tr2 = session(h2, sid, 300_000, 0)
+        got = kind(said(run(h2, "PostToolUse", sid, tr2, env={"SQUAD_MAIN_BURN": str(line)})))
+        assert (got == "PROACTIVE HANDOFF") == handoff, (line, got)
+
+
+def test_a_small_context_is_left_alone_whatever_the_burn_or_age():
+    _, got = watch_turn(100_000, {"SQUAD_MAIN_BURN": "1"}, hours=20)
+    assert got != "PROACTIVE HANDOFF", got
+
+
+def test_context_exactly_on_the_floor_counts():
+    _, got = watch_turn(150_000, {"SQUAD_MAIN_BURN": "1"})
+    assert got == "PROACTIVE HANDOFF", got
+    _, got = watch_turn(149_999, {"SQUAD_MAIN_BURN": "1"})
+    assert got != "PROACTIVE HANDOFF", got
+
+
+def test_the_floor_is_a_setting():
+    _, got = watch_turn(100_000, {"SQUAD_MAIN_BURN": "1", "SQUAD_MAIN_FLOOR": "90000"})
+    assert got == "PROACTIVE HANDOFF", got
+
+
+def test_main_session_hands_off_after_hours_open_and_says_so():
+    h = home()
+    sid = "abcdef12-0023"
+    main_state(h, sid, 9)
+    tr = session(h, sid, 280_000, 0)
+    text = said(run(h, "PostToolUse", sid, tr))
+    assert "PROACTIVE HANDOFF" in text and "open 9.0 h of work >= 8 h" in text, text
+
+
+def test_age_exactly_on_its_line_hands_off():
+    _, got = watch_turn(280_000, hours=8)
+    assert got == "PROACTIVE HANDOFF", got
+    _, got = watch_turn(280_000, hours=7.9)
+    assert got != "PROACTIVE HANDOFF", got
+
+
+def test_age_line_is_a_setting():
+    _, got = watch_turn(280_000, {"SQUAD_MAIN_AGE": "3600"}, hours=1.1)
+    assert got == "PROACTIVE HANDOFF", got
+
+
+def test_a_gap_over_30_minutes_is_not_work():
+    # 7.9 h counted, then a night away: the gap does not push it over 8 h
+    _, got = watch_turn(280_000, hours=7.9, idle_s=10 * 3600)
+    assert got != "PROACTIVE HANDOFF", got
+    # a gap of 31 minutes is still a gap
+    _, got = watch_turn(280_000, hours=7.9, idle_s=31 * 60)
+    assert got != "PROACTIVE HANDOFF", got
+
+
+def test_a_gap_of_10_minutes_counts_as_work():
+    _, got = watch_turn(280_000, hours=7.95, idle_s=600)
+    assert got == "PROACTIVE HANDOFF", got
+
+
+def test_the_work_counted_is_kept_in_the_state():
+    h = home()
+    sid = "abcdef12-0024"
+    main_state(h, sid, 1, idle_s=600)
+    tr = session(h, sid, 280_000, 0)
+    run(h, "PostToolUse", sid, tr)
+    assert 1 * 3600 + 590 <= state(h, sid)["active"] <= 1 * 3600 + 700
+
+
+def test_a_bad_burn_age_or_floor_falls_back_to_the_default():
+    bad = {"SQUAD_MAIN_BURN": "abc", "SQUAD_MAIN_AGE": "x", "SQUAD_MAIN_FLOOR": ""}
+    _, got = watch_turn(300_000, bad, hours=7)
+    assert got != "PROACTIVE HANDOFF", got
+    _, got = watch_turn(300_000, bad, hours=9)
+    assert got == "PROACTIVE HANDOFF", got
+
+
+def test_handoff_reason_by_function():
+    w = watch_module()
+    assert w.handoff_reason(900_000, True, 0, 0) == "context"
+    assert w.handoff_reason(200_000, False, 0, 0) == ""
+    assert w.handoff_reason(149_999, False, w.MAIN_BURN, w.MAIN_AGE) == ""
+    assert w.handoff_reason(150_000, False, w.MAIN_BURN, 0).startswith("burn ")
+    assert w.handoff_reason(150_000, False, w.MAIN_BURN - 1, 0) == ""
+    assert w.handoff_reason(150_000, False, 0, w.MAIN_AGE).startswith("open ")
+    assert w.handoff_reason(150_000, False, 0, w.MAIN_AGE - 1) == ""
+    assert (w.MAIN_BURN, w.MAIN_AGE, w.MAIN_FLOOR, w.ACTIVE_GAP) == (15_000_000, 8 * 3600, 150_000, 1800)
+
+
 if __name__ == "__main__":
     # every test runs, so one failure does not hide the others; the exit code is 1 when any failed
     import traceback

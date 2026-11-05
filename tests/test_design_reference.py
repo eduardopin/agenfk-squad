@@ -572,9 +572,13 @@ def sweep_took(files, limit, flag="--css"):
     return out, took, (used - cpu if cpu is not None else took)
 
 
+# These tests catch a sweep that went superlinear (10 s or more), not a slow machine. Wall clock also
+# counts the time other processes hold the CPU, so a busy machine failed them at 5.4 s; the child's own
+# CPU time does not. Windows has no getrusage and keeps the wall clock. The hard timeout stays wall clock.
 def timed(files, limit, flag="--css"):
-    out, took, _ = sweep_took(files, limit, flag)
-    assert took < limit, f"{took:.1f}s >= {limit}s"
+    out, _, used = sweep_took(files, limit, flag)
+    kind = "CPU time" if children_cpu() is not None else "wall clock"
+    assert used < limit, f"{used:.1f}s >= {limit}s ({kind})"
     return out
 
 

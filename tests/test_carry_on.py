@@ -608,6 +608,16 @@ def _load(name, file):
     return mod
 
 
+
+def test_a_windows_agenfk_command_keeps_its_backslashes_and_drops_its_quotes():
+    w = _load("squad_watch_argv", "squad-watch.py")
+    assert w.agenfk_argv(r"C:\hostedtoolcache\python.exe C:\Users\x\agenfk.py", windows=True) == \
+        [r"C:\hostedtoolcache\python.exe", r"C:\Users\x\agenfk.py"]
+    assert w.agenfk_argv(r'"C:\Program Files\Python\python.exe" "C:\a b\agenfk.py"', windows=True) == \
+        [r"C:\Program Files\Python\python.exe", r"C:\a b\agenfk.py"]
+    assert w.agenfk_argv("python3 '/tmp/a b/agenfk.py'", windows=False)[1:] == ["/tmp/a b/agenfk.py"]
+    assert w.agenfk_argv('"unclosed', windows=False) == []
+
 def _shown_lines(text):
     """The `[squad] KEY: text` lines an instruction shows in backticks, as a session would copy them."""
     import re

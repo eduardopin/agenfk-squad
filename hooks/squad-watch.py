@@ -2748,9 +2748,27 @@ def replies_since(path, offset):
     return texts, size
 
 
+def agenfk_argv(cmd=None, windows=os.name == "nt"):
+    """SQUAD_AGENFK (or "agenfk") as argv. On Windows a backslash is a path separator, not an escape
+    (POSIX shlex read C:\\a\\b.exe as C:ab.exe), and the quotes stay for us to strip; the first word
+    goes through shutil.which so that an agenfk.cmd launcher runs by name."""
+    try:
+        words = shlex.split(AGENFK if cmd is None else cmd, posix=not windows)
+    except ValueError:
+        return []
+    if windows:
+        words = [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w for w in words]
+    if words:
+        words[0] = shutil.which(words[0]) or words[0]
+    return words
+
+
 def card_status(card):
     try:
-        r = subprocess.run([*shlex.split(AGENFK), "get", card, "--json"], capture_output=True, text=True,
+        argv = agenfk_argv()
+        if not argv:
+            return ""
+        r = subprocess.run([*argv, "get", card, "--json"], capture_output=True, text=True,
                            timeout=6, stdin=subprocess.DEVNULL)
         return str(json.loads(r.stdout).get("status") or "") if r.returncode == 0 else ""
     except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):

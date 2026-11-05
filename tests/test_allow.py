@@ -201,6 +201,16 @@ def test_architect_plan_files_are_allowed_to_create_and_edit():
     assert ask(h, "Edit", touch(rel(p, "docs/architect/settings.json"))) == ""
 
 
+def test_build_and_dependency_files_with_an_inert_extension_are_not_allowed():
+    h = tmp()
+    for name in ("requirements.txt", "requirements-dev.txt", "Requirements.TXT", "dev-requirements.txt",
+                 "constraints.txt", "constraints-py312.txt", "CMakeLists.txt", "cmakelists.txt",
+                 "llms.txt", "llms-full.txt", "robots.txt"):
+        p = os.path.join(h, "proj", "sub", name)
+        assert ask(h, "Write", p) == "", name
+    assert ask(h, "Write", os.path.join(h, "proj", "sub", "notes.txt")) != ""
+
+
 def test_steering_and_secret_paths_are_never_allowed_even_when_new():
     h = tmp()
     rels = [

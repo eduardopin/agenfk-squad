@@ -12,7 +12,8 @@ A. Write of a NEW file (lexists is false, so a dangling symlink is not new) with
    Refused outright when the root is "/", $HOME or an ancestor of $HOME. No path
    component below the root may start with "." or be named node_modules, vendor,
    .terraform, bin, sbin, hooks, githooks or .githooks, and the name may not be
-   CLAUDE*.md, AGENTS*.md, GEMINI*.md, COPILOT*.md, SKILL.md or CONVENTIONS.md. No
+   CLAUDE*.md, AGENTS*.md, GEMINI*.md, COPILOT*.md, SKILL.md, CONVENTIONS.md, requirements*.txt,
+   *-requirements*.txt, constraints*.txt, CMakeLists.txt, llms*.txt or robots.txt. No
    component of the whole absolute path, root included, may start with ".", and the
    path may not sit under a claude dir or ~/.config. B has the same full-path checks.
 B. Write (new) or Edit/MultiEdit of .md or .json under <root>/docs/architect/.
@@ -57,7 +58,10 @@ NAMES = ("settings*.json", "claude.md", "agents.md", ".env*", "*.pem", "*.key", 
 DIRS = {"hooks", ".git", ".aws", ".ssh"}
 CLAUDE_DIRS = {"agents", "skills", "commands", "plugins"}
 INERT = {".md", ".txt", ".csv", ".tsv", ".log", ".png", ".jpg", ".jpeg", ".pdf"}
-STEER = ("claude*.md", "agents*.md", "gemini*.md", "copilot*.md", "skill.md", "conventions.md")
+STEER = ("claude*.md", "agents*.md", "gemini*.md", "copilot*.md", "skill.md", "conventions.md",
+         # read by build, package or crawler tools as code or dependency specs, despite the .txt
+         "requirements*.txt", "*-requirements*.txt", "constraints*.txt", "cmakelists.txt",
+         "llms*.txt", "robots.txt")
 BAD = {"node_modules", "vendor", ".terraform", "bin", "sbin", "hooks", "githooks", ".githooks"}
 
 

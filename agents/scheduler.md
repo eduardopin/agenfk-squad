@@ -89,8 +89,9 @@ Append the block to the card's description, keeping the text that is there and
 replacing an older block if one exists. Ids may be shortened to 6 characters
 or more. A block on a story or an epic binds every task under it: write it
 there when the whole story waits, and on the task when only that task does.
-Put `Touches` on the tasks: a task with no `Touches` of its own takes its
-story's, and a story listing every task's files would keep its tasks apart.
+Put `Touches` on the tasks: a task's own `Touches` add to its story's, so a
+story listing every task's files would keep its tasks apart. A story names
+only what all its tasks share (a contract, a state).
 
 ```text
 Depends on: a1b2c3d4 (consumes the billing schema), e5f6a7b8
@@ -131,28 +132,32 @@ Follow the `parallel-plan` skill:
 
 ```bash
 agenfk list --project <id> --json \
-  | python3 ~/.claude/skills/parallel-plan/scripts/waves.py --parent <epic-id> -
+  | python3 -I -B ~/.claude/skills/parallel-plan/scripts/waves.py --parent <epic-id> -
 ```
 
-- `Wave 1 (ready now)` is what the main session can dispatch today.
+The output is JSON:
+
+- `ready` (the first of `waves`) is what the main session can dispatch today.
 - `--parent` plans the leaf cards under that epic or story. A card that
-  waits on an open card outside it is listed under `Blocked`, with what it
-  waits on, and stays out of every wave.
-- The width defaults to 4, the squad's ceiling for parallel fronts. Pass
+  waits on an open card outside it is in `blocked`, with what holds it in
+  `waiting_on`, and stays out of every wave. So is a paused, blocked or
+  archived card, and whatever waits on it: only DONE or CLOSED is done.
+- The width defaults to 6, the squad's ceiling for parallel fronts. Pass
   `--max-width` lower when fewer reviewers are available, because review is
   the real bottleneck, not the CPU.
-- A `dependency cycle` exit means one of the dependencies in it is
-  convention. Find it, fix the block, run again. If all of them are real,
+- A `dependency cycle: a -> b -> a` exit means one of the dependencies in it
+  is convention. Find it, fix the block, run again. If all of them are real,
   the cards are one card: report it for `product`.
-- `Kept apart by a shared resource` lists pairs that cannot share a wave.
-  When the shared file is something every card appends to, propose one card
-  that owns it, while the others hand their text back.
-- `No Touches line` lists cards the script could not check for collisions.
+- `conflicts` lists pairs that cannot share a wave and the resource they
+  share. When it is something every card appends to, propose one card that
+  owns it, while the others hand their text back.
+- `unknown_touches` lists cards with no `Touches`: each one runs alone in its
+  wave until the line is filled.
 
 ### 5. When a card closes
 
 Run step 4 again. Report only what changed: the cards that are now ready, and
-whether the critical path moved. Cards with status DONE count as done; pass
+whether the critical path moved. Cards with status DONE or CLOSED count as done; pass
 `--done <id>` for one that is merged but not yet closed on the board.
 
 ## Never

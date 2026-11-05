@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Squad sentinel: watches every Claude Code session and sub-session from the inside.
 
-Registered on PreToolUse, PostToolUse, SubagentStop and UserPromptSubmit.
+Registered on PreToolUse, PostToolUse, SubagentStop, Stop, UserPromptSubmit and
+PreCompact (PostToolUseFailure, where the harness has it, only gives a merge turn
+back).
 
   PostToolUse       records the call; warns about loops; every CHECK_EVERY seconds
                     reads what was appended to the transcript and redoes the math
@@ -20,11 +22,39 @@ Registered on PreToolUse, PostToolUse, SubagentStop and UserPromptSubmit.
   Stop              main session at handoff level: if it stopped without writing
                     the handoff, the order is sent back; if it stops again
                     without it, the watcher writes the handoff itself (git, the
-                    owner's last request, denied dispatches). With a handoff and
-                    nothing running in the background, it launches
-                    squad-switch.py, which clears the herdr pane and calls the
-                    pickup, so the session switch happens without the owner.
+                    owner's last request, denied dispatches). With the handoff
+                    written, it launches squad-switch.py, which clears the herdr
+                    pane and calls the pickup, so the session switch happens
+                    without the owner. A handoff written before the owner's last
+                    request is stale: the session is asked for a new one.
+                    With a background task still running (shell, monitor,
+                    sub-agent) the switch is not dropped: it is scheduled
+                    (SQUAD_SWITCH_WAIT, 600 s, for a shell; SQUAD_SWITCH_WAIT_AGENT,
+                    2400 s, for a sub-agent) and goes out when the task comes back
+                    and the session stops again, or when the deadline passes with
+                    the pane idle; the tasks still running then are noted at the
+                    end of the handoff copy. A task result that arrives after the
+                    handoff was written: the session is told to rewrite the
+                    handoff with it, once, before the switch.
                     SQUAD_SWITCH=0 turns the switch off.
+                    Outside handoff, with context >= SQUAD_COMPACT_MIN (150000),
+                    schedules squad-compact.py: /compact, with instructions on
+                    what to keep, SQUAD_COMPACT_BEFORE (120) s before the cache of
+                    the last request goes cold (TTL read from the transcript: 1 h
+                    or 5 min; SQUAD_CACHE_TTL overrides it). It gives up if the
+                    session moved on, changed or went into a switch. The text is
+                    at most 760 characters on one line (margin over the measured
+                    800: above it Claude Code pastes the prompt and /compact does
+                    not run); if it reaches UserPromptSubmit, bare or wrapped in
+                    <pasted_content>, it is not the owner speaking: the session
+                    is marked as a failure and gets no other one.
+                    SQUAD_COMPACT=0 turns it off.
+  PreCompact        main session only, manual or auto: before the conversation is
+                    summarized, writes the same minimal handoff to
+                    ~/.claude/squad/handoffs/<session>-compact.md. Prints
+                    nothing, so it never blocks the compaction, and never
+                    switches the session. A compaction squad-compact ordered is
+                    labelled as such in that handoff.
 
 The stop is always soft: the watcher warns first (DISPATCH NOTICE), only the new
 dispatch is denied, the task in progress finishes, and it is the watcher that
@@ -42,22 +72,27 @@ Thresholds, by environment variable:
   SQUAD_WINDOW                  window of the main session (default: 1000000)
   SQUAD_CTX_BASE      (40000)   context of a fresh session, for the payback
   The main session's handoff (level 2) is arithmetic, with no judgement by the agent:
-      context >= SQUAD_CTX_PCT (80)% of the window, OR
+      context >= SQUAD_CTX_PCT (90)% of the window, OR
       reread >= SQUAD_REREAD (60)% AND context >= floor
       (reread = 0.1*cache-read / weighted burn, the cockpit's REREAD %; minimum floor 2*CTX_BASE)
   The floor weighs the burn: SQUAD_REREAD_FLOOR (50)% of the window once the burn
   has reached SQUAD_BURN_FULL (50)% of the session budget (CLAUDE_SESSION_BUDGET,
-  20M, the cockpit's BURN %), rising in a straight line to 80% with zero burn.
-  Context at 50% with burn at 10% is NOT handoff time: the floor there is 74%. A
+  20M, the cockpit's BURN %), rising in a straight line to 90% with zero burn.
+  Context at 50% with burn at 10% is NOT handoff time: the floor there is 82%. A
   session that has just built its context and barely used it is not cut.
-  In other words: the cut falls between 50% and 80% of the window. Above 50%
+  In other words: the cut falls between 50% and 90% of the window. Above 50%
   without the math closing, only an informational notice goes out (level 1),
-  with no order to stop.
+  with no order to stop. (Up to October 2026 it was 50-80%, with a forced
+  handoff for no orchestrator slot from 120k up: sessions cut at 12-51% of
+  the window.)
   SQUAD_CTX_WARN (0) SQUAD_CTX_HANDOFF (0)  absolute thresholds in tokens, off by default
-  SQUAD_CTX_CEILING (600000)    above this, dispatch denied and handoff ordered
-  SQUAD_MAX_SUBS      (40)      sub-sessions per main session
-  SQUAD_MAX_ORCH      (3)       sessions orchestrating sub-agents at the same time
-  SQUAD_ORCH_HERE     (120000)  no orchestrator slot: below this the card is done
+  SQUAD_CTX_CEILING (800000)    above this, dispatch denied and handoff ordered
+  SQUAD_MAX_SUBS      (60)      sub-sessions per main session
+  SQUAD_MAX_ORCH      (6)       sessions orchestrating sub-agents at the same time, PER
+                                repository (common git directory: worktrees count
+                                together); a session with no recorded repository
+                                counts in every one
+  SQUAD_ORCH_HERE     (500000)  no orchestrator slot: below this the card is done
                                 in the session itself; from here up, handoff with
                                 the plan and a new session
   SQUAD_MAX_REVIEWS   (6)       reviewer dispatches for the same card
@@ -75,40 +110,92 @@ A denied dispatch is never just a "no": the message says where the work continue
                                      there is a slot
   7th reviewer on the same card      the owner's decision, with what keeps failing
 
-Merge queue (one per repository, ~/.claude/squad/turn/): with several sessions
-landing PRs at the same time, every merge moves main under the others and the
-conflict that was resolved comes back. The turn belongs to one session per
-repository:
-  merge (`gh pr merge`, direct push to main, merge_pull_request)
-      turn free or already yours  passes, and the session keeps the turn
-      another session's turn      denied; the session joins the queue and is called
-                                  (MERGE TURN, a note in the session and a prompt
-                                  in the herdr pane)
-  sync with main (`git merge|rebase|pull ... main`, `gh pr update-branch`)
-      while another holds the turn  denied once, with the reason; repeating passes
-                                    (whoever needs what already landed on main is
-                                    not stuck)
-  `squad-turn request [PR] | release | status`   request the turn ahead, give it back, see the queue
-The turn is released when the PR shows as MERGED/CLOSED (gh), by
-`squad-turn release`, after SQUAD_TURN_IDLE (900 s) with no activity from the
-session, after SQUAD_TURN_MAX (3600 s), or after SQUAD_TURN_CLAIM (300 s) if the
-session that was called does not show up. Whoever is in the queue is told which
-files they have in common with what has just landed.
-SQUAD_TURN=0 turns the queue off.
+Review gate (main session only): `agenfk verify <id>` (or the MCP validate_progress)
+on a review step with no reviewer dispatch recorded for that card since it entered
+that step is denied (REVIEW REQUIRED): one dispatch unlocks one review step, and a
+re-review after FIX_FIRST needs a new one. The way forward is to dispatch the
+verifier with the card id and the branch.
+  SQUAD_REVIEW_STEPS  (REVIEW,ADVERSARIAL)  steps that need a reviewer; empty = off
+  SQUAD_REVIEW_MEMORY_DAYS (14)  how long a reviewer dispatch is remembered, across
+                                 sessions (~/.claude/squad/reviews/<card>.json); no
+                                 session writes there with a tool, only the watcher
+  SQUAD_SELF_REVIEW_OK=<card id> the owner lets that card through once; logged
+  The step and its entry time come from `agenfk get <id> --json` (3 s per card, 7 s
+  per call, the kill of a slow agenfk included; only the first 64 KB of a command are
+  parsed, the rest is searched for `agenfk verify <id>`). Without an entry time (no
+  history, agenfk not asked), any recorded dispatch counts, logged. It fails
+  OPEN: agenfk missing, slow, failing or unreadable, or an id that is not one, lets
+  the call through, and the reason goes to ~/.claude/squad/review-gate.jsonl (capped
+  at 200 KB). A card left unasked because earlier cards used the 7 s is denied
+  instead: advance one card per call. It guards against mistakes and shortcuts, not
+  a determined bypass: eval, aliases and other indirection are not parsed.
+
+Merge turn (one per repository, ~/.claude/squad/turn/): the turn covers only the
+merge call itself (`gh pr merge`, direct push to the trunk, merge_pull_request), not
+the sync, the suite or CI. Holding it through all of that left sessions waiting
+for hours.
+  merge call
+      turn free or yours     the PreToolUse takes it; the PostToolUse of the same
+                             call gives it back, success or failure (also on
+                             PostToolUseFailure); a turn held longer than
+                             SQUAD_TURN_HOLD (120 s) expired
+      another session's      denied for those seconds: repeat the merge shortly
+  before a PR merge, with the turn held: `git fetch` of the base and
+      `git merge-tree --write-tree origin/<base> <PR head>`. A conflict is
+      denied (MERGE CONFLICT) with the files and where the work continues; a
+      clean merge passes, with no new suite asked for.
+  seal (opt-in: `git config squad.seal true`, or SQUAD_SEAL=1; SQUAD_SEAL=0 turns
+      it off): a PR merge passes only if the PR head SHA has a SHIP seal, a push
+      to the trunk only if the pushed SHA has one (MERGE SEAL). Seals are written
+      by `squad-seal record` in ~/.claude/squad/seals/<repo hash>/<sha>.json.
+  trunk: main, master, the remote's default branch (origin/HEAD, or `gh repo
+      view` when that ref is missing) and `git config squad.trunk` (a
+      comma-separated list); a push whose destination, or whose push target with
+      no refspec, is one of them is a push to the trunk; so is `push origin HEAD`
+      with the trunk checked out.
+  where: a merge or push is checked in the directory it runs in, the cwd moved
+      by each literal `cd` before it and by `git -C`. When that cannot be told
+      (a variable or quotes in the path, `cd -`, a subshell, a cd that may not
+      run, as in `a && cd x;` or `cd x || y`, pushd, GIT_DIR, env -C, a missing
+      directory) and the seal is on or unknown, it is denied. A push counts then
+      only if it may send the current branch or names a trunk of the session's
+      repository; outside any repository, every push counts.
+  sync with main is never denied.
+  `squad-turn request [PR] | release | status`   record an intent (it blocks
+      nobody), drop it, see who is merging and the intents
+SQUAD_TURN=0 turns all of it off: the turn, the conflict check and the seal.
+With the seal on, a check that cannot run (git or gh failing or timing out, an
+unreadable seal, an unknown PR head, an exception) denies the merge. Merge
+commands are recognised in any position (bash -c, ssh, eval, xargs, watch...);
+text counts as data only as the value of -m/-d/--body/--title/--description/
+--evidence or an echo/printf argument on a line of inert commands. This guards
+against an agent's mistake, not against someone set on getting around it: the
+guarantee comes from the squad/seal commit status required by the branch
+protection on the trunk.
 
 The dispatch ceilings exist because of one week of October 2026: orchestrators
 with 420-966k of context, 249 sub-agents (64% of the consumption), five projects
 orchestrating overnight and one card judged five times.
 """
-import fcntl
+import datetime
+import errno
 import hashlib
 import json
+import ntpath
 import os
 import re
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import time
+
+WINDOWS = os.name == "nt"
+if WINDOWS:
+    import msvcrt
+else:
+    import fcntl
 
 HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, ".claude", "squad")
@@ -141,37 +228,152 @@ CTX_CUT = env_int("SQUAD_SUB_CTX_CUT", 180_000)
 BURN_WARN = env_int("SQUAD_SUB_BURN", 2_000_000)
 MAIN_WARN = env_int("SQUAD_CTX_WARN", 0)         # 0 = no absolute threshold; only the % of the window applies
 MAIN_HANDOFF = env_int("SQUAD_CTX_HANDOFF", 0)
-MAIN_CEIL = env_int("SQUAD_CTX_CEILING", 600_000)
-MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 80), 10), 100)       # % of the window at which the handoff goes out regardless
-MAX_SUBS = env_int("SQUAD_MAX_SUBS", 40)
-MAX_ORCH = env_int("SQUAD_MAX_ORCH", 3)
+MAIN_CEIL = env_int("SQUAD_CTX_CEILING", 800_000)
+MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 90), 10), 100)       # % of the window at which the handoff goes out regardless
+MAX_SUBS = env_int("SQUAD_MAX_SUBS", 60)
+MAX_ORCH = env_int("SQUAD_MAX_ORCH", 6)
 MAX_REV = env_int("SQUAD_MAX_REVIEWS", 6)
-ORCH_HERE = env_int("SQUAD_ORCH_HERE", 120_000)
+ORCH_HERE = env_int("SQUAD_ORCH_HERE", 500_000)
+SWITCH_SHELL = env_int("SQUAD_SWITCH_WAIT", 600)            # s: the switch waits for a background shell/monitor
+SWITCH_AGENT = env_int("SQUAD_SWITCH_WAIT_AGENT", 2400)     # s: ...and for a sub-agent still running
+COMPACT_MIN = env_int("SQUAD_COMPACT_MIN", 150_000)         # below this, rebuilding a cold cache costs less
+COMPACT_BEFORE = env_int("SQUAD_COMPACT_BEFORE", 120)       # s before the cache goes cold
 DISPATCH = {"Agent", "Task"}
 REVIEWER = re.compile(r"verif|review|revis|segur|secur|audit|advers", re.I)
 CARD = re.compile(r"\b(?:[A-Z][A-Z0-9]{1,6}-\d+[a-z]?|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
 ORCH_LIVE = 600        # seconds: a sub-session with activity within this interval counts as live
+# Review gate. Empty SQUAD_REVIEW_STEPS turns it off. HEAVY_REVIEW is not in the default: the flow gives that step
+# to the main session, which runs `squad-review` (another model, via Bash), so no Agent/Task dispatch ever exists.
+REVIEW_STEPS = {s.strip().upper() for s in os.environ.get(
+    "SQUAD_REVIEW_STEPS", "REVIEW,ADVERSARIAL").split(",") if s.strip()}
+REVIEW_DAYS = max(env_int("SQUAD_REVIEW_MEMORY_DAYS", 14), 1)
+# Outside STATE: every reader of STATE (here, squad-wake, squad-compact, squad-switch) takes its entries for sessions
+REVIEWS = os.path.join(BASE, "reviews")
+REVIEW_LOG = os.path.join(BASE, "review-gate.jsonl")   # not metrics.jsonl: `--tasks` reads every row there as a sub-session
+AGENFK_WAIT = 3        # s for one `agenfk get` (measured at 0.7 s)
+AGENFK_TOTAL = 7       # s for every card in one call, the kill of a slow one included; the hook's whole budget is 10 s
+KILL_WAIT = 2          # s taskkill may take to end a slow agenfk's tree on Windows (POSIX: killpg, at once)
+PARSE_MAX = 65536      # characters of a command shlex reads: it is superlinear (1.1 MB took 21.9 s)
+CARD_ID = re.compile(r"[A-Za-z0-9][\w-]*")    # what may reach `agenfk get`: no option, no expansion
+SHORT_ID = re.compile(r"\b[0-9a-f]{8}\b")     # the 8-character prefix of an AgenFK id
+HEX_ID = re.compile(r"[0-9a-f]{8}[0-9a-f-]*")
+VERIFY_VALUED = {"--evidence", "--wait-minutes", "--check", "--check-note"}
+VERIFY_DRY = {"--plan", "-h", "--help"}
+# Words that leave the next one in command position. A wrapper's options are skipped; the valued ones take
+# the next word with them, and `timeout` takes its duration.
+WRAPPER = {"npx", "env", "command", "exec", "time", "nohup", "sudo", "timeout", "nice", "xargs"}
+WRAPPER_VALUED = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from",
+             "-D", "--chdir", "-r", "--role", "-t", "--type", "-U", "--other-user", "-T", "--command-timeout"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "nice": {"-n", "--adjustment"},
+    "xargs": {"-I", "-n", "--max-args", "-P", "--max-procs", "-L", "--max-lines",
+              "-d", "--delimiter", "-E", "-s", "--max-chars", "-a", "--arg-file"},
+    "npx": {"-p", "--package", "-c", "--call"},
+    "exec": {"-a"},
+}
+WRAPPER_ARGS = {"timeout": 1}
+KEYWORDS = {"then", "do", "else", "elif", "if", "while", "until", "{", "!"}
+SHELLS = {"bash", "sh", "zsh", "dash"}
+ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# The path before agenfk stops at a separator: `\S*/` scanned to the end of the line from every `;` (64 KB of
+# `;a` took 3 s), and this fallback is what runs on a command shlex cannot read. Blanks after the separator
+# are spaces and tabs only: with `\s*` every newline of a run scanned the rest of the run (24,000 took 10 s).
+VERIFY_LOOSE = re.compile(r"(?:^|[;&|(\n])[ \t]*(?:[^\s;&|(]*/)?agenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")
+VERIFY_TAIL = re.compile(r"\bagenfk[ \t]+verify[ \t]+([A-Za-z0-9][\w-]*)")   # past PARSE_MAX: anywhere, loosely
+# Past PARSE_MAX, every `agenfk ... verify` with no separator between them counts as a verify (see
+# verify_mentions): blanks and continuations folded first, then only these words and separators are visited.
+FOLD = re.compile(r"(?:[ \t]|\\\n)+")
+MENTION_WORDS = re.compile(r"[\n;&|]|\bagenfk\b|\bverify\b")
+MENTION_SPAN = 300     # characters, after folding, from agenfk to its verify (options, a path, an --evidence value)
 
 
 TURN = os.path.join(BASE, "turn")
-TURN_IDLE = env_int("SQUAD_TURN_IDLE", 900)
-TURN_MAX = env_int("SQUAD_TURN_MAX", 3600)
-TURN_CLAIM = env_int("SQUAD_TURN_CLAIM", 300)
-SYNC_PASS = 900        # seconds during which syncing with main, once warned about, passes
-AT = r"(?:^|[;&|(\n])\s*"                 # only in command position, not inside text
-MERGE_CMD = re.compile(AT + r"(?:gh\s+pr\s+merge\b|git\s+push\b[^|;&\n]*(?:[\s:]|refs/heads/)"
-                            r"(?:main|master)\s*(?:$|[|;&\n)]))")
-SYNC_CMD = re.compile(AT + r"(?:git\s+(?:merge|rebase|pull)\b[^|;&\n]*\b(?:main|master)\b"
-                           r"|gh\s+pr\s+update-branch\b)")
-TURN_CLI = re.compile(AT + r"(?:\S*/)?squad-turn(?:\.py)?\s+(request|release|status)\b(?:\s+#?(\d+))?")
-PR_NUM = re.compile(r"gh\s+pr\s+merge\s+(?:-\S+\s+)*#?(\d+)")
+SEALS = os.path.join(BASE, "seals")
+TURN_HOLD = env_int("SQUAD_TURN_HOLD", 120)    # seconds: a turn held longer than this died with its merge call
+INTENT_TTL = 3600      # seconds an intent from `squad-turn request` stays listed
+AT = r"(?:^|[;&|(\n])[ \t]*"              # command position, for the squad-turn CLI only (a newline is a separator)
+# The merge patterns match ANYWHERE in the text (bash -c, ssh, eval, xargs, watch...):
+# only spans proven to be data are blanked out first, see merge_text().
+PR_MERGE = re.compile(r"\bgh(?:[ \t]+[^\s;&|]+)*?[ \t]+pr\s+merge\b((?:[ \t]+-[^\s;&|]+)*[ \t]+(?:#?(\d+)\b|\S*/pull/(\d+)))?")
+API_MERGE = re.compile(r"/pulls/(\d+)/merge\b|\bmergePullRequest\b|(?:\bgh\s+api\b|api\.github\.com)[^;&|\n]*/merges\b")
+GIT_PUSH = re.compile(r"\bgit((?:[ \t]+-[Cc][ \t]+\S+|[ \t]+--?[A-Za-z][\w-]*(?:=\S+)?)*)[ \t]+push\b([^;&|\n]*)")
+# Where a merge or push runs: each `cd` before it moves the directory; these make it unknown.
+CD = re.compile(r"(?:^|(?P<sep>&&|\|\||[;&|(\n{\"']|\b(?:then|else|do)\b))[ \t]*cd(?=[\s;&|)\"']|$)"
+                r"(?P<arg>[^;&|\n)]*)(?=(?P<next>&&|\|\||[;&|\n)])|$)")
+CD_WORD = re.compile(r"(?<![\w.~/\\-])cd(?=[\s;&|)\"']|$)")     # every cd, `builtin cd` too
+ELSEWHERE = re.compile(r"\bGIT_(?:DIR|WORK_TREE)=|--git-dir\b|--work-tree\b|\benv\b[^;&|\n]*[ \t]-C\b|\b(?:pushd|popd)\b")
+LITERAL_DIR = re.compile(r"[A-Za-z0-9._/~+,@%=-]+")
+# Git Bash on Windows: C:/work/repo, or /c/work/repo. A backslash path is not literal: bash reads \ as an escape.
+WIN_DIR = re.compile(r"[A-Za-z]:/[A-Za-z0-9._/~+,@%=-]*")
+MSYS_DRIVE = re.compile(r"/([A-Za-z])(?=/|$)")
+# The path stops at a separator, as in VERIFY_LOOSE: `\S*/` scanned to the end of the line from every `;`
+# (100 KB of `;a` took 9.6 s, before either guard ran).
+TURN_CLI = re.compile(AT + r"(?:[^\s;&|(]*/)?squad-turn(?:\.py)?\s+(request|release|status)\b(?:\s+#?(\d+))?")
+# What merge_text() may treat as data. Anything else on the line, or any doubt, counts as code.
+OPAQUE = re.compile(r"\$[({'\[]|`|[<>]\(|<<")      # substitutions, ANSI-C quotes, heredocs
+REDIR_OK = re.compile(r"(?:\d*|&)>(?:&\d|>?[ \t]*/dev/null)(?=[\s;&|]|$)")
+DATA_OPTS = {"-m", "--message", "-d", "--description", "--body", "--title", "--evidence"}
+INERT = {"cd", "echo", "printf", "git", "gh", "agenfk", "squad-seal", "squad-turn", "true", "pwd", "ls",
+         "cat", "grep", "rg", "head", "tail", "wc", "sleep", "mkdir"}
+GIT_SAFE = {"commit", "tag", "merge", "notes", "stash", "revert", "cherry-pick", "status", "log", "diff",
+            "add", "show", "branch", "fetch", "push", "rev-parse", "switch", "checkout", "worktree", "pull"}
+GH_SAFE = {"pr", "issue", "release", "repo", "api"}
 BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,200}")
+SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+# `gh pr merge` flags (gh 2.x `--help`): which take a value, which do not. Any other flag makes the target unknown.
+MERGE_VALUED = {"-A", "--author-email", "-b", "--body", "-F", "--body-file", "--match-head-commit",
+                "-t", "--subject", "-R", "--repo"}
+MERGE_BOOL = {"--admin", "--auto", "-d", "--delete-branch", "--disable-auto", "-m", "--merge", "-r", "--rebase",
+              "-s", "--squash", "--help"}
+PR_URL = re.compile(r"https://[A-Za-z0-9.-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/\d+/?")
+GH_REPO = re.compile(r"(?:[A-Za-z0-9.-]+/)?[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 
 
 def ctx_lib():
     sys.path.insert(0, SCRIPTS)
     import session_context  # noqa: E402  (same weights and same reading as the report)
     return session_context
+
+
+def lock_file(fh, block=True):
+    """Exclusive lock on an open file, released when it is closed. True when
+    taken; with block=False, False when someone else holds it."""
+    if WINDOWS:
+        fh.seek(0)
+        while True:
+            try:
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)     # LK_LOCK gives up after 10 s
+                return True
+            except OSError as e:
+                if e.errno not in (errno.EACCES, errno.EDEADLOCK):    # anything but "someone else holds it" is a real failure
+                    raise
+                if not block:
+                    return False
+                time.sleep(0.02)
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+        return True
+    except OSError:
+        if block:
+            raise
+        return False
+
+
+def owned_by_me(info):
+    """The file belongs to the user running the hook. Windows has no uid: the
+    profile's ACL is what keeps another user out, and that is not ours to check."""
+    return WINDOWS or info.st_uid == os.getuid()
+
+
+def detached_kwargs(windows=None):
+    """Popen arguments that leave the child running after the hook returns."""
+    if WINDOWS if windows is None else windows:
+        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP. Not DETACHED_PROCESS: a child with no console makes every
+        # console program it runs (git, gh, herdr) open a window of its own.
+        return {"creationflags": 0x08000000 | 0x00000200, "close_fds": True}
+    return {"start_new_session": True, "close_fds": True}
 
 
 def safe(s):
@@ -229,13 +431,31 @@ def sub_transcript(p):
     return os.path.join(main[:-6], "subagents", f"agent-{safe(agent)}.jsonl")
 
 
-def measure(path):
+def harness(p):
+    """Which dialect the transcript is in. The payload says `client`; failing
+    that, the path does. An unknown payload keeps claude, the behaviour it
+    always had."""
+    c = str(p.get("client") or "").lower()
+    if c in ("claude", "codex", "pi", "omp"):
+        return c
+    path = str(p.get("transcript_path") or "")
+    path = path.replace("\\", "/")
+    if "/.omp/" in path:
+        return "omp"
+    if "/.pi/" in path:
+        return "pi"
+    if "/.codex/" in path:
+        return "codex"
+    return "claude"
+
+
+def measure(path, client="claude"):
     """Current context, weighted burn and reread share of a transcript."""
     if not path or not os.path.isfile(path):
         return None
     cx = ctx_lib()
     st = cx.blank()
-    cx.scan_claude(path, st)
+    cx.scan_session(client, path, st)
     if not st["req"]:
         return None
     c = cx.handoff_math(st["inp"], st["wr"], st["rd"], st["out"], st["ctx"])
@@ -244,12 +464,13 @@ def measure(path):
             "started": st["started"], "last": st["last"], "cwd": st["cwd"], "model": st["model"]}
 
 
-def fold(path, tok):
+def fold(path, tok, client="claude"):
     """Adds to `tok` only what was appended to the transcript since the last
     read (whole lines), so it costs the same on a 5 MB session or a 50 MB one."""
     for key in ("offset", "inp", "wr", "rd", "out", "ctx", "req"):
         tok.setdefault(key, 0)
     tok.setdefault("last", "")
+    tok.setdefault("model", "")
     try:
         size = os.path.getsize(path)
         if size < tok["offset"]:
@@ -265,13 +486,37 @@ def fold(path, tok):
     if cut < 0:
         return tok
     tok["offset"] += cut + 1
+    family = client in ("pi", "omp")
     for raw in blob[:cut].split(b"\n"):
-        if b'"usage"' not in raw:
+        # The pi family writes `message` records and a separate `model_change`;
+        # claude writes `assistant` records with a requestId.
+        if family:
+            if b'"usage"' not in raw and b'"model_change"' not in raw:
+                continue
+        elif b'"usage"' not in raw:
             continue
         try:
             rec = json.loads(raw)
             u = (rec.get("message") or {}).get("usage") or {}
         except (ValueError, AttributeError):
+            continue
+        if family:
+            if rec.get("type") == "model_change":
+                tok["model"] = rec.get("model") or rec.get("modelId") or tok["model"]
+                continue
+            m = rec.get("message") or {}
+            if rec.get("type") != "message" or m.get("role") != "assistant" or not u:
+                continue
+            key = rec.get("id") or ""
+            if key and key == tok["last"]:
+                continue
+            tok["last"] = key
+            tok["req"] += 1
+            tok["inp"] += u.get("input", 0)
+            tok["wr"] += u.get("cacheWrite", 0)
+            tok["rd"] += u.get("cacheRead", 0)
+            tok["out"] += u.get("output", 0)
+            tok["ctx"] = u.get("input", 0) + u.get("cacheRead", 0) + u.get("cacheWrite", 0)
             continue
         if rec.get("type") != "assistant" or not u:
             continue
@@ -286,15 +531,24 @@ def fold(path, tok):
         tok["out"] += u.get("output_tokens", 0)
         tok["ctx"] = (u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
                       + u.get("cache_read_input_tokens", 0))
+        cc = u.get("cache_creation") or {}
+        h1 = (cc.get("ephemeral_1h_input_tokens") or 0) if isinstance(cc, dict) else 0
+        m5 = (cc.get("ephemeral_5m_input_tokens") or 0) if isinstance(cc, dict) else 0
+        if h1 or m5:                      # the TTL this session's cache actually uses
+            tok["ttl"] = 300 if m5 > h1 else 3600
     return tok
 
 
-def main_window(session):
-    """Window of the main session: SQUAD_WINDOW if set; otherwise 1M, or the one a status line
-    recorded if larger."""
+def main_window(session, client="claude"):
+    """Window of the main session: SQUAD_WINDOW if set; for the pi family the
+    model's known window when the transcript states one (post_tool passes it),
+    otherwise the family default; claude falls back to 1M, or the one a status
+    line recorded if larger."""
     w = env_int("SQUAD_WINDOW", 0)
     if w:
         return w
+    if client in ("pi", "omp"):
+        return ctx_lib().DEFAULT_WINDOW.get(client, 128_000)
     store = load(os.path.join(HOME, ".claude", "cache", "session-tokens", f"{safe(session)}.json"))
     try:
         return max(int(store.get("window") or 0), 1_000_000)
@@ -407,8 +661,22 @@ def review_key(p):
     return f"{safe(kind)}:{m.group(0) if m else 'no-card'}"
 
 
-def other_orchestrators(session):
-    """Other main sessions with a live sub-session right now."""
+def repo_of(session, cwd, st=None):
+    """The session's repository (common git directory), recorded in its state:
+    orchestrator slots are split by it. git only runs when the cwd changes."""
+    path = state_path(session, "")
+    st = load(path) if st is None else st
+    if cwd and st.get("repo_cwd") != cwd:
+        st["repo_cwd"] = cwd
+        st["repo"] = git_dir(cwd)
+        save(path, st)
+    return st.get("repo", "")
+
+
+def other_orchestrators(session, repo=""):
+    """Other main sessions with a live sub-session right now, in the same
+    repository. With no known repository (on either side) the session counts:
+    doubt does not open a slot."""
     own, live, now = safe(session), set(), time.time()
     try:
         for name in os.listdir(STATE):
@@ -419,6 +687,8 @@ def other_orchestrators(session):
                 live.add(sid)
     except OSError:
         pass
+    if repo:
+        live = {sid for sid in live if load(state_path(sid, "")).get("repo", "") in ("", repo)}
     return len(live)
 
 
@@ -471,6 +741,7 @@ def pre_dispatch(p):
     Every denial goes out with the path along which the work continues."""
     session = p.get("session_id")
     st = load(state_path(session, ""))
+    repo = repo_of(session, str(p.get("cwd") or ""), st)
     ctx, why, handoff = st.get("ctx", 0), None, False
     brief = keep_brief(session, p)
     if ctx >= MAIN_CEIL:
@@ -482,8 +753,8 @@ def pre_dispatch(p):
         handoff = True
         why = (f"this session has already dispatched {st['subs']} sub-sessions (ceiling {MAX_SUBS}). " + plan(
             "The new session, with the count reset, dispatches that plan.", brief))
-    elif other_orchestrators(session) >= MAX_ORCH:
-        cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents right now"
+    elif other_orchestrators(session, repo) >= MAX_ORCH:
+        cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents in this repository right now"
         if review_key(p):
             st["wait_slot"] = True
             why = (f"{cap}, and a review is not something you do yourself (whoever writes does not approve). Carry on "
@@ -537,12 +808,544 @@ def dispatch_notice(session, st, ctx):
         st["ceil_warned"] = True
         out.append(f"[squad-watch] DISPATCH NOTICE — context {k(ctx)}, orchestrator ceiling "
                    f"{k(MAIN_CEIL)}. {tail}")
-    full = ctx >= ORCH_HERE and other_orchestrators(session) >= MAX_ORCH
+    full = ctx >= ORCH_HERE and other_orchestrators(session, st.get("repo", "")) >= MAX_ORCH
     if full and not st.get("orch_warned"):
-        out.append(f"[squad-watch] DISPATCH NOTICE — all {MAX_ORCH} orchestrator slots are taken "
+        out.append(f"[squad-watch] DISPATCH NOTICE — all {MAX_ORCH} orchestrator slots of this repository are taken "
                    f"and this session is at {k(ctx)}. {tail} A reviewer waits for the SLOT FREE notice.")
     st["orch_warned"] = full
     return out
+
+
+# --------------------------------------------------------------- review gate
+def same_card(a, b):
+    """Two ways of writing the same card: equal, or one AgenFK id the prefix of
+    the other (8 characters at least). A key like ABC-1 is never a prefix of ABC-12."""
+    a, b = str(a or "").lower(), str(b or "").lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return bool(HEX_ID.fullmatch(a) and HEX_ID.fullmatch(b) and (a.startswith(b) or b.startswith(a)))
+
+
+def review_log(p, card, step, decision, why):
+    """Every pass the gate lets through without a reviewer, and every denial, with the reason."""
+    try:
+        os.makedirs(BASE, exist_ok=True)
+        if os.path.exists(REVIEW_LOG) and os.path.getsize(REVIEW_LOG) >= 200_000:
+            return
+        row = {"ts": time.time(), "session": safe(p.get("session_id")), "card": safe(card), "step": safe(step),
+               "decision": decision, "why": why}
+        with open(REVIEW_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
+
+
+def review_files(card):
+    """(path, record) of every card file that names this card, the stale ones left out."""
+    out, now = [], time.time()
+    try:
+        names = os.listdir(REVIEWS)
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(REVIEWS, name)
+        if not name.endswith(".json") or not same_card(name[:-5], card):
+            continue
+        d = load(path)
+        if same_card(d.get("card"), card):
+            ds = d.get("dispatches")
+            d["dispatches"] = [e for e in (ds if isinstance(ds, list) else []) if isinstance(e, dict)
+                               and isinstance(e.get("ts"), (int, float)) and now - e["ts"] < REVIEW_DAYS * 86400]
+            out.append((path, d))
+    return out
+
+
+def remember_review(p, key):
+    """Records a reviewer dispatch per card, in a file every session reads: a handoff
+    opens a new session, and the review done before it still counts. The card is the
+    one review_key() found; with none there, the first 8-character id of the brief."""
+    card = key.partition(":")[2]
+    if card == "no-card":
+        inp = p.get("tool_input") or {}
+        m = SHORT_ID.search(str(inp.get("prompt") or "") + " " + str(inp.get("description") or ""))
+        if not m:
+            return                        # a reviewer with no card id unlocks no card
+        card = m.group(0)
+    now, ttl = time.time(), REVIEW_DAYS * 86400
+    os.makedirs(REVIEWS, exist_ok=True)
+    path = os.path.join(REVIEWS, f"{safe(card)}.json")
+    d = next((d for f, d in review_files(card) if f == path), None) or {"card": card, "dispatches": []}
+    d["dispatches"] = (d["dispatches"] + [{"ts": now, "session": safe(p.get("session_id")),
+                                           "kind": key.partition(":")[0]}])[-20:]
+    save(path, d)
+    for name in os.listdir(REVIEWS):     # cards nobody touched within the memory window go
+        f = os.path.join(REVIEWS, name)
+        try:
+            if now - os.path.getmtime(f) >= ttl:
+                os.remove(f)
+        except OSError:
+            pass
+
+
+def taskkill_exe(env=None):
+    """taskkill by its full path: a bare name is looked up in the current directory first on Windows,
+    and the hook runs in the session's directory, a repository anyone could put a taskkill.exe in."""
+    env = os.environ if env is None else env
+    root = env.get("SystemRoot") or env.get("SYSTEMROOT") or env.get("windir") or "C:\\Windows"
+    return ntpath.join(root, "System32", "taskkill.exe")
+
+
+def kill_tree(proc):
+    """Kill the child and what it started, and never wait on its pipe again. On Windows this
+    may take up to KILL_WAIT seconds, and the caller counts them in AGENFK_TOTAL."""
+    if WINDOWS:
+        # agenfk is a .cmd shim: cmd.exe -> node -> ... TerminateProcess ends cmd.exe alone and leaves the rest
+        # holding the pipe; taskkill /T walks the tree while its parents are still there to walk.
+        try:
+            subprocess.run([taskkill_exe(), "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=KILL_WAIT,
+                           creationflags=0x08000000)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        # no close(): communicate() reads the pipe in a daemon thread that holds the file's lock until EOF,
+        # and close() would wait for it (30 s with a grandchild that escaped the kill). The thread is abandoned.
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)   # start_new_session: its children go with it
+    except OSError:
+        pass
+    try:
+        proc.stdout.close()
+    except OSError:
+        pass
+
+
+def epoch(v):
+    """Seconds since the epoch from what agenfk writes as a time: ISO 8601 (`...Z`), or a number
+    (milliseconds when it is that large). None for anything else."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return v / 1000 if v > 1e11 else float(v)
+    if not isinstance(v, str) or not v.strip():
+        return None
+    s = v.strip()
+    s = s[:-1] + "+00:00" if s[-1:] in "Zz" else s
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)).timestamp()
+
+
+def entered_at(d, step):
+    """When the card last entered `step`, from the history `agenfk get --json` returns (each move a
+    fromStatus, toStatus and timestamp). A move from a step to itself (the TODO -> TODO of creation)
+    counts only when there is no other. None when the history does not say."""
+    hist = d.get("history") if isinstance(d, dict) else None
+    if not isinstance(hist, list):
+        return None
+    moves, stays = [], []
+    for e in hist:
+        if not isinstance(e, dict) or str(e.get("toStatus") or "").strip().upper() != step:
+            continue
+        ts = epoch(e.get("timestamp"))
+        if ts is not None:
+            (stays if str(e.get("fromStatus") or "").strip().upper() == step else moves).append(ts)
+    return max(moves or stays) if moves or stays else None
+
+
+def card_step(card, cwd, wait=AGENFK_WAIT):
+    """(step, entered, "", False) from `agenfk get <id> --json`, where entered is when the card
+    last moved into that step (None when agenfk does not say), or (None, None, why it could not be
+    read, broken): broken is True when agenfk itself could not be run (missing, did not start, too
+    slow), False when it ran and had no step for this id (a non-zero exit, output it cannot read).
+    On Windows a slow agenfk costs `wait` plus up to KILL_WAIT to kill."""
+    if wait < 0.5:
+        return None, None, "no time left in the hook's budget", True
+    exe = shutil.which("agenfk")
+    if not exe:
+        return None, None, "agenfk not found", True
+    try:
+        proc = subprocess.Popen([exe, "get", card, "--json"], cwd=cwd if cwd and os.path.isdir(cwd) else None,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, encoding="utf-8", errors="replace", **detached_kwargs())
+    except OSError as exc:
+        return None, None, f"agenfk did not start ({type(exc).__name__})", True
+    try:
+        out, _ = proc.communicate(timeout=wait)
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)                   # never communicate() again: a child holding the pipe would hang it
+        return None, None, f"agenfk get took more than {wait:.1f} s", True
+    if proc.returncode != 0:
+        return None, None, f"agenfk get exited {proc.returncode}", False
+    step, d = None, None
+    i = out.find("{")
+    if i >= 0:
+        try:
+            d = json.JSONDecoder().raw_decode(out[i:])[0]
+            step = d.get("status") if isinstance(d, dict) else None
+        except ValueError:
+            pass
+    if not isinstance(step, str) or not step.strip():
+        d = None                          # the text form has no history
+        m = re.search(r"^\s*Status:\s*([A-Za-z_]+)\s*$", out, re.M)
+        step = m.group(1) if m else None
+    if not step:
+        return None, None, "agenfk get output unreadable", False
+    step = step.strip().upper()
+    return step, entered_at(d, step), "", False
+
+
+def verify_ids(cmd, depth=0):
+    """Card ids that `agenfk verify <id>` in this command would advance (a dry run
+    with --plan does not). None when the command cannot be read."""
+    flat = cmd.replace("\\\n", " ").replace("\n", " ; ")
+    try:
+        lx = shlex.shlex(flat, posix=True, punctuation_chars=";&|()")
+        lx.whitespace_split = True
+        # no comments: the lines are joined with " ; " first, so a `#` line would swallow every line after it
+        # (`# note\nagenfk verify <id>` read as nothing). A `#` word is read as a word: stricter, never looser.
+        lx.commenters = ""
+        toks = list(lx)
+    except ValueError:
+        return [m.group(1) for m in VERIFY_LOOSE.finditer(cmd)] or None
+    ids, at, wrap, need, i = [], True, "", 0, 0
+    sep = lambda t: bool(t) and all(c in ";&|()" for c in t)   # noqa: E731
+    while i < len(toks):
+        t = toks[i]
+        name = re.sub(r"(?<=.)@[^/]*$", "", os.path.basename(t))    # npx agenfk@latest
+        if sep(t):
+            at, wrap, need = True, "", 0
+        elif at and wrap and t.startswith("-") and len(t) > 1:
+            if t in WRAPPER_VALUED.get(wrap, ()):
+                i += 1                    # `sudo -u root`, `timeout -s KILL`: the value goes with the option
+        elif at and wrap and need:
+            need -= 1                     # `timeout 30 agenfk ...`: the duration
+        elif at and (ASSIGN.match(t) or t in KEYWORDS):
+            pass                          # `VAR=x agenfk ...`, `if agenfk ...`: still the command position
+        elif at and name in WRAPPER:
+            wrap, need = name, WRAPPER_ARGS.get(name, 0)
+        elif at:
+            at, wrap = False, ""
+            if name in SHELLS and depth < 2:          # bash -c "agenfk verify ..."
+                j = i + 1
+                while j < len(toks) and not sep(toks[j]):
+                    if re.fullmatch(r"-[A-Za-z]*c", toks[j]) and j + 1 < len(toks):
+                        inner = verify_ids(toks[j + 1], depth + 1)
+                        if inner is None:
+                            return None
+                        ids += inner
+                        break
+                    j += 1
+            elif name == "agenfk":
+                j = i + 1
+                while j < len(toks) and toks[j].startswith("-"):
+                    j += 1
+                if j < len(toks) and toks[j] == "verify":
+                    card, dry, j = None, False, j + 1
+                    while j < len(toks) and not sep(toks[j]):
+                        a = toks[j]
+                        if a in VERIFY_DRY:
+                            dry = True
+                        elif a in VERIFY_VALUED:
+                            j += 1
+                        elif not a.startswith("-") and card is None:
+                            card = a
+                        j += 1
+                    if card and not dry:
+                        ids.append(card)
+                    i = j
+                    continue
+        i += 1
+    return ids
+
+
+def verify_mentions(cmd):
+    """How many times the command says `agenfk ... verify`: the two words with no separator between
+    them and at most MENTION_SPAN characters apart, once blanks and line continuations are folded.
+    It counts every verify the parser reads (options, quotes, a path, a wrapper before it) and text
+    that only names one. Linear: one pass over the folded text."""
+    n, last = 0, None
+    for m in MENTION_WORDS.finditer(FOLD.sub(" ", cmd)):
+        w = m.group()
+        if w == "agenfk":
+            last = m.end()
+        elif w == "verify":
+            if last is not None and m.start() - last <= MENTION_SPAN:
+                n, last = n + 1, None
+        else:
+            last = None                   # a separator: the next verify needs an agenfk of its own
+    return n
+
+
+def review_check(p, card, wait=AGENFK_WAIT, answered=False):
+    """(denial or "", how, note). how: "" when agenfk was not asked; "answered" when agenfk
+    ran, including a non-zero exit or output it cannot read for this id (that id fails open,
+    logged); "broken" when agenfk could not be run (fails open, logged, note says why);
+    "unchecked" when the card needed agenfk and was not checked: no time left (`wait` under
+    0.5 s, or 0 after agenfk broke for an earlier card), or agenfk answered for an earlier card
+    of this call and then broke on this one (note says which). Only a later card of a call can
+    be unchecked, and a recorded dispatch does not change that.
+
+    A reviewer dispatch counts for the step the card is on only when it is newer than the card's
+    entry into that step: a second review step, or the same step again after FIX_FIRST, needs a
+    dispatch of its own. When agenfk cannot say when the first card of a call entered the step
+    (no history, or agenfk broken), any dispatch recorded in the memory window counts, as it did
+    before the entry time was read: a record is the best evidence left, and it fails open."""
+    if not CARD_ID.fullmatch(card):
+        review_log(p, card, "", "allow", "not a card id")   # `$ID`, `--`: never handed to agenfk
+        return "", "", ""
+    if wait < 0.5:
+        # never the first card of a call (it gets AGENFK_WAIT): a record does not let a later one through,
+        # since the record alone does not say which step it was for
+        return "", "unchecked", ""
+    seen = [e["ts"] for _, d in review_files(card) for e in d["dispatches"]]
+    step, entered, why, broken = card_step(card, str(p.get("cwd") or ""), wait)
+    if step is None and broken and answered:
+        return "", "unchecked", why       # agenfk works in this call: one card per call, never let through
+    if step is None and seen:
+        review_log(p, card, "", "allow", f"{why}; a reviewer dispatch is recorded for the card")
+        return "", "broken" if broken else "answered", why
+    if step is None:
+        review_log(p, card, "", "allow", why)       # fail open: a broken agenfk must not hold the flow
+        return "", "broken" if broken else "answered", why
+    if step not in REVIEW_STEPS:
+        return "", "answered", ""
+    if entered is None and seen:
+        review_log(p, card, step, "allow", "agenfk gave no step history; a reviewer dispatch is recorded "
+                                           "for the card")
+        return "", "answered", ""
+    if entered is not None and any(ts > entered for ts in seen):
+        return "", "answered", ""
+    owner = os.environ.get("SQUAD_SELF_REVIEW_OK", "").strip()
+    used = ""
+    if owner and same_card(owner, card):
+        files = review_files(card)
+        spent = [d["override"] for _, d in files if isinstance(d.get("override"), (int, float))
+                 and time.time() - d["override"] < REVIEW_DAYS * 86400]
+        if not spent:
+            os.makedirs(REVIEWS, exist_ok=True)
+            path, d = files[0] if files else (os.path.join(REVIEWS, f"{safe(card)}.json"),
+                                              {"card": card, "dispatches": []})
+            d["override"] = time.time()
+            save(path, d)
+            review_log(p, card, step, "allow", "SQUAD_SELF_REVIEW_OK")
+            return "", "answered", ""
+        used = (" SQUAD_SELF_REVIEW_OK for this card was already used once, at "
+                f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(max(spent)))}.")
+    if seen:
+        at = lambda t: time.strftime("%Y-%m-%d %H:%M", time.localtime(t))   # noqa: E731
+        review_log(p, card, step, "deny", "no reviewer dispatch since the card entered the step")
+        what = (f"card {card} is on {step} since {at(entered)}, and the last reviewer dispatch recorded for it "
+                f"({at(max(seen))}) came before that. One dispatch unlocks the step the card was on when it "
+                "was made: each review step, and each re-review after FIX_FIRST, needs a dispatch of its own.")
+    else:
+        review_log(p, card, step, "deny", "no reviewer recorded")
+        what = (f"card {card} is on {step}, and no reviewer dispatch for it has been recorded in the last "
+                f"{REVIEW_DAYS} days, in this session or any other.")
+    return (f"[squad-watch] REVIEW REQUIRED: {what} Whoever writes does not "
+            "approve: the main session does not advance a review step on its own reading." + used + " Where the "
+            "work continues: dispatch the verifier (the project's own reviewer agent if it has one, else "
+            f"`verifier`) in a clean context, with the card id {card} and the branch in the brief, never the "
+            "implementer's narrative. When it returns SHIP, run `agenfk verify` again with its verdict as the "
+            "evidence; FIX_FIRST or REJECT goes back to whoever implemented. Do not work around this with "
+            "another tool."), "answered", ""
+
+
+# Commands that only read: with one of these at every command position and no redirection into a file,
+# a command naming the review records passes. Not here, because they can write a file: sort -o, uniq's
+# second operand, tree -o, and less or more saving the buffer (find's writing actions are refused below).
+READERS = {"cat", "ls", "head", "tail", "jq", "grep", "rg", "wc", "stat", "file", "find", "cd",
+           "echo", "printf", "diff", "du", "realpath", "readlink", "test", "["}
+FIND_WRITES = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+REVIEWS_NAMED = re.compile(r"\.claude[\\/]+squad[\\/]+reviews(?![\w.-])")
+
+
+def inside_reviews(path):
+    try:
+        real, root = os.path.realpath(os.path.expanduser(path)), os.path.realpath(REVIEWS)
+        return os.path.normcase(real) == os.path.normcase(root) or os.path.normcase(real).startswith(
+            os.path.normcase(root) + os.sep)
+    except (OSError, ValueError):
+        return False
+
+
+# Values that are only text to the program that takes them: a commit message, a PR's body or title, a card
+# comment, the evidence of a verify. Naming the records there writes nothing (October 2026: a commit message
+# about the gate was denied as a write). Only these, and only for these programs: `git worktree add -d <path>`
+# shows why a short option is not text everywhere.
+TEXT_VALUED = {
+    ("git", "commit"): {"-m", "--message"},
+    ("gh", "pr"): {"-b", "--body", "-t", "--title"},
+    ("gh", "issue"): {"-b", "--body", "-t", "--title"},
+    ("agenfk", ""): {"--evidence", "--check-note", "-d", "--description", "--title"},
+}
+
+
+def text_blanked(cmd):
+    """The command with the spans that are only text blanked out (see TEXT_VALUED, and the content of
+    `agenfk comment <id> ...`). The command as it is when it cannot be read word by word: a substitution,
+    a heredoc, a subshell or a redirection into a file leaves nothing as text."""
+    cmds = None if OPAQUE.search(cmd) else shell_split(cmd)
+    if not cmds:
+        return cmd
+    out = list(cmd)
+    for words in cmds:
+        names = [w[2] for w in words]
+        name = names[0]                   # the bare name only: `./agenfk`, `/tmp/x/git` are any program
+        k = 1
+        while k < len(names) and names[k].startswith("-"):
+            k += 2 if names[k] in ("-C", "-c", "-R", "--repo") else 1
+        sub = names[k] if k < len(names) else ""
+        opts = TEXT_VALUED.get((name, sub)) or TEXT_VALUED.get((name, ""))
+        if not opts:
+            continue
+        text = set()
+        if name == "agenfk" and sub == "comment":
+            text = set(range(k + 2, len(words)))       # agenfk comment <id> <text...>
+        for j in range(k + 1, len(words)):
+            w = names[j]
+            if w in opts:
+                text.add(j + 1)
+            elif w.startswith("--") and "=" in w and w.split("=", 1)[0] in opts:
+                text.add(j)
+            elif name == "git" and re.fullmatch(r"-[A-Za-z]+", w) and "m" in w:
+                text.add(j + 1 if w.endswith("m") else j)   # -am <msg>, -mfix
+        for j in text:
+            if j < len(words):
+                a, b, _ = words[j]
+                out[a:b] = " " * (b - a)
+    return "".join(out)
+
+
+def names_reviews(cmd, cwd):
+    return bool(REVIEWS_NAMED.search(cmd) or REVIEWS in cmd or REVIEWS.replace("\\", "/") in cmd
+                or (cwd and inside_reviews(cwd)) or (cwd and inside_reviews(os.path.join(cwd, "reviews"))
+                                                     and re.search(r"(?<![\w.-])reviews(?![\w.-])", cmd)))
+
+
+def writes_reviews(p):
+    """True when this call writes into the review records with a tool. Reading them passes, and so does
+    a command that names them only in text (a commit message, a card comment)."""
+    tool, inp = p.get("tool_name") or "", p.get("tool_input") or {}
+    if not isinstance(inp, dict):
+        return False
+    if tool in MUTATING:
+        return any(inside_reviews(str(v)) for v in (inp.get("file_path"), inp.get("path"), inp.get("notebook_path"))
+                   if v)
+    if tool != "Bash":
+        return False
+    cmd = str(inp.get("command") or "")
+    cwd = str(p.get("cwd") or "")
+    if not names_reviews(cmd, cwd) or not names_reviews(text_blanked(cmd), cwd):
+        return False
+    if len(cmd) > PARSE_MAX:
+        return True                       # too long to read inside the hook's budget: it does not pass
+    try:
+        lx = shlex.shlex(cmd.replace("\\\n", " ").replace("\n", " ; "), posix=True, punctuation_chars=True)
+        lx.whitespace_split = True
+        lx.commenters = ""                # as in verify_ids: a `#` line must not hide the lines after it
+        toks = list(lx)
+    except ValueError:
+        return True                       # a command naming the records that cannot be read does not pass
+    at = True
+    for i, t in enumerate(toks):
+        if t and all(c in ";&|()" for c in t):
+            at = True
+        elif t and all(c in "<>&|" for c in t) and ">" in t:
+            nxt = toks[i + 1] if i + 1 < len(toks) else ""
+            # 2>&1, >&- and >/dev/null write no file; `>& file` and `&> file` do
+            if not ((t.endswith(">&") and re.fullmatch(r"\d+|-", nxt)) or nxt == "/dev/null"):
+                return True
+        elif at and ASSIGN.match(t):
+            continue
+        elif at:
+            at = False
+            if os.path.basename(t) not in READERS:
+                return True
+        elif t in FIND_WRITES:
+            return True                   # find that writes
+    return False
+
+
+def review_gate(p):
+    """PreToolUse of the main session: True when it denied an advance past a review step."""
+    tool, inp = p.get("tool_name") or "", p.get("tool_input") or {}
+    if not REVIEW_STEPS or not isinstance(inp, dict):
+        return False
+    if tool == "Bash":
+        cmd = str(inp.get("command") or "")
+        if "agenfk" not in cmd or "verify" not in cmd:
+            return False                  # the hot path: every Bash call of the main session
+        cards = verify_ids(cmd[:PARSE_MAX])
+        if len(cmd) > PARSE_MAX:
+            # past the cap the rest is only searched for `agenfk verify <id>` (linear), and a mention past
+            # the cap is asked about like a command would be. Padding can still hide the id from both (an
+            # option or a quote before it, a quote cut open at the cap), so every `agenfk ... verify` in the
+            # whole command must be matched by a card id read: a verify whose card was not read is denied
+            tail = [m.group(1) for m in VERIFY_TAIL.finditer(cmd, max(PARSE_MAX - 256, 0))]
+            read, said = (cards or []) + tail, verify_mentions(cmd)
+            review_log(p, "", "", "cut", f"command of {len(cmd)} characters: the first {PARSE_MAX} parsed, "
+                                         f"the rest searched for `agenfk verify <id>` ({len(tail)} found)")
+            if said > len(set(read)):
+                review_log(p, "", "", "deny", f"over {PARSE_MAX} characters: `agenfk ... verify` {said} times, "
+                                              f"{len(set(read))} card ids read")
+                deny(f"[squad-watch] VERIFY NOT READ: this command has {len(cmd)} characters, more than the "
+                     f"{PARSE_MAX} the watcher reads word by word inside the hook's time, and it says "
+                     f"`agenfk ... verify` {said} time(s) where only {len(set(read))} card id(s) could be read. "
+                     "A verify whose card is not known is not let past a review step. Where the work "
+                     "continues: run `agenfk verify <id>` on its own, with a short --evidence (a long one goes "
+                     "in a file the evidence points to); if the command only mentions verify in text, shorten "
+                     "that text.")
+                return True
+            cards = read
+        if cards is None:
+            review_log(p, "", "", "allow", "command not readable")
+            return False
+        if not cards:                     # a dry run, a mention, or a form the parser does not read
+            review_log(p, "", "", "allow", "agenfk and verify in the command, no card id read")
+            return False
+    elif re.search(r"(?:^|__)(?:validate_progress|review_changes|test_changes)$", tool):
+        if tool.endswith("validate_progress") and inp.get("plan"):
+            return False                  # the MCP form of --plan: a dry run
+        card = str(inp.get("itemId") or inp.get("item_id") or inp.get("id") or "").strip()
+        cards = [card] if card else []
+    else:
+        return False
+    todo = list(dict.fromkeys(cards))
+    start, answered, broken = time.time(), False, ""
+    kill = KILL_WAIT if WINDOWS else 0
+    for card in todo:                     # 3 s per card, 7 s for them all, the kill of a slow one included
+        # once agenfk could not be run at all, no card after it is asked: only the first card a call
+        # asks about may fail open unchecked, or `verify <id> && verify <REVIEW card>` would slip by
+        wait = 0 if broken else min(AGENFK_WAIT, AGENFK_TOTAL - kill - (time.time() - start))
+        why, how, note = review_check(p, card, wait, answered)
+        if how == "unchecked":
+            if broken:
+                left = (f"agenfk could not be asked for a card before it ({broken}), and only the first card "
+                        "a call asks about passes unchecked")
+            elif note:
+                left = f"agenfk answered for the cards before it, then failed for this one ({note})"
+            else:
+                left = (f"the hook's {AGENFK_TOTAL} s for asking agenfk ran out (agenfk answered for the cards "
+                        "before it)")
+            review_log(p, card, "", "deny", f"left unchecked: advance one card per call ({left})")
+            why = (f"[squad-watch] ONE CARD PER CALL: this call advances {len(todo)} cards, and card {card} was "
+                   f"left unchecked: {left}. Where the work continues: advance one card per call, "
+                   f"`agenfk verify {card} ...` on its own.")
+        if why:
+            deny(why)
+            return True
+        broken = broken or (note if how == "broken" else "")
+        answered = answered or how == "answered"
+    return False
 
 
 # --------------------------------------------------------------- merge queue
@@ -556,41 +1359,329 @@ def git_dir(cwd):
         return ""
 
 
+def shell_split(cmd):
+    """Simple commands of a line, each a list of words (start, end, text without
+    quotes). None for anything this reader does not follow exactly as the shell
+    does: a subshell, a redirection other than to /dev/null or another fd, an
+    unterminated quote."""
+    cmds, words, i, n = [], [], 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        m = REDIR_OK.match(cmd, i)
+        if m:
+            i = m.end()
+        elif c in " \t":
+            i += 1
+        elif c in ";&|\n":
+            if words:
+                cmds.append(words)
+                words = []
+            i += 1
+        elif c in "()":
+            return None
+        elif c == "#":                                     # a comment runs to the end of the line
+            j = cmd.find("\n", i)
+            i = n if j < 0 else j
+        else:
+            start, text = i, []
+            while i < n and cmd[i] not in " \t;&|\n()":
+                c = cmd[i]
+                if c == "\\":
+                    text.append(cmd[i + 1:i + 2])
+                    i += 2
+                elif c in "'\"":
+                    j = i + 1
+                    while j < n and cmd[j] != c:
+                        j += 2 if c == '"' and cmd[j] == "\\" else 1
+                    if j >= n:
+                        return None
+                    text.append(cmd[i + 1:j])
+                    i = j + 1
+                elif c in "<>":
+                    return None
+                else:
+                    text.append(c)
+                    i += 1
+            words.append((start, i, "".join(text)))
+    if words:
+        cmds.append(words)
+    return cmds
+
+
+def merge_text(cmd):
+    """The text the merge patterns are matched against: the command without
+    quotes and backslashes (so `gh pr "mer""ge"` still reads as a merge), with
+    the spans that are provably data blanked out. Data is only the value of
+    -m/--message/-d/--description/--body/--title/--evidence, or an argument of
+    echo/printf, and only on a line where every command is one of INERT (git and
+    gh with a safe subcommand). Any substitution, heredoc, subshell, redirection
+    into a file, variable or unknown command makes the whole line count: in
+    doubt, it is a merge."""
+    def plain(s):
+        return re.sub(r"[\\'\"]", "", s)
+    cmds = None if OPAQUE.search(cmd) else shell_split(cmd)
+    if not cmds:
+        return plain(cmd)
+    out = list(cmd)
+    for words in cmds:
+        names = [w[2] for w in words]
+        name = names[0]
+        if "/" in name and os.path.basename(name).removesuffix(".py") in ("squad-seal", "squad-turn"):
+            name = os.path.basename(name).removesuffix(".py")
+        if name not in INERT:
+            return plain(cmd)
+        data = set()
+        if name in ("echo", "printf"):
+            data = set(range(1, len(words)))
+        else:
+            k, sub = 1, ""
+            while k < len(names):
+                if names[k] in ("-C", "-R", "--repo", "--git-dir", "--work-tree"):
+                    k += 2
+                elif names[k].startswith("-"):
+                    k += 1
+                else:
+                    sub = names[k]
+                    break
+            if (name == "git" and ("-c" in names or sub not in GIT_SAFE)) or (name == "gh" and sub not in GH_SAFE):
+                return plain(cmd)
+            for k, w in enumerate(names[1:], 1):
+                if w in DATA_OPTS and k + 1 < len(words):
+                    data.add(k + 1)
+                elif w.startswith("--") and w.split("=", 1)[0] in DATA_OPTS and "=" in w:
+                    data.add(k)
+        for k, (s, e, _) in enumerate(words):
+            if k in data:
+                out[s:e] = " " * (e - s)
+            elif "$" in cmd[s:e]:
+                return plain(cmd)
+    return plain("".join(out))
+
+
+def merge_target(args):
+    """(target, repo) of one `gh pr merge`, from its words after `merge`: the PR
+    number, URL or branch ("" for the current branch's PR) and the --repo value.
+    None when this reader cannot tell for sure: an unknown flag, more than one
+    argument, a flag with no value, a value it does not accept."""
+    target, repo, i = [], "", 0
+    while i < len(args):
+        w = args[i]
+        i += 1
+        if w == "--":
+            target += args[i:]
+            break
+        if w.startswith("--"):
+            name, eq, val = w.partition("=")
+            if name in MERGE_VALUED:
+                if not eq:
+                    if i >= len(args):
+                        return None
+                    val, i = args[i], i + 1
+                if name == "--repo":
+                    repo = val
+            elif name not in MERGE_BOOL:
+                return None
+        elif w.startswith("-") and len(w) > 1:
+            for j, c in enumerate(w[1:], 2):               # -sd, -t subject, -tsubject, -sRo/r
+                if "-" + c in MERGE_BOOL:
+                    continue
+                if "-" + c not in MERGE_VALUED:
+                    return None
+                val = w[j:]
+                if not val:
+                    if i >= len(args):
+                        return None
+                    val, i = args[i], i + 1
+                if c == "R":
+                    repo = val
+                break
+        else:
+            target.append(w)
+    if len(target) > 1:
+        return None
+    t = target[0] if target else ""
+    t = t[1:] if re.fullmatch(r"#\d+", t) else t
+    if t and not (t.isdigit() or PR_URL.fullmatch(t) or (BRANCH.fullmatch(t) and not t.startswith("-"))):
+        return None
+    if repo and not (t and GH_REPO.fullmatch(repo)):
+        return None               # gh itself refuses --repo with no PR named
+    return t, repo
+
+
+def merge_targets(cmd):
+    """(target, repo) or None for each `gh pr merge` that is a simple command of
+    its own, in order; None for the whole line if it cannot be read word by word."""
+    cmds = None if OPAQUE.search(cmd) else shell_split(cmd)
+    if cmds is None:
+        return None
+    out = []
+    for words in cmds:
+        names = [w[2] for w in words]
+        if os.path.basename(names[0]) == "gh" and names[1:3] == ["pr", "merge"]:
+            out.append(merge_target(names[3:]))
+    return out
+
+
 def turn_kind(p):
-    """What the call has to do with the queue: (cli, verb, pr) | (merge, pr) | (sync,) | None."""
+    """What the call has to do with the merge turn: (cli, verb, pr) | (merge,
+    shown, target, dir) | (push, source, dir) | (many, what) when one call names
+    more than one merge. target is (PR, repo) for gh pr view, or None when the
+    watcher cannot tell which PR the call merges; shown is only for naming it;
+    dir is where the call runs (see run_dir), None when the watcher cannot tell."""
     tool = str(p.get("tool_name") or "")
     inp = p.get("tool_input") or {}
     if tool.endswith("merge_pull_request"):
-        return ("merge", str(inp.get("pullNumber") or inp.get("pull_number") or ""))
-    if tool.endswith("update_pull_request_branch"):
-        return ("sync",)
+        n = str(inp.get("pullNumber") or inp.get("pull_number") or "")
+        repo = f"{inp.get('owner') or ''}/{inp.get('repo') or ''}"
+        repo = repo if GH_REPO.fullmatch(repo) else ""
+        return ("merge", n, (n, repo) if n.isdigit() and (repo or not inp.get("repo")) else None,
+                str(p.get("cwd") or ""))
     if tool != "Bash":
         return None
     cmd = str(inp.get("command") or "")
-    m = TURN_CLI.search(cmd)
-    if m:
-        return ("cli", m.group(1), m.group(2) or "")
-    if MERGE_CMD.search(cmd):
-        m = PR_NUM.search(cmd)
-        return ("merge", m.group(1) if m else "")
-    if SYNC_CMD.search(cmd):
-        return ("sync",)
+    cwd = str(p.get("cwd") or "")
+    text = merge_text(cmd)
+    found = []
+    merges = list(PR_MERGE.finditer(text))
+    targets = merge_targets(cmd) if merges else []
+    for i, m in enumerate(merges):
+        # the regex finds the merge anywhere (bash -c, ssh, xargs...); which PR it merges is read
+        # only from a plain `gh pr merge` command, and only when every merge found is one
+        target = targets[i] if targets is not None and len(targets) == len(merges) else None
+        found.append(("merge", m.group(2) or m.group(3) or "", target, run_dir(text, m.start(), cwd)))
+    for m in API_MERGE.finditer(text):
+        found.append(("merge", m.group(1) or "", (m.group(1), "") if m.group(1) else None,
+                      run_dir(text, m.start(), cwd)))
+    for m in GIT_PUSH.finditer(text):
+        where = run_dir(text, m.start(), cwd, re.findall(r"-C[ \t]+(\S+)", m.group(1)))
+        src = push_source(m.group(2), where, cwd)
+        if src is not None:
+            found.append(("push", src, where))
+    found = list(dict.fromkeys(found))
+    if len(found) > 1:
+        return ("many", ", ".join(f"PR #{f[1]}" if f[0] == "merge" and f[1] else
+                                  "a PR" if f[0] == "merge" else "a push to the trunk" for f in found))
+    if found:
+        return found[0]
+    m = TURN_CLI.search(text)
+    return ("cli", m.group(1), m.group(2) or "") if m else None
+
+
+def trunks(cwd):
+    """Branches that count as the trunk, in order: `git config squad.trunk` (a
+    comma-separated list), the remote's default branch (origin/HEAD, or gh when
+    that ref is missing), then main and master."""
+    names = git_rc(cwd, "config", "--get", "squad.trunk")[1].split(",")
+    rc, head = git_rc(cwd, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if rc == 0 and head.startswith("origin/"):
+        names.append(head[len("origin/"):])
+    elif git_rc(cwd, "remote", "get-url", "origin")[0] == 0:
+        try:
+            r = subprocess.run([os.environ.get("SQUAD_GH") or "gh", "repo", "view", "--json", "defaultBranchRef",
+                                "-q", ".defaultBranchRef.name"], capture_output=True, text=True, timeout=8,
+                               cwd=cwd, stdin=subprocess.DEVNULL)
+            names.append(r.stdout.strip() if r.returncode == 0 else "")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    names = [n.strip().removeprefix("refs/heads/") for n in names + ["main", "master"]]
+    return [n for n in dict.fromkeys(names) if BRANCH.fullmatch(n) and not n.startswith("-")]
+
+
+def run_dir(text, end, cwd, dirs=()):
+    """The directory the command ending at text[:end] runs in: the session's cwd,
+    moved by each `cd` before it and then by each `git -C` (dirs). None when the
+    watcher cannot tell: a variable or quotes in the path, `cd -`, a subshell,
+    a cd that may not run (after &&, ||, |, then, else, do; before ||, |, &),
+    a cd in a form it does not follow (`builtin cd`, `command cd`, `VAR=x cd`;
+    merge_text has already turned `\\cd` into `cd`), pushd/popd, GIT_DIR, --git-dir, env -C, a directory that does
+    not exist."""
+    before = text[:end]
+    if ELSEWHERE.search(before):
+        return None
+    cds = list(CD.finditer(before))
+    if len(CD_WORD.findall(before)) != len(cds):
+        return None
+    if cds and re.search(r"[()]|\bfunction\b", before):
+        return None               # a cd inside a subshell or a function body may not apply here
+    where = cwd
+    for m in cds:                 # a cd that may not run, or not in this shell: `a && cd x`, `cd x || y`, `cd x |`
+        if m.group("sep") in ("&&", "||", "|", "then", "else", "do") or m.group("next") in ("||", "|", "&"):
+            return None
+    for words in [m.group("arg").split()[:1] or ["~"] for m in cds] + [[d] for d in dirs]:
+        w = words[0]
+        if w == "-" or not (LITERAL_DIR.fullmatch(w) or (WINDOWS and WIN_DIR.fullmatch(w))):
+            return None
+        if WINDOWS:
+            w = MSYS_DRIVE.sub(lambda m: m.group(1).upper() + ":", w, count=1) if MSYS_DRIVE.match(w) else w
+        w = os.path.expanduser(w)
+        if not os.path.isabs(w) and not where:
+            return None
+        where = os.path.normpath(os.path.join(where, w))
+    return where if not (cds or dirs) or os.path.isdir(where) else None     # a failed cd: who knows
+
+
+def push_source(args, where, cwd):
+    """The local revision a `git push` run in `where` sends to the trunk (see
+    trunks); None if it does not push to the trunk. Any word may be the refspec
+    (in doubt, it is); `HEAD` alone is the current branch; --all and --mirror
+    push the trunk too; with no refspec, the current branch is pushed, to the
+    trunk if it is the trunk or if its push target is. `where` None: the watcher
+    cannot tell the repository, its trunk nor its branch, so the push counts
+    unless every refspec sends to a branch with a `/` in its name (feat/x) that is
+    not a trunk of the session's repository."""
+    words = args.split()
+    refs = [w for w in words if not w.startswith("-")]
+    every = any(len(o) > 2 and any(full.startswith(o) for full in ("--all", "--branches", "--mirror"))
+                for o in (w.partition("=")[0] for w in words))     # git takes `--al`, `--mir` too
+    if where is None:
+        session = trunks(cwd) if cwd and git_rc(cwd, "rev-parse", "--git-dir")[0] == 0 else []
+        for ref in refs[1:] or ["HEAD"]:
+            dst = ref.lstrip("+").rpartition(":")[2].removeprefix("refs/heads/")
+            if "/" not in dst or dst in session or every:
+                return "HEAD"
+        return None
+    trunk = trunks(where) if where else ["main", "master"]
+    if every:
+        return trunk[0]
+    current = git_rc(where, "branch", "--show-current")[1] if where else ""
+    for ref in refs:
+        src, colon, dst = ref.lstrip("+").rpartition(":")
+        if not colon and dst in ("HEAD", "@"):
+            dst, src = current, "HEAD"
+        if dst.removeprefix("refs/heads/") in trunk:
+            return src if colon or src == "HEAD" else dst
+    if len(refs) <= 1 and where:
+        target = git_rc(where, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}")[1]
+        if current in trunk or target.partition("/")[2] in trunk:
+            return "HEAD"
     return None
+
+
+def git_rc(cwd, *args, timeout=5):
+    """(returncode, stdout) of a git command in cwd; (-1, "") if it could not run or timed out."""
+    try:
+        r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL)
+        return r.returncode, r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return -1, ""
 
 
 def turn_open(repo):
     os.makedirs(TURN, exist_ok=True)
     path = os.path.join(TURN, hashlib.sha1(repo.encode()).hexdigest()[:16] + ".json")
     lock = open(path + ".lock", "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    lock_file(lock)
     d = load(path)
     d["repo"] = repo
-    d.setdefault("queue", [])
+    d.pop("queue", None)          # the long queue of earlier versions: nobody waits in line any more
+    if not isinstance(d.get("intents"), list):
+        d["intents"] = []
     return path, d, lock
 
 
 def turn_mark(session, repo=None):
-    """Cheap marker that the session is in a queue: avoids opening the queue on every call."""
+    """Cheap marker that the session holds a turn: avoids opening the turn file on every call."""
     path = os.path.join(TURN, f"s-{safe(session)}")
     try:
         if repo:
@@ -641,42 +1732,44 @@ def gh_pr(cwd, pr, field):
         return ""
 
 
-def pr_state(cwd, pr):
-    return gh_pr(cwd, pr, "state").upper() if str(pr).isdigit() else ""
-
-
-def branch_files(repo, branch):
-    """Files the branch changes relative to the trunk, by the local refs."""
-    if not branch or not BRANCH.fullmatch(branch) or branch.startswith("-"):
-        return set()
-    for base in ("origin/main", "origin/master"):
-        try:
-            r = subprocess.run(["git", "--git-dir", repo, "diff", "--name-only", f"{base}...{branch}"],
-                               capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired):
-            return set()
-        if r.returncode == 0:
-            return {f for f in r.stdout.splitlines() if f}
-    return set()
-
-
-def common_files(repo, a, b):
-    both = sorted(branch_files(repo, a) & branch_files(repo, b)) if a and b and a != b else []
-    return (", ".join(both[:8]) + (f" and {len(both) - 8} more" if len(both) > 8 else "")) if both else ""
-
-
-def turn_entry(p, pr=""):
-    cwd = str(p.get("cwd") or "")
+def pr_info(cwd, target, repo=""):
+    """Number, base branch and head (branch and SHA) of the PR the merge names
+    (number, URL or branch, from merge_target; "" for the current branch's PR),
+    in --repo if it named one, through gh; empty fields for whatever gh could
+    not tell. Every value is checked before it reaches a git command line."""
+    info = {"pr": target if target.isdigit() else "", "base": "", "branch": "", "sha": ""}
     try:
-        r = subprocess.run(["git", "-C", cwd, "branch", "--show-current"], capture_output=True, text=True,
-                           timeout=5, stdin=subprocess.DEVNULL)
-        branch = r.stdout.strip() if r.returncode == 0 else ""
-    except (OSError, subprocess.TimeoutExpired):
-        branch = ""
+        r = subprocess.run([os.environ.get("SQUAD_GH") or "gh", "pr", "view", *([target] if target else []),
+                            *(["--repo", repo] if repo else []),
+                            "--json", "number,baseRefName,headRefName,headRefOid"], capture_output=True,
+                           text=True, timeout=10, cwd=cwd if cwd and os.path.isdir(cwd) else None,
+                           stdin=subprocess.DEVNULL)
+        d = json.loads(r.stdout) if r.returncode == 0 else {}
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    if not info["pr"] and str(d.get("number") or "").isdigit():
+        info["pr"] = str(d["number"])
+    for key, field in (("base", "baseRefName"), ("branch", "headRefName")):
+        v = str(d.get(field) or "")
+        info[key] = v if BRANCH.fullmatch(v) and not v.startswith("-") else ""
+    v = str(d.get("headRefOid") or "")
+    info["sha"] = v if SHA.fullmatch(v) else ""
+    if not info["pr"] and not target:
+        n = gh_pr(cwd, "", "number")
+        info["pr"] = n if n.isdigit() else ""
+    return info
+
+
+def turn_entry(p, pr="", branch=""):
+    cwd = str(p.get("cwd") or "")
+    if not branch:
+        branch = git_rc(cwd, "branch", "--show-current")[1] if cwd else ""
     now = time.time()
     return {"session": safe(p.get("session_id")), "pr": pr if str(pr).isdigit() else "",
             "branch": branch if BRANCH.fullmatch(branch or "") else "", "cwd": cwd,
-            "pane": os.environ.get("HERDR_PANE_ID") or "", "since": now, "seen": now, "asked": now}
+            "since": now, "asked": now}
 
 
 def who(e):
@@ -684,150 +1777,206 @@ def who(e):
         f", branch {e['branch']}" if e.get("branch") else "")
 
 
-YOUR_TURN = ("The main branch does not move while the turn is yours. Now, ONCE only and in the card's worktree: `git fetch "
-             "origin`, `git merge origin/main`, resolve the conflict if there is one, run the suite, `git push` and "
-             "merge the PR. The watcher releases the turn when the PR shows as MERGED; if you give up, `squad-turn release`.")
-
-
-def turn_wake(e):
-    if not (e.get("pane") and os.environ.get("SQUAD_SWITCH") != "0"):
+def turn_release(d, why):
+    h = d.get("holder")
+    if not h:
         return
-    script = os.path.join(os.path.dirname(os.path.realpath(__file__)), "squad-turn.py")
-    try:
-        subprocess.Popen([sys.executable, script, "call", e["pane"], e["session"]],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True, close_fds=True)
-    except OSError:
-        pass
+    d["last"] = {"session": h["session"], "pr": h.get("pr"), "branch": h.get("branch"),
+                 "at": time.time(), "why": why}
+    d["holder"] = None
+    turn_mark(h["session"])
 
 
-def turn_settle(d, me="", force=False):
-    """Releases the turn of whoever finished or vanished and calls the next in the queue."""
-    now, repo = time.time(), d["repo"]
-    for _ in range(len(d["queue"]) + 1):
-        h = d.get("holder")
-        if h:
-            why = ""
-            if h.get("pr") and (force or now - h.get("checked", 0) > 20):
-                h["checked"] = now
-                state = pr_state(h.get("cwd"), h["pr"])
-                if state in ("MERGED", "CLOSED"):
-                    why = state
-            if not why and h.get("called") and h["seen"] <= h["since"] and now - h["since"] > TURN_CLAIM:
-                why = "no-show"
-            if not why and (now - h["seen"] > TURN_IDLE or now - h["since"] > TURN_MAX):
-                why = "idle"
-            if not why:
-                return
-            d["last"] = {"session": h["session"], "pr": h.get("pr"), "branch": h.get("branch"),
-                         "at": now, "why": why}
-            d["holder"] = None
-            if h["session"] != me:
-                turn_mark(h["session"])
-                if why != "MERGED":
-                    turn_note(h["session"], f"[squad-watch] MERGE QUEUE: your turn in {repo} was released "
-                              f"({why}). To land the PR, `squad-turn request` again.")
-            if why == "MERGED":
-                for e in d["queue"]:
-                    both = common_files(repo, h.get("branch"), e.get("branch"))
-                    if both and e["session"] != me:
-                        turn_note(e["session"], f"[squad-watch] MERGE QUEUE: main moved with PR "
-                                  f"#{h['pr']}, which touches files of your branch {e['branch']}: {both}. "
-                                  "Do not sync yet; on your turn the conflict, if there is one, will be in those.")
-        if not d["queue"]:
-            return
-        e = d["queue"].pop(0)
-        e.update(since=now, seen=now, called=True)
-        d["holder"] = e
-        if e["session"] != me:
-            turn_note(e["session"], f"[squad-watch] MERGE TURN: it is your turn in {repo}"
-                      + (f" (PR #{e['pr']})" if e.get("pr") else "") + f". {YOUR_TURN} With no activity from you in "
-                      f"{TURN_CLAIM // 60} min, the turn passes on.")
-            turn_wake(e)
-            return
+def turn_settle(d, me=""):
+    """Expires a turn whose merge call never came back, and old intents."""
+    now = time.time()
+    h = d.get("holder")
+    if h and now - h.get("since", 0) > TURN_HOLD:
+        turn_release(d, "expired")
+        if h["session"] != me:
+            turn_note(h["session"], f"[squad-watch] MERGE QUEUE: your merge turn in {d['repo']} expired: the "
+                      f"merge call did not come back within {TURN_HOLD} s. If the PR did not land, run the merge again.")
+    d["intents"] = [e for e in d["intents"] if isinstance(e, dict) and now - e.get("asked", 0) < INTENT_TTL]
 
 
-def turn_pre(p, st):
-    """Merge queue on PreToolUse. Returns True if it denied the call."""
+def seal_on(cwd):
+    """The seal is opt-in per repository (`git config squad.seal true`) or by SQUAD_SEAL=1."""
+    env = os.environ.get("SQUAD_SEAL")
+    if env in ("0", "1"):
+        return env == "1"
+    rc, out = git_rc(cwd, "config", "--get", "--bool", "squad.seal")
+    return out == "true" or rc == -1          # git did not answer: in doubt the seal is on (fail closed)
+
+
+def seal_load(path):
+    d = load(path)
+    return d if d.get("verdict") == "SHIP" and SHA.fullmatch(str(d.get("sha") or "")) else {}
+
+
+SEAL_HOW = ("Where the work continues: the verifier reviews this exact commit; once it returns SHIP, in the card's "
+            "worktree, with a clean tree at that commit, `squad-seal record --card <id> --model <name> --verdict "
+            "SHIP --evidence <path>` and repeat the merge. `squad-seal show` shows the seal of HEAD.")
+
+
+def seal_denial(repo, sha, what, branch):
+    """Empty if the SHA has a SHIP seal; otherwise the denial, saying how to seal."""
+    folder = os.path.join(SEALS, hashlib.sha1(repo.encode()).hexdigest()[:16])
+    how = SEAL_HOW
+    if not sha:
+        return (f"[squad-watch] MERGE SEAL: the seal is on in this repository and the watcher could not read the "
+                f"SHA of {what} (gh or git did not answer), so the seal cannot be checked. Check `gh pr view` "
+                "(or the ref you push), then repeat the merge. " + how)
+    seal = seal_load(os.path.join(folder, f"{sha}.json"))
+    if seal.get("sha") == sha:
+        return ""
+    other = {}
+    if branch and os.path.isdir(folder):
+        for name in os.listdir(folder):
+            s = seal_load(os.path.join(folder, name)) if name.endswith(".json") else {}
+            if s.get("branch") == branch and str(s.get("at") or "") > str(other.get("at") or ""):
+                other = s
+    return (f"[squad-watch] MERGE SEAL: {what} is at {sha[:12]} and there is no seal for that SHA"
+            + (f"; the seal of branch {branch} is for {other['sha'][:12]} (card {other.get('card')}, "
+               f"{other.get('at')}): the branch moved after the verification" if other else "")
+            + ". A seal records that this exact commit was verified with SHIP. " + how)
+
+
+def conflict_denial(cwd, info, sealed):
+    """Fetches the base and test-merges the PR head into it, without touching
+    any worktree. Empty if it merges cleanly or if the check could not run."""
+    base, sha, pr = info["base"], info["sha"], info["pr"]
+    git_rc(cwd, "fetch", "-q", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}", timeout=20)
+    if git_rc(cwd, "cat-file", "-e", f"{sha}^{{commit}}")[0] != 0:
+        for ref in ([info["branch"]] if info["branch"] else []) + ([f"pull/{pr}/head"] if pr else []):
+            git_rc(cwd, "fetch", "-q", "origin", ref, timeout=20)
+            if git_rc(cwd, "cat-file", "-e", f"{sha}^{{commit}}")[0] == 0:
+                break
+    if git_rc(cwd, "rev-parse", "--verify", "-q", f"origin/{base}^{{commit}}")[0] != 0:
+        return ""                 # no such base here: nothing to test against
+    rc, out = git_rc(cwd, "merge-tree", "--write-tree", "--name-only", f"origin/{base}", sha, timeout=20)
+    if rc != 1 or not SHA.fullmatch(out.split("\n", 1)[0]):
+        return ""                 # 0: merges cleanly; anything else (old git, missing commit): fails open
+    files = []
+    for f in out.splitlines()[1:]:
+        if not f.strip():
+            break                 # after the blank line come the informational messages
+        if f not in files:
+            files.append(f)
+    listed = ", ".join(files[:12]) + (f" and {len(files) - 12} more" if len(files) > 12 else "")
+    return (f"[squad-watch] MERGE CONFLICT: PR #{pr or '?'}" + (f" ({info['branch']})" if info["branch"] else "")
+            + f" does not merge cleanly into origin/{base} as it is now, after a fetch. Conflict in: "
+            f"{listed or 'files git did not name'}. The merge was not attempted and the turn was released. Where "
+            f"the work continues: in the card's worktree, `git fetch origin && git merge origin/{base}`, resolve "
+            "those files, run the suite, push, and send the card through verification again in AgenFK"
+            + (", then record a new seal for the new HEAD (`squad-seal record ...`)" if sealed else "")
+            + "; then merge. Syncing with main is never denied.")
+
+
+def merge_gate(kind, cwd, repo, info):
+    """Checks that run while the turn is held, right before the merge call."""
+    sealed = seal_on(cwd)
+    if kind[0] == "push":
+        if not sealed:
+            return ""             # a push to the trunk is fast-forward only: git itself refuses a conflict
+        src = kind[1]
+        sha = git_rc(cwd, "rev-parse", "--verify", "-q", f"{src}^{{commit}}")[1] if (
+            src and BRANCH.fullmatch(src) and not src.startswith("-")) else ""     # cwd is already where it runs
+        branch = git_rc(cwd, "branch", "--show-current")[1]
+        return seal_denial(repo, sha if SHA.fullmatch(sha) else "", f"the push to the trunk ({src or '?'})", branch)
+    if sealed and kind[2] is None:
+        return ("[squad-watch] MERGE SEAL: the seal is on and the watcher cannot tell which PR this call merges "
+                f"({'PR #' + kind[1] if kind[1] else 'no PR it can read'}): the merge is not a plain `gh pr merge "
+                "[<number> | <url> | <branch>]` with the flags of `gh pr merge --help`, so the seal cannot be "
+                "checked. Run the merge as its own command, `gh pr merge <number> [--repo owner/repo] [--squash]`, "
+                "from the card's worktree. " + SEAL_HOW)
+    if sealed:
+        why = seal_denial(repo, info["sha"], f"the head of PR #{info['pr'] or '?'}", info["branch"])
+        if why:
+            return why
+    if info["sha"] and info["base"]:
+        return conflict_denial(cwd, info, sealed)
+    return ""
+
+
+def turn_pre(p):
+    """Merge turn on PreToolUse. Returns True if it denied the call.
+
+    The turn covers only the merge call itself: taken here, released by the
+    PostToolUse of the same call (success or failure), expired after TURN_HOLD.
+    Requesting and syncing never block anyone."""
     kind = turn_kind(p)
     if not kind or os.environ.get("SQUAD_TURN") == "0":
         return False
-    repo = git_dir(str(p.get("cwd") or ""))
+    cwd = str(p.get("cwd") or "")
+    if kind[0] in ("merge", "push"):
+        if kind[-1] is None:      # a cd or -C the watcher cannot follow: the seal may be on over there,
+            if os.environ.get("SQUAD_SEAL") != "0":     # whatever the session's repository says
+                deny("[squad-watch] MERGE SEAL: the watcher cannot tell which repository this "
+                     f"{'push' if kind[0] == 'push' else 'merge'} runs in (a cd or -C to a variable or a quoted "
+                     "path, `cd -`, a cd that may not run, `builtin cd`, a subshell, pushd, GIT_DIR or env -C "
+                     "before it), so the seal there cannot be "
+                     "checked. Run it with a literal path: `cd /path/to/worktree && gh pr merge <number>`, or "
+                     "`git -C /path/to/worktree push ...`. " + SEAL_HOW)
+                return True
+        else:
+            cwd = kind[-1]        # `cd <dir> &&` or `git -C <dir> push`: the repository is that one
+    repo = git_dir(cwd)
     if not repo:
+        if kind[0] in ("merge", "push", "many") and os.environ.get("SQUAD_SEAL") == "1":
+            deny("[squad-watch] MERGE SEAL: SQUAD_SEAL=1 and this merge does not run inside a git repository, so "
+                 "the seal cannot be checked. Run the merge from the card's worktree.")
+            return True
         return False
+    if kind[0] == "many":
+        deny(f"[squad-watch] MERGE QUEUE: this call names more than one merge ({kind[1]}), so the turn, the "
+             "conflict check and the seal cannot tell which one to check. Run one merge per call: split the "
+             "command, or move text that only mentions a merge into a -m/--body/--description value.")
+        return True
     me = safe(p.get("session_id"))
+    info = {"pr": "", "base": "", "branch": "", "sha": ""}
+    if kind[0] == "merge" and kind[2] is not None:
+        info = pr_info(cwd, *kind[2])
     path, d, lock = turn_open(repo)
+    denied = ""
     try:
         turn_settle(d, me)
         h = d.get("holder")
-        mine = bool(h and h["session"] == me)
-        queued = next((e for e in d["queue"] if e["session"] == me), None)
-        pr = kind[-1] if kind[0] in ("cli", "merge") else ""
-        if kind[0] == "merge" and not pr and p.get("tool_name") == "Bash":
-            pr = gh_pr(str(p.get("cwd") or ""), "", "number")    # without a number MERGED cannot be seen
-        denied = ""
-        if kind[0] == "sync":
-            if h and not mine and time.time() - st.get("sync_ok", 0) > SYNC_PASS:
-                st["sync_ok"] = time.time()
-                denied = (f"[squad-watch] MERGE QUEUE: main is about to move. The merge turn belongs to {who(h)}"
-                          + (f" and there are {len(d['queue'])} in the queue" if d["queue"] else "") + ": syncing now "
-                          "tends to be redone, and the conflict resolved today comes back. To land your PR, request "
-                          "the turn (`squad-turn request <PR>`) and sync only once, when MERGE TURN arrives. "
-                          "If you need what has ALREADY landed on main to continue development, repeat the "
-                          "command: this time it passes.")
-        elif kind[0] == "cli" and kind[1] == "release":
-            if mine:
-                d["last"] = {"session": me, "pr": h.get("pr"), "branch": h.get("branch"),
-                             "at": time.time(), "why": "released"}
-                d["holder"] = None
-                turn_settle(d, me)
-            d["queue"] = [e for e in d["queue"] if e["session"] != me]
-            turn_mark(me)
-        elif kind[0] == "cli" and kind[1] == "status":
-            pass
-        elif mine:
-            h["seen"] = time.time()
-            if pr:
-                h["pr"] = pr
-        elif not h and (not d["queue"] or d["queue"][0]["session"] == me):
-            d["queue"] = [e for e in d["queue"] if e["session"] != me]
-            d["holder"] = turn_entry(p, pr or (queued or {}).get("pr", ""))
-            turn_mark(me, repo)
+        if kind[0] == "cli":
+            if kind[1] in ("request", "release"):
+                d["intents"] = [e for e in d["intents"] if e.get("session") != me]
+            if kind[1] == "request":
+                d["intents"].append(turn_entry(p, kind[2]))
+            elif kind[1] == "release" and h and h["session"] == me:
+                turn_release(d, "released")
+        elif h and h["session"] != me:
+            denied = (f"[squad-watch] MERGE QUEUE: {who(h)} is merging in this repository right now (for "
+                      f"{int(time.time() - h['since'])} s). The turn covers only the merge call and expires after "
+                      f"{TURN_HOLD} s: repeat the merge in a few seconds. There is no queue to join and no need to "
+                      "sync with main because of this.")
         else:
-            if queued:
-                queued["pr"] = pr or queued.get("pr", "")
-            else:
-                queued = turn_entry(p, pr)
-                d["queue"].append(queued)
-                turn_mark(me, repo)
-            if kind[0] == "merge":
-                pos = d["queue"].index(queued) + 1
-                both = common_files(repo, (h or {}).get("branch"), queued.get("branch"))
-                mins = int((time.time() - h["since"]) / 60) if h else 0
-                denied = (f"[squad-watch] MERGE QUEUE: the turn in this repository belongs to {who(h)}, for {mins} min now. "
-                          if h else "[squad-watch] MERGE QUEUE: there are sessions ahead of you. ")
-                denied += (f"You are in the queue, position {pos}. Do not repeat the merge and do NOT sync with "
-                           "main now: it will move before your turn. ")
-                if both:
-                    denied += f"Files in common with the PR that holds the turn: {both}. "
-                if p.get("agent_id"):
-                    denied += ("Report back to the orchestrator: PR ready, waiting for the merge turn; the merge belongs "
-                               "to the main session, when the watcher calls it.")
-                else:
-                    denied += ("Carry on with another step of the request, or stop saying that the PR is waiting for its turn. The watcher "
-                               "announces MERGE TURN in this session" + (" and wakes the pane" if queued.get("pane")
-                                                                         else "")
-                               + ". On your turn: fetch, merge main ONCE, suite, push, merge.")
+            d["holder"] = turn_entry(p, info["pr"], info["branch"])
+            d["intents"] = [e for e in d["intents"] if e.get("session") != me]
+            turn_mark(me, repo)
         save(path, d)
     finally:
         lock.close()
+    if not denied and kind[0] in ("merge", "push"):
+        denied = merge_gate(kind, cwd, repo, info)
+        if denied:
+            path, d, lock = turn_open(repo)
+            try:
+                if (d.get("holder") or {}).get("session") == me:
+                    turn_release(d, "denied")
+                save(path, d)
+            finally:
+                lock.close()
     if denied:
         deny(denied)
     return bool(denied)
 
 
 def turn_post(p):
-    """After the call: keeps the turn alive, releases it once the PR landed and says what to do."""
+    """After the call (success or failure): the merge call gives the turn back."""
     session = safe(p.get("session_id"))
     mark = os.path.join(TURN, f"s-{session}")
     if not os.path.exists(mark):
@@ -838,49 +1987,57 @@ def turn_post(p):
     except OSError:
         return []
     kind = turn_kind(p)
-    out = []
     path, d, lock = turn_open(repo)
     try:
         h = d.get("holder")
-        if h and h["session"] == session:
-            cmd = str((p.get("tool_input") or {}).get("command") or "")
-            if kind or re.search(r"\b(?:git|gh)\s", cmd):     # only merge work keeps the turn alive
-                h["seen"] = time.time()
-            if kind and kind[0] == "merge":
-                turn_settle(d, session, force=True)
-                if not d.get("holder") or d["holder"]["session"] != session:
-                    turn_mark(session)
-                    nxt = d.get("holder")
-                    out.append(f"[squad-watch] MERGE QUEUE: PR #{h.get('pr')} landed on main; the turn was "
-                               "released" + (f" and passed to {who(nxt)}." if nxt else "."))
-                elif not h.get("told"):
-                    h["told"] = True
-                    out.append(f"[squad-watch] MERGE TURN: the turn in this repository is yours. {YOUR_TURN} If the "
-                               "merge has just failed because of a conflict or an out-of-date branch, now is the time "
-                               "to sync.")
-        elif not any(e["session"] == session for e in d["queue"]):
+        if not h or h["session"] != session:
             turn_mark(session)
+        elif kind and kind[0] in ("merge", "push"):
+            turn_release(d, "done")
         save(path, d)
     finally:
         lock.close()
-    return out
+    return []
 
 
 # -------------------------------------------------------------------- events
 def pre_tool(p):
     agent = p.get("agent_id")
-    if turn_kind(p):
-        path = state_path(p.get("session_id"), agent)
-        st = load(path)
-        was = st.get("sync_ok")
-        hit = turn_pre(p, st)
-        if st.get("sync_ok") != was:
-            save(path, st)
-        if hit:
+    kind = turn_kind(p)
+    try:
+        if kind and turn_pre(p):
             return
+    except Exception as exc:
+        # With the seal on, a check that broke denies: it never passes by omission.
+        if kind and kind[0] in ("merge", "push", "many") and os.environ.get("SQUAD_TURN") != "0" and (
+                seal_on(str(p.get("cwd") or ""))):
+            deny(f"[squad-watch] MERGE SEAL: the seal is on and the merge check failed ({type(exc).__name__}), "
+                 "so the merge is denied rather than let through unchecked. Where the work continues: run "
+                 "`squad-seal show` and `gh pr view` in the card's worktree to see what is failing, fix it, and "
+                 "repeat the merge; if it keeps failing, the decision is the owner's.")
+            return
+        raise
+    try:
+        if writes_reviews(p):
+            what = "command" if p.get("tool_name") == "Bash" else "call"
+            deny(f"[squad-watch] REVIEW RECORD: this {what} names the review records ({REVIEWS}); reading is "
+                 "fine, writing is the watcher's. A record appears on its own when a reviewer (the verifier) is "
+                 "dispatched for the card, so there is nothing to write there by hand. Where the work continues: "
+                 "read with the Read tool, or cat, ls, jq or grep with no redirection into a file. If the path "
+                 "is only text here, it can go in a commit message (`git commit -m`), a card comment "
+                 "(`agenfk comment <id> \"...\"`) or the --evidence of `agenfk verify`, which are read as "
+                 "text; not in a heredoc, a substitution, or a script's argument.")
+            return
+    except Exception:                     # a broken guard does not cost the rest of the hook
+        pass
     if not agent:
         if p.get("tool_name") in DISPATCH:
             pre_dispatch(p)
+            return
+        try:
+            review_gate(p)
+        except Exception as exc:          # fails open, with the reason where the gate logs
+            review_log(p, "", "", "allow", f"gate error ({type(exc).__name__})")
         return
     st = load(state_path(p.get("session_id"), agent))
     tool = p.get("tool_name") or ""
@@ -906,6 +2063,7 @@ def post_tool(p):
     path = state_path(session, agent)
     st = load(path)
     tool = p.get("tool_name") or ""
+    client = harness(p)
     out = []
     if tool in MUTATING:
         st["calls"] = []          # the state changed: repeating a read/test makes sense again
@@ -926,6 +2084,10 @@ def post_tool(p):
         if key:
             rev = st.setdefault("rev", {})
             rev[key] = rev.get(key, 0) + 1
+            try:
+                remember_review(p, key)
+            except Exception as exc:      # a broken record must not cost the rest of this PostToolUse
+                review_log(p, key, "", "unrecorded", f"reviewer dispatch not saved ({type(exc).__name__})")
             if rev[key] == 3 and not key.endswith(":no-card"):
                 out.append(f"[squad-watch] 3rd reviewer round for {key}. The rule is at most 2 "
                            f"correction rounds; dispatch number {MAX_REV + 1} is denied. If the same "
@@ -937,10 +2099,12 @@ def post_tool(p):
     now = time.time()
     if now - st.get("checked", 0) >= CHECK_EVERY:
         st["checked"] = now
-        tok = fold(sub_transcript(p) if agent else (p.get("transcript_path") or ""), st.get("tok") or {})
+        tok = fold(sub_transcript(p) if agent else (p.get("transcript_path") or ""),
+                   st.get("tok") or {}, client)
         st["tok"] = tok
         if tok["req"]:
-            window = 0 if agent else main_window(session)
+            window = 0 if agent else (ctx_lib().pi_family_window(tok.get("model"))
+                                      or main_window(session, client))
             c = ctx_lib().handoff_math(tok["inp"], tok["wr"], tok["rd"], tok["out"], tok["ctx"], window)
             ctx = tok["ctx"]
             st.update(ctx=ctx, burn=c["burn"], ratio=c["ratio"])
@@ -1007,7 +2171,7 @@ def post_tool(p):
                         st.pop(key, None)
                 st["ctx_level"] = 2 if st.get("ordered") else level   # a handoff already ordered does not disarm
                 out += dispatch_notice(session, st, ctx)
-    if not agent and st.get("wait_slot") and other_orchestrators(session) < MAX_ORCH:
+    if not agent and st.get("wait_slot") and other_orchestrators(session, st.get("repo", "")) < MAX_ORCH:
         st.pop("wait_slot")
         out.append("[squad-watch] SLOT FREE: there is an orchestrator slot again. The dispatch that was denied "
                    "for lack of a slot (the reviewer, or the next card) can now go through an agent.")
@@ -1028,7 +2192,7 @@ def subagent_stop(p):
     cx = ctx_lib()
     spath = state_path(session, agent)
     st = load(spath)
-    m = measure(sub_transcript(p))
+    m = measure(sub_transcript(p), harness(p))
     if not m:                     # internal agent, with no transcript of its own: nothing to measure
         try:
             os.remove(spath)
@@ -1072,19 +2236,38 @@ def subagent_stop(p):
         save(mpath, main)
     try:
         os.remove(spath)
-        cutoff = time.time() - 2 * 86400
-        for name in os.listdir(STATE):
-            f = os.path.join(STATE, name)
-            if os.path.getmtime(f) < cutoff:
-                os.remove(f)
     except OSError:
         pass
+    cutoff = time.time() - 2 * 86400
+    try:
+        names = os.listdir(STATE)
+    except OSError:
+        names = []
+    for name in names:                    # one entry that cannot go (a folder, a file in use) keeps none of the others
+        f = os.path.join(STATE, name)
+        try:
+            if os.path.isfile(f) and os.path.getmtime(f) < cutoff:
+                os.remove(f)
+        except OSError:
+            pass
 
 
 HANDOFF_PATH = re.compile(r"[A-Za-z0-9_./-]+/handoffs/[A-Za-z0-9_.-]+\.md")
+# A Windows profile can hold spaces, accents and 8.3 short names (FABIOT~1); a drive letter is required (no UNC shares)
+HANDOFF_PATH_WIN = re.compile(r"[A-Za-z]:/(?:(?=[^/]*[\w~])[\w .~()-]+/)*handoffs/[\w.-]+\.md")   # a segment holds a word character: no "...", no " "
 
 
-def own_handoff(transcript, since):
+def handoff_path_ok(path, windows=None):
+    """An absolute path to a handoff file with no parent segment. On POSIX it holds no character a shell
+    would read; a Windows profile may hold spaces, parentheses and ~ (8.3 names), which is safe because the
+    pickup is handed the sealed copy (sealed_copy in squad-switch.py), never this path."""
+    if WINDOWS if windows is None else windows:
+        path = path.replace("\\", "/")
+        return bool(HANDOFF_PATH_WIN.fullmatch(path)) and ".." not in path.split("/")
+    return bool(HANDOFF_PATH.fullmatch(path)) and path.startswith("/") and ".." not in path.split("/")
+
+
+def own_handoff(transcript, since, client="claude"):
     """The handoff THIS session wrote: its last Write to .../handoffs/*.md, a
     regular file owned by the user, written after the alert, and whose content
     on disk is byte for byte what the session wrote (returns path and sha256).
@@ -1099,40 +2282,71 @@ def own_handoff(transcript, since):
             lines = fh.read().split(b"\n")
     except OSError:
         return None
+    family = client in ("pi", "omp")
+    marker = b'"toolCall"' if family else b'"Write"'
     for raw in reversed(lines):
-        if b"handoffs/" not in raw or b'"Write"' not in raw:
+        # a Windows path is JSON-escaped in the transcript: handoffs\\name.md
+        if (b"handoffs/" not in raw and b"handoffs\\\\" not in raw) or marker not in raw:
             continue
         try:
             rec = json.loads(raw)
-            if rec.get("type") != "assistant" or rec.get("isSidechain") is not False:
-                continue
-            blocks = (rec.get("message") or {}).get("content") or []
+            if family:
+                msg = rec.get("message") or {}
+                if rec.get("type") != "message" or msg.get("role") != "assistant":
+                    continue
+                blocks = msg.get("content") or []
+            else:
+                if rec.get("type") != "assistant" or rec.get("isSidechain") is not False:
+                    continue
+                blocks = (rec.get("message") or {}).get("content") or []
         except (ValueError, AttributeError):
             continue
         for b in blocks:
-            if not (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Write"):
+            if not isinstance(b, dict):
                 continue
-            path = str((b.get("input") or {}).get("file_path") or "")
-            content = (b.get("input") or {}).get("content")
+            if family:
+                if b.get("type") != "toolCall" or str(b.get("name") or "").lower() != "write":
+                    continue
+                inp = b.get("arguments") if isinstance(b.get("arguments"), dict) else {}
+                path = str(inp.get("path") or inp.get("file_path") or "")
+                content = inp.get("content")
+                if path.startswith("local://"):
+                    path = path[len("local://"):]
+                if path and not os.path.isabs(path):
+                    path = os.path.abspath(path)
+            else:
+                if b.get("type") != "tool_use" or b.get("name") != "Write":
+                    continue
+                inp = b.get("input") or {}
+                path = str(inp.get("file_path") or "")
+                content = inp.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
-            if not HANDOFF_PATH.fullmatch(path) or not os.path.isabs(path) or ".." in path.split("/"):
+            if not handoff_path_ok(path):
                 continue
             try:
                 info = os.lstat(path)
             except OSError:
                 continue
             import stat as _stat
-            if not (_stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+            if not (_stat.S_ISREG(info.st_mode) and owned_by_me(info)
                     and info.st_mtime >= since - 5):
                 return None            # the last handoff Write is the one that counts; it does not fall back to an old one
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
             try:
                 with open(path, "rb") as fh:
-                    same = hashlib.sha256(fh.read()).hexdigest() == digest
+                    data = fh.read()
             except OSError:
-                same = False
-            return (path, digest) if same else None
+                return None
+            wrote = content.encode("utf-8")
+            if WINDOWS:
+                # a Windows editor or tool may store the same text with CRLF line ends: same text, other bytes.
+                # POSIX keeps the byte-for-byte rule. The digest handed on is the one of the bytes on disk,
+                # which is what the switch checks.
+                data_cmp, wrote = data.replace(b"\r\n", b"\n"), wrote.replace(b"\r\n", b"\n")
+            else:
+                data_cmp = data
+            same = data_cmp == wrote
+            return (path, hashlib.sha256(data).hexdigest()) if same else None
     return None
 
 
@@ -1140,6 +2354,7 @@ def can_switch():
     return bool(os.environ.get("HERDR_PANE_ID")) and os.environ.get("SQUAD_SWITCH") != "0"
 
 
+WAKE_PREFIX = "[squad-watch] WAKE"       # the prompt squad-wake.py sends
 # Bilingual on purpose: these read what the owner types, in Portuguese or English.
 RESUME = re.compile(r"clear-pickup\s+pickup|\bretom|\bresum|\bpick\s+(?:it\s+|this\s+)?(?:back\s+)?up\b", re.I)
 ASKED_TO_STOP = re.compile(r"handoff|hand-off|pickup|/clear|pausa|pausar|encerr|fechar o dia|por hoje|pode parar"
@@ -1153,10 +2368,16 @@ def prompt(p):
     mentions "handoff" in its text: that is not the owner speaking. And
     `/clear-pickup pickup` is a request to resume, not to stop."""
     text = str(p.get("prompt") or "")
-    if text.lstrip().startswith("<task-notification>"):
-        return
+    if text.lstrip().startswith(("<task-notification>", WAKE_PREFIX)):
+        return                            # a task return or squad-wake: not the owner speaking
     path = state_path(p["session_id"], "")
     st = load(path)
+    if compact_own(text):
+        # the watcher's /compact reached the session as a message (pasted), so it did not
+        # run as a command: not the owner speaking; squad-compact reads the mark as a failure
+        st["compact_as_text"] = time.time()
+        save(path, st)
+        return
     st["prompt_ts"] = time.time()
     st["asked_stop"] = bool(ASKED_TO_STOP.search(text)) and not RESUME.search(text)
     st["last_prompt"] = text[:3000]
@@ -1173,24 +2394,39 @@ def git_out(cwd, *args):
         return "UNKNOWN"
 
 
-def watch_handoff(p, st):
-    """The session was ordered to write the handoff and stopped without it: the
-    watcher takes over. Only what the watcher measures or kept goes in (git, the
-    owner's last request, the denied briefs); what was decided in the
+def watch_handoff(p, st, compact=None, ordered=None):
+    """The watcher writes the handoff the session did not: either the session was
+    ordered to write it and stopped without it (<session>-watch.md), or the
+    conversation is about to be compacted, `compact` being the trigger
+    (<session>-compact.md). Only what the watcher measures or kept goes in (git,
+    the owner's last request, the denied briefs); what was decided in the
     conversation stays UNKNOWN, in writing."""
     session, cwd = safe(p["session_id"]), str(p.get("cwd") or "")
     briefs = os.path.join(BASE, "handoffs", f"{session}-dispatches.md")
+    if compact:
+        if ordered:
+            why = (f"The watcher ordered this compaction (squad-compact, {compact}): the session was idle with\n"
+                   f"{k(ordered['ctx'])} of context and its prompt cache about to go cold. Nothing was interrupted;\n"
+                   "what was decided in the conversation is about to be summarized away.")
+        else:
+            why = (f"The conversation is about to be compacted ({compact}): what was decided in it is\n"
+                   "about to be summarized away.")
+        asked = " ".join(str(p.get("custom_instructions") or "").split())[:500]
+        extra = f"- **Compact instructions:** {asked}\n" if asked else ""
+    else:
+        why = "The session received the handoff order and stopped without writing its own."
+        extra = ""
     body = f"""# Handoff written by squad-watch
 
-The session received the handoff order and stopped without writing its own. The
-watcher does not read the conversation: what was decided in it is UNKNOWN. What
-counts is what is below, the card and git.
+{why}
+The watcher does not read the conversation: what was decided in it is UNKNOWN.
+What counts is what is below, the card and git.
 
 - **When:** {time.strftime('%Y-%m-%dT%H:%M:%S%z')}
 - **Session:** {session} (context {k(st.get('ctx', 0))}, {st.get('blocked', 0)} dispatch(es) denied)
 - **Project:** {cwd or 'UNKNOWN'}
 - **Transcript:** {p.get('transcript_path') or 'UNKNOWN'}
-
+{extra}
 ## Ground truth (commands run by the watcher)
 
 Branch: {git_out(cwd, 'branch', '--show-current')}
@@ -1217,11 +2453,11 @@ Branch: {git_out(cwd, 'branch', '--show-current')}
 3. With no briefs: continue the owner's last request from what git and the card show as done.
 4. If it is not possible to tell what remains, ask the owner before editing.
 """
-    path = os.path.join(BASE, "handoffs", f"{session}-watch.md")
+    path = os.path.join(BASE, "handoffs", f"{session}-{'compact' if compact else 'watch'}.md")
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = f"{path}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:     # the sha256 below is of these exact bytes
             fh.write(body)
         os.replace(tmp, path)
     except OSError:
@@ -1232,11 +2468,11 @@ Branch: {git_out(cwd, 'branch', '--show-current')}
 def early_handoff(p, path, st):
     """The session wrote a handoff and stopped without the watcher ordering it
     and without the owner asking: it was the agent's opinion, below the
-    threshold. Sends the work back, once per request."""
+    threshold. Sends the work back, once per request. True when it did."""
     if p.get("stop_hook_active") or st.get("early_block") or st.get("asked_stop") or not st.get("prompt_ts"):
-        return
-    if not own_handoff(str(p.get("transcript_path") or ""), st["prompt_ts"]):
-        return
+        return False
+    if not own_handoff(str(p.get("transcript_path") or ""), st["prompt_ts"], harness(p)):
+        return False
     st["early_block"] = True
     save(path, st)
     print(json.dumps({"decision": "block", "reason": (
@@ -1244,53 +2480,282 @@ def early_handoff(p, path, st):
         "and neither the watcher nor the owner asked for a handoff. This session will NOT be cleared. Keep "
         "working from right here, following the Next step you have just written. Handoff only when "
         "PROACTIVE HANDOFF or DISPATCH DENIED arrives from the watcher, or when the owner asks.")}))
+    return True
+
+
+AGENT_TASKS = {"local_agent", "remote_agent", "in_process_teammate", "local_workflow"}
+DONE_TASK = {"completed", "failed", "killed", "stopped", "cancelled", "canceled", "done", "error"}
+
+
+def running(p):
+    """Background tasks still alive, from the Stop's background_tasks field
+    (id, type, status, description and command|agent_type, in Claude Code 2.1.30x)."""
+    out = []
+    for t in p.get("background_tasks") or []:
+        t = t if isinstance(t, dict) else {"description": str(t)}
+        if str(t.get("status") or "running").lower() in DONE_TASK:
+            continue
+        out.append({"id": safe(t.get("id")), "type": safe(t.get("type")) or "?",
+                    "what": ctx_lib().clean(t.get("description") or t.get("command") or t.get("agent_type") or "", 120)})
+    return out
+
+
+def news_after(transcript, handoff):
+    """Background-task results that arrived AFTER the last Write of the handoff:
+    what they brought is not in the file the new session is going to read."""
+    try:
+        with open(transcript, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 3_000_000))
+            lines = fh.read().split(b"\n")
+    except OSError:
+        return 0
+    # the transcript is JSON: a Windows path is there with its backslashes escaped (C:\\x\\a.md)
+    names = {handoff.encode(), json.dumps(handoff)[1:-1].encode(),
+             json.dumps(handoff, ensure_ascii=False)[1:-1].encode("utf-8")}
+    n = 0
+    for raw in reversed(lines):
+        if b'"Write"' in raw and any(name in raw for name in names) and b'"assistant"' in raw:
+            return n
+        if b"<task-notification>" not in raw or b'"user"' not in raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        c = (rec.get("message") or {}).get("content")
+        text = c if isinstance(c, str) else " ".join(
+            str(b.get("text") or "") for b in (c or []) if isinstance(b, dict))
+        if rec.get("type") == "user" and text.lstrip().startswith("<task-notification>"):
+            n += 1
+    return 0                               # the handoff Write left the window read: nothing to claim
+
+
+def spawn(*args):
+    subprocess.Popen([sys.executable, *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, **detached_kwargs())
+
+
+def here(name):
+    return os.path.join(os.path.dirname(os.path.realpath(__file__)), name)
+
+
+def switch_note(session, tasks):
+    """What was still running when the switch went out: appended to the end of the handoff copy."""
+    if not tasks:
+        return ""
+    path = os.path.join(STATE, f"{safe(session)}.switch-note.md")
+    lines = ["", "## Watcher's note at the switch", "",
+             "These background tasks were still running when the session was switched; their result is "
+             "NOT in this handoff. Sub-agent: check in its worktree's git what landed (wip commit) and "
+             "redispatch only what is missing. Shell: run it again if the result matters.", ""]
+    lines += [f"- `{t['type']}` {t['id']}: {t['what'] or '(no description)'}" for t in tasks]
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError:
+        return ""
+    return path
 
 
 def stop(p):
     """The main session stopped. At handoff level, either it writes the handoff,
-    or (already written) the session switch is launched."""
+    or (already written) the session switch is launched: now, or scheduled when
+    a background task is still running. Outside handoff, the compaction is scheduled."""
     if p.get("agent_id"):
         return
     session = p["session_id"]
     path = state_path(session, "")
     st = load(path)
+    # squad-wake reads when the session stopped and whether a live task was left, which wakes it by itself
+    st["last_stop"] = {"ts": time.time(), "bg": len(running(p))}
+    save(path, st)
     if st.get("ctx_level", 0) < 2 and not st.get("switched"):
-        early_handoff(p, path, st)
+        if not early_handoff(p, path, st):
+            compact_schedule(p, path, st)
+        return
+    if p.get("squad_rearm"):              # squad-switch gave up before clearing: the next Stop decides again
+        if st.pop("switched", None) or st.pop("switched_ts", None):
+            st.pop("switched_ts", None)
+            save(path, st)
         return
     if st.get("switched"):
         return
-    if p.get("background_tasks"):         # something is still going to wake this session
-        return
+    expired = bool(p.get("squad_wait_expired"))       # called by squad-switch: nobody reads a block
+    tasks = running(p)
     if not st.get("alert_ts"):            # state without the alert time: only a handoff written from now on counts
         st["alert_ts"] = time.time()
         save(path, st)
-    since = st["alert_ts"]
-    ho = own_handoff(str(p.get("transcript_path") or ""), since)
+    # a handoff written before the owner's last request is stale: the new request is not in it
+    # (+5: own_handoff tolerates 5 s of clock skew; against the owner's request the check is strict)
+    since = max(st["alert_ts"], (st.get("prompt_ts") or 0) + 5)
+    transcript = str(p.get("transcript_path") or "")
+    ho = own_handoff(transcript, since, harness(p))
     if not ho:
-        if not st.get("nudges") or (not p.get("stop_hook_active") and st["nudges"] < 2):
+        if not expired and (not st.get("nudges") or (not p.get("stop_hook_active") and st["nudges"] < 2)):
             st["nudges"] = st.get("nudges", 0) + 1
             save(path, st)
             print(json.dumps({"decision": "block", "reason": (
                 "[squad-watch] This session is at HANDOFF level and stopped without writing the handoff. "
                 "Before stopping: comment on the card (`agenfk comment`), write the handoff with mode A of the "
                 "`clear-pickup` skill (with the Write tool, in a new file) with what remains of the "
-                "current request under Next step, and only then "
-                "end with the path of the file.")}))
+                "current request under Next step" + (
+                    " and, for each background task still running, its id, what it does and where its "
+                    "result lands" if tasks else "") + ", and only then end with the path of the file.")}))
             return
         if not can_switch():
             return
         ho = watch_handoff(p, st)         # nudged and stopped again without it: the watcher takes over
         if not ho:
             return
+    elif not expired and st.get("refreshed") != ho[1] and news_after(transcript, ho[0]):
+        st["refreshed"] = ho[1]           # once per handoff: rewritten or not, the switch goes ahead
+        save(path, st)
+        print(json.dumps({"decision": "block", "reason": (
+            "[squad-watch] A background task came back after the handoff was written: its result is not "
+            f"in {ho[0]}. Rewrite the handoff (Write tool, same file) with that result under DONE and the "
+            "Next step adjusted, without starting a new front, and stop.")}))
+        return
     if not can_switch():
         return
     pane = os.environ["HERDR_PANE_ID"]
+    now = time.time()
+    if tasks and not expired:
+        # The live task wakes the session when it ends, and the following Stop
+        # switches. If it never ends (monitor, wait loop, stuck sub-agent),
+        # squad-switch switches at the deadline. One live schedule at a time.
+        st["bg"] = tasks
+        if st.get("switch_wait", 0) <= now:
+            wait = SWITCH_AGENT if any(t["type"] in AGENT_TASKS for t in tasks) else SWITCH_SHELL
+            st["switch_wait"] = now + wait + 1800
+            spawn(here("squad-switch.py"), "wait", pane, session, transcript,
+                  str(p.get("cwd") or ""), str(wait))
+        save(path, st)
+        return
     st["switched"] = True
+    st["switched_ts"] = time.time()       # squad-wake measures a stuck switch from here
     save(path, st)
-    switch = os.path.join(os.path.dirname(os.path.realpath(__file__)), "squad-switch.py")
-    subprocess.Popen([sys.executable, switch, pane, session, ho[0], ho[1]], stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True, close_fds=True)
+    note = switch_note(session, st.get("bg") if expired else [])
+    spawn(here("squad-switch.py"), pane, session, ho[0], ho[1], *([note] if note else []))
+
+
+# ------------------------------------------------------------- compaction
+COMPACT = os.path.join(BASE, "compact")
+# Claude Code turns every prompt longer than 800 characters into a paste
+# (<pasted_content>), and a pasted /compact does not run: it becomes an ordinary
+# message (measured in a herdr pane: 800 on one line runs as a command, 801 is
+# pasted). Hard ceiling, "/compact " included, counted in UTF-16 units (Claude
+# Code's string length), on one line. 760, not 800: the limit was measured with
+# ASCII only; if Claude Code or herdr counted bytes or code points instead, an
+# accent (2 bytes) or an emoji (2 units, 4 bytes) in the owner's last request
+# would push a text sitting exactly at 800 over it. squad-compact.py checks the
+# same LIMIT before sending (tests/test_compact.py keeps the two equal).
+COMPACT_LIMIT = 760
+COMPACT_REQUEST = (
+    "Summary to carry the work on without this conversation. Keep exact values: (1) the owner's current "
+    "request, verbatim, and decisions; (2) AgenFK cards (id, step), repo, branch, worktree, PRs, merge queue; "
+    "(3) decisions and why, what was discarded; (4) DONE with evidence, REMAINING, next step; (5) background "
+    "tasks and sub-agents (id, where results land), pending SLOT FREE or MERGE TURN; (6) errors and traps. "
+    "Drop file contents, tool output, diffs, logs, reasoning. Mark UNKNOWN the unverified. Then check git "
+    "status and the card before editing.")
+# the first sentence is the same as in the older, longer text: both are recognised
+COMPACT_SIGNATURE = "/compact Summary to carry the work on without this conversation."
+PASTED = re.compile(r"\s*<pasted_content\b[^>]*>(.*?)</pasted_content\b[^>]*>\s*", re.S)
+
+
+def u16(s):
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def compact_own(text):
+    """The text is the watcher's own /compact, bare or wrapped in a paste
+    (<pasted_content id=...>...</pasted_content ...>, the form the hook receives
+    when Claude Code pasted it)."""
+    m = PASTED.fullmatch(text)
+    return (m.group(1) if m else text).strip().startswith(COMPACT_SIGNATURE)
+
+
+def compact_text(request, briefs=""):
+    """"/compact " + the instructions, at most COMPACT_LIMIT and on one line. The
+    path of the denied-dispatch briefs goes in whole or not at all (a cut path is
+    useless); the owner's last request takes what is left, cut with an ellipsis
+    (it is also in the conversation, and item 1 says to keep it)."""
+    text = "/compact " + COMPACT_REQUEST
+    if briefs:
+        part = f" Denied dispatch briefs: {briefs}."
+        if "\n" not in part and "\r" not in part and u16(text + part) <= COMPACT_LIMIT:
+            text += part
+    request = " ".join(str(request or "").split())
+    label = ' Owner\'s last request: "{}".'
+    room = COMPACT_LIMIT - u16(text + label.format(""))
+    if request and room >= 20:
+        if u16(request) > room:
+            request = request[:room]
+            while request and u16(request) > room - 1:
+                request = request[:-1]
+            request = request.rstrip() + "\u2026"
+        text += label.format(request)
+    return text
+
+
+ORDERED_FRESH = 600    # s: a .sent record older than this did not order the compaction now starting
+
+
+def compact_schedule(p, path, st):
+    """An idle session with a large context: schedules /compact COMPACT_BEFORE
+    seconds before the cache of its last request goes cold. Compacting on a warm
+    cache reads the context at 0.1; letting it go cold makes the next message
+    write all of it again (1.25 to 2x). Every Stop reschedules; the old schedule
+    dies on its own."""
+    if (not os.environ.get("HERDR_PANE_ID") or os.environ.get("SQUAD_COMPACT") == "0"
+            or st.get("asked_stop") or harness(p) != "claude"):
+        return                            # the owner asked to stop or pause: compacting is not the watcher's call
+    if st.get("compact_as_text"):
+        return                            # a /compact already arrived here as a message: do not insist
+    session = safe(p["session_id"])
+    transcript = str(p.get("transcript_path") or "")
+    tok = fold(transcript, st.get("tok") or {})
+    st["tok"] = tok
+    ctx = tok.get("ctx", 0)
+    if not tok.get("req") or ctx < COMPACT_MIN or not tok.get("last"):
+        save(path, st)
+        return
+    st["ctx"] = ctx
+    ttl = env_int("SQUAD_CACHE_TTL", 0) or tok.get("ttl")
+    if not ttl or load(os.path.join(COMPACT, f"{session}.sent")).get("req") == tok["last"]:
+        save(path, st)                    # no cache_creation in the transcript: no telling when it goes cold;
+        return                            # or this request was already compacted
+    due = time.time() + max(ttl - COMPACT_BEFORE, 1)
+    request = ctx_lib().clean(st.get("last_prompt") or "", 400)
+    briefs = os.path.join(BASE, "handoffs", f"{session}-dispatches.md")   # absolute: the Read tool takes no ~
+    text = compact_text(request, briefs if os.path.exists(briefs) else "")
+    job = {"due": due, "req": tok["last"], "pane": os.environ["HERDR_PANE_ID"], "session": session,
+           "transcript": transcript, "ctx": ctx, "ttl": ttl, "text": text}
+    jpath = os.path.join(COMPACT, f"{session}.json")
+    try:
+        save(jpath, job)
+    except OSError:
+        return
+    save(path, st)
+    spawn(here("squad-compact.py"), jpath, tok["last"])
+
+
+def precompact(p):
+    """A compaction (/compact or auto) is about to summarize the main session's
+    conversation: the watcher first writes the same minimal handoff it writes for
+    a session that stopped without one. It prints nothing, so it never blocks the
+    compaction, and it never switches the session."""
+    if p.get("agent_id"):
+        return
+    st = load(state_path(p["session_id"], ""))
+    trigger = safe(p.get("trigger")) or "UNKNOWN"
+    sent = load(os.path.join(COMPACT, f"{safe(p['session_id'])}.sent")) if trigger == "manual" else {}
+    try:
+        fresh = 0 <= time.time() - float(sent.get("ts") or 0) <= ORDERED_FRESH
+        ordered = {"ctx": int(sent.get("ctx") or 0)} if fresh else None
+    except (TypeError, ValueError):
+        ordered = None
+    watch_handoff(p, st, compact=trigger, ordered=ordered)
 
 
 def main():
@@ -1304,18 +2769,22 @@ def main():
     # parallel calls of the same session read and write the same state: one at a time
     os.makedirs(STATE, exist_ok=True)
     for d in (BASE, STATE):       # the umask only applies to what is created now
-        if os.stat(d).st_mode & 0o077:
+        if not WINDOWS and os.stat(d).st_mode & 0o077:
             os.chmod(d, 0o700)
     lock = open(os.path.join(STATE, f".{safe(p['session_id'])}.lock"), "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)
+    lock_file(lock)
     if event == "PreToolUse":
         pre_tool(p)
     elif event == "PostToolUse":
         post_tool(p)
+    elif event == "PostToolUseFailure":
+        turn_post(p)              # a merge call that failed gives the turn back too
     elif event == "SubagentStop":
         subagent_stop(p)
     elif event == "Stop":
         stop(p)
+    elif event == "PreCompact":
+        precompact(p)
     elif event == "UserPromptSubmit" and not p.get("agent_id"):
         prompt(p)
         emit(event, "\n".join(turn_notes(p["session_id"]) + pending(p["session_id"])))

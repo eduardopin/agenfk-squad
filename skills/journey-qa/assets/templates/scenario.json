@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "journey_id": "journey-01",
+  "product_id": "meu-produto",
+  "objective": "Define intent and criteria before the run.",
+  "actor_ids": [
+    "actor-01"
+  ],
+  "mandatory_rule_ids": [],
+  "preconditions": [],
+  "variants": [],
+  "end_conditions": [],
+  "async_window_seconds": null,
+  "budget": {
+    "max_actions": 60,
+    "max_minutes": 20,
+    "max_retries": 2
+  }
+}

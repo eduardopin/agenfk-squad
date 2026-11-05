@@ -31,6 +31,11 @@ of the design checklist).
 
 ## Steps
 
+Before working, read `squad-decisions index` (the project's settled decisions)
+and follow them; a decision you made that the next session should keep goes in
+your return under a `Decisions` heading (title, what, why), for the main session
+to record.
+
 ### The project rules
 
 Each project has its own cloud, account, region and conventions. Read first:
@@ -76,7 +81,7 @@ silently.
 
 A new or changed workflow goes through these rules; the full method, the
 numbers and the scripts are in the `ci-cost` skill. Measure before cutting
-(`finops`, Meter 3), and never cut tests, review or the mutation gate.
+(`finops`, Meter 3), and never cut tests or review.
 
 - **GitHub bills every job and rounds each one up to the minute.** Fewer,
   heavier jobs win: each job pays a setup and one rounding.
@@ -113,6 +118,12 @@ destroy"), monthly cost per resource, findings as `[CRITICAL]` / `[WARNING]` /
 apply. Record it with `agenfk comment <id> "..."`. Do not advance the card.
 
 ## Skills
+
+- `ci-plan-evidence` before declaring an infra PR ready: current commit, trusted
+  CI provenance, all expected environments/checks, complete plan and approved
+  loss actions. Shared network is an owned input, not duplicated in a resource
+  PR. Show how the CI account guard gets a nonempty environment value.
+- `engineering-evidence` only for contract, diagnostic or telemetry risks.
 
 - The project's own infra skills first (e.g. a plan-only Terraform skill, a
   database durability skill, a cloud cost skill, an environment ops skill).

@@ -25,7 +25,7 @@ python3 .../session_context.py --session <id> --detail
 
 | Indicator | How it is measured | Threshold |
 |---|---|---|
-| **ctx** | tokens of the last turn (input + cache read + cache written) ÷ window | 50% = floor (handoff if reread ≥ 60%); 80% = HANDOFF |
+| **ctx** | tokens of the last turn (input + cache read + cache written) ÷ window | 50% = lowest floor, with burn ≥ 50% of the budget (handoff if reread ≥ 60%; the floor rises to 90% with zero burn); 90% = HANDOFF |
 | **burn** | input + 1.25·cache-write + 0.1·cache-read + 5·output (cockpit weights) | relative: compare sessions |
 | **reread** | share of the burn that is cache reread | informational |
 | **r/new** | weighted reread ÷ new work (input + 1.25·write + 5·output) | decides nothing on its own; the rule is the one on the **reread** row |
@@ -51,8 +51,8 @@ every minute inside each session: it orders the main session to write the
 handoff before it overflows, orders the sub-session to return a return
 handoff, denies the identical repeated call and denies a new dispatch once the
 orchestrator has gone over the ceiling. Thresholds and variables are in the
-header of `hooks/squad-watch.py`. Codex and pi do not have this hook: there,
-`--watch` does the job.
+header of `hooks/squad-watch.py`. Codex, pi and oh-my-pi do not have this hook:
+there, `--watch` does the job.
 
 In Claude Code the cockpit shows the same thing on the status line (`ctx`,
 `burn`, `reread`, HANDOFF gauge). In pi, the cockpit extension flashes HANDOFF.

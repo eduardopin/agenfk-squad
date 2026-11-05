@@ -1,0 +1,1 @@
+Add a file called NOTES.md to this repository with one line of text in it, then stop. Do not commit or push anything.

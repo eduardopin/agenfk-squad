@@ -42,6 +42,14 @@ trunk, branch prefix, worktree root, its own script (`acme-worktree.sh` and the
 like) and hooks that refuse a merge. Read `CLAUDE.md` / `AGENTS.md` and `infra/`
 before the first git command.
 
+### Evidence before readiness
+
+Load `parallel-plan` before ordering an explicit card graph; unknown touched
+files serialize, and only its first wave is ready now. Load `pr-evidence` before
+writing/reviewing a PR or calling it ready: preserve the repository template,
+check the current head and designated independent reviewer, and keep comments,
+thread resolution and session wakeups behind owner confirmation. No auto-merge.
+
 ### What you do
 
 1. **Map** (always first, read-only): `git worktree list`,
@@ -50,7 +58,7 @@ before the first git command.
 2. **Plan of fronts** for what the main session, `product` or `scheduler`
    (wave 1) wants to parallelise: a table with card, base (SHA), branch, worktree, files the front
    may touch, agent, evidence of done. Two fronts on the same file become one,
-   or run in series. Ceiling of ~4.
+   or run in series. Ceiling of ~6.
 3. **Open the front:** `agenfk branch create|link <id>`, `git worktree add`,
    writer claim in the worktree's git dir. Return the worktree path to whoever
    is going to dispatch the `developer`/`frontend`/`tester`.

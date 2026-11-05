@@ -92,7 +92,7 @@ The commands and the order of the cuts are in the `ci-cost` skill.
 
 ## Never
 
-**Never** recommend cutting independent review, tests or the mutation gate to
+**Never** recommend cutting independent review or tests to
 save money.
 
 You do not create resources, do not change a billing plan and do not advance a
@@ -104,6 +104,10 @@ The tables, the total, what you could **not** confirm and, if there is a card,
 `agenfk comment <id> "FINOPS: <total> — <dominant cost>"`.
 
 ## Skills
+
+- `engineering-evidence` (Telemetry) when pricing a new signal: bounded series,
+  events, retention and sampling. Historical unit-price arithmetic is not a
+  live quote; include region, date, usage and unestimated paths explicitly.
 
 - `agenfk-calc-tokens`: reads the token events per project and per card.
 - The project's own cost method when one exists (e.g. project skills such as

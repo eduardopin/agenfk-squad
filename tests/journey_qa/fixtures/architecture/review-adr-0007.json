@@ -1,0 +1,405 @@
+{
+  "review_version": "1.0",
+  "review_id": "arch-adr-0007",
+  "title": "ADR-0007 — confirmação de pagamento assíncrona",
+  "status": "shared",
+  "reviewed_at": "2026-10-23T09:00:00-03:00",
+  "reviewer": {
+    "name": "Journey QA",
+    "model": "exemplo"
+  },
+  "architect": {
+    "name": "Arquitetura de Plataforma",
+    "channel": "#arq-checkout"
+  },
+  "sources": [
+    {
+      "source_id": "SRC-1",
+      "kind": "adr",
+      "locator": "docs/adr/0007-pagamentos-assincronos.md",
+      "revision": "sha256:fc938f75785dc8e3",
+      "status": "proposed"
+    },
+    {
+      "source_id": "SRC-2",
+      "kind": "iac",
+      "locator": "plan.json",
+      "revision": "sha256:b0ac049e632c4b99",
+      "status": "proposed"
+    },
+    {
+      "source_id": "SRC-3",
+      "kind": "iac",
+      "locator": "k8s.json",
+      "revision": "sha256:9bc6e52fb31d65d4",
+      "status": "proposed"
+    }
+  ],
+  "context": {
+    "problem": "Latência p99 do provedor acima de 8 s em pico expira o checkout e gera pedidos duplicados por clique repetido.",
+    "scope": "Confirmação de pagamento do checkout web; fila, workers, banco de pedidos e tela de estado do pedido.",
+    "non_goals": [
+      "Troca de provedor de pagamento",
+      "Reembolso e chargeback"
+    ]
+  },
+  "decisions": [
+    {
+      "decision_id": "D-1",
+      "source_id": "SRC-1",
+      "statement": "Publicar payment.requested no SQS e cobrar em workers no EKS escalados por KEDA; checkout responde 'em processamento' e a tela consulta o estado; DLQ após 5 tentativas.",
+      "alternatives_considered": [
+        "Timeout de 15 s",
+        "Step Functions",
+        "Síncrono com circuit breaker"
+      ],
+      "reversibility": "two_way",
+      "consequences_stated": [
+        "Usuário vê 'em processamento' por alguns segundos",
+        "Menos timeouts em pico",
+        "Monitorar profundidade da fila"
+      ]
+    }
+  ],
+  "quality_attributes": [
+    {
+      "attribute": "latency",
+      "scenario": "Em pico, do clique em pagar até o estado final do pagamento visível ao cliente",
+      "target": null,
+      "stated_by_source": true,
+      "source_ref": "SRC-1"
+    },
+    {
+      "attribute": "consistency",
+      "scenario": "Reentrega da mensagem ou retry do worker não gera segunda cobrança",
+      "target": "0 cobranças duplicadas",
+      "stated_by_source": false,
+      "source_ref": null
+    },
+    {
+      "attribute": "recoverability",
+      "scenario": "Falha persistente do provedor leva o pedido a estado final e a fila a reprocessamento controlado",
+      "target": null,
+      "stated_by_source": false,
+      "source_ref": null
+    },
+    {
+      "attribute": "security",
+      "scenario": "Workers com menor privilégio e segredos fora do manifesto",
+      "target": "0 achados high em infra",
+      "stated_by_source": false,
+      "source_ref": null
+    }
+  ],
+  "assumptions": [
+    {
+      "assumption_id": "P-1",
+      "statement": "O provedor aceita chave de idempotência e deduplica por pelo menos 24 h.",
+      "source_ref": null,
+      "validated": "unknown",
+      "risk_if_false": "Cobrança duplicada em toda reentrega."
+    },
+    {
+      "assumption_id": "P-2",
+      "statement": "A tela de pedido faz polling com backoff e não gera carga excessiva no banco.",
+      "source_ref": "SRC-1",
+      "validated": "unknown",
+      "risk_if_false": "Banco de pedidos vira gargalo no pico que a decisão queria aliviar."
+    }
+  ],
+  "items": [
+    {
+      "item_id": "A-01",
+      "kind": "risk",
+      "title": "Cobrança duplicada com entrega at-least-once",
+      "description": "SQS standard entrega pelo menos uma vez e a DLQ implica até 5 tentativas. Se o worker cobra no provedor e cai antes de gravar no banco, a mensagem volta e o cliente é cobrado de novo. O ADR não define chave de idempotência com o provedor nem deduplicação no worker; o problema original (pedidos duplicados) muda de lugar em vez de desaparecer.",
+      "refs": [
+        "D-1",
+        "SRC-1#Decisão"
+      ],
+      "quality_attribute": "consistency",
+      "severity": "critical",
+      "likelihood": "high",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": "Qual é a chave de idempotência enviada ao provedor e onde o worker registra 'cobrança iniciada' antes de chamar o provedor? O provedor garante deduplicação por quanto tempo?",
+      "answer": null,
+      "proposed_verification": [
+        {
+          "verification_id": "V-01",
+          "kind": "chaos_experiment",
+          "description": "Matar o worker após a resposta do provedor e antes do commit; reprocessar a mensagem; exigir exatamente uma cobrança no sandbox do provedor.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-IDEMP"
+        },
+        {
+          "verification_id": "V-02",
+          "kind": "contract_test",
+          "description": "Teste de contrato: duas requisições com a mesma chave de idempotência retornam a mesma cobrança.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-IDEMP"
+        },
+        {
+          "verification_id": "V-03",
+          "kind": "journey",
+          "description": "Comprador clica duas vezes em pagar e recarrega durante 'em processamento'; o histórico mostra um pedido e uma cobrança.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-IDEMP"
+        }
+      ]
+    },
+    {
+      "item_id": "A-02",
+      "kind": "gap",
+      "title": "Estado terminal para mensagens na DLQ",
+      "description": "Após 5 falhas a mensagem vai para a DLQ, mas o pedido continua 'em processamento' indefinidamente. Não há estado de falha, prazo máximo nem comunicação ao cliente; também não há dono para reprocessar a DLQ.",
+      "refs": [
+        "D-1",
+        "SRC-1#Decisão"
+      ],
+      "quality_attribute": "recoverability",
+      "severity": "high",
+      "likelihood": "medium",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": "Qual o prazo máximo em 'em processamento' antes de o pedido virar 'pagamento não confirmado'? Quem reprocessa a DLQ e com qual runbook?",
+      "answer": null,
+      "proposed_verification": [
+        {
+          "verification_id": "V-04",
+          "kind": "journey",
+          "description": "Com o provedor sandbox forçado a falhar, o cliente vê um estado final compreensível dentro do prazo acordado e consegue tentar de novo.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-TERMINAL"
+        },
+        {
+          "verification_id": "V-05",
+          "kind": "review",
+          "description": "Runbook de reprocessamento da DLQ revisado com operação.",
+          "automatable": false,
+          "linked_rule_id": null
+        }
+      ]
+    },
+    {
+      "item_id": "A-03",
+      "kind": "gap",
+      "title": "Meta numérica para 'alguns segundos'",
+      "description": "A consequência 'em processamento por alguns segundos' não tem meta. Sem SLO não há critério para dimensionar KEDA, alarmar nem aprovar o teste de carga.",
+      "refs": [
+        "D-1",
+        "SRC-1#Consequências"
+      ],
+      "quality_attribute": "latency",
+      "severity": "high",
+      "likelihood": "high",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": "Qual o p95/p99 aceitável entre payment.requested e o estado final em pico (ex.: p95 ≤ 5 s, p99 ≤ 20 s com 3× o tráfego de Black Friday)?",
+      "answer": null,
+      "proposed_verification": [
+        {
+          "verification_id": "V-06",
+          "kind": "load_test",
+          "description": "Carga de 3× o pico histórico com latência do provedor injetada (p99 8 s); medir idade da mensagem mais antiga e tempo até estado final.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-LATENCY"
+        },
+        {
+          "verification_id": "V-07",
+          "kind": "monitoring_slo",
+          "description": "SLO de tempo até confirmação e alarme em ApproximateAgeOfOldestMessage, não só profundidade.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-LATENCY"
+        }
+      ]
+    },
+    {
+      "item_id": "A-04",
+      "kind": "risk",
+      "title": "Scale-to-zero e cold start no pico",
+      "description": "O ScaledObject permite 0 réplicas e o Deployment declara 1. No início de um pico o primeiro lote espera agendamento de pod, pull de imagem e aquecimento.",
+      "refs": [
+        "D-1",
+        "SRC-3"
+      ],
+      "quality_attribute": "availability",
+      "severity": "medium",
+      "likelihood": "medium",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": null,
+      "answer": null,
+      "proposed_verification": [
+        {
+          "verification_id": "V-08",
+          "kind": "fitness_function",
+          "description": "Política no CI: minReplicaCount ≥ 2 para workers de pagamento em produção.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-MINREPLICAS"
+        }
+      ]
+    },
+    {
+      "item_id": "A-05",
+      "kind": "risk",
+      "title": "Substituição do banco de pedidos no mesmo plano",
+      "description": "O plano Terraform recria aws_db_instance.orders (upgrade 15→16 força replace) com skip_final_snapshot = true e deletion_protection = false. Uma mudança de arquitetura de pagamentos não deveria carregar uma troca destrutiva do banco que ela própria passa a usar.",
+      "refs": [
+        "SRC-2"
+      ],
+      "quality_attribute": "recoverability",
+      "severity": "critical",
+      "likelihood": "high",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": "O upgrade do Postgres pode sair deste change set e seguir por blue/green ou snapshot+restore com janela própria?",
+      "answer": null,
+      "proposed_verification": [
+        {
+          "verification_id": "V-09",
+          "kind": "infra_check",
+          "description": "`jqa infra terraform` sem achado critical no plano aprovado; prevent_destroy no recurso.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-NO-DB-REPLACE"
+        }
+      ]
+    },
+    {
+      "item_id": "A-06",
+      "kind": "risk",
+      "title": "Privilégio e segredos dos workers",
+      "description": "Política sqs:* sobre Resource '*', SSH aberto para 0.0.0.0/0 e chave do provedor literal em env no manifesto.",
+      "refs": [
+        "SRC-2",
+        "SRC-3"
+      ],
+      "quality_attribute": "security",
+      "severity": "high",
+      "likelihood": "high",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": null,
+      "answer": null,
+      "proposed_verification": [
+        {
+          "verification_id": "V-10",
+          "kind": "infra_check",
+          "description": "Sem iam-wildcard-action, open-ingress e secret-in-env nos artefatos aprovados.",
+          "automatable": true,
+          "linked_rule_id": "ARCH-LEAST-PRIV"
+        }
+      ]
+    },
+    {
+      "item_id": "A-07",
+      "kind": "question",
+      "title": "Ordem de eventos do mesmo pedido",
+      "description": "Fila standard não preserva ordem. Um cancelamento ou nova tentativa do mesmo pedido pode ser processado antes do pagamento original.",
+      "refs": [
+        "D-1"
+      ],
+      "quality_attribute": "consistency",
+      "severity": "medium",
+      "likelihood": "medium",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": "Pedidos podem receber mais de um evento de pagamento? Se sim, FIFO por order_id ou máquina de estados que rejeita transições fora de ordem?",
+      "answer": null,
+      "proposed_verification": []
+    },
+    {
+      "item_id": "A-08",
+      "kind": "testability_requirement",
+      "title": "Provedor simulável com latência e falha controladas",
+      "description": "Staging precisa de um stub/sandbox do provedor com latência, timeout e erro configuráveis por teste, e de um endpoint de status do pagamento por operation_id com correlation id nos logs.",
+      "refs": [
+        "D-1"
+      ],
+      "quality_attribute": "testability",
+      "severity": "high",
+      "likelihood": "unknown",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": null,
+      "answer": null,
+      "proposed_verification": [
+        {
+          "verification_id": "V-11",
+          "kind": "review",
+          "description": "Stub do provedor disponível em staging antes do primeiro deploy; contrato documentado.",
+          "automatable": false,
+          "linked_rule_id": null
+        }
+      ]
+    },
+    {
+      "item_id": "A-09",
+      "kind": "gap",
+      "title": "Alternativas descartadas sem justificativa",
+      "description": "Step Functions e circuit breaker aparecem sem critério de descarte (custo, operação, reversibilidade). Isso dificulta reavaliar a decisão.",
+      "refs": [
+        "D-1",
+        "SRC-1#Alternativas"
+      ],
+      "quality_attribute": "maintainability",
+      "severity": "low",
+      "likelihood": "unknown",
+      "status": "open",
+      "owner": null,
+      "question_for_architect": "Qual critério descartou Step Functions (custo por transição, latência, lock-in)?",
+      "answer": null,
+      "proposed_verification": []
+    }
+  ],
+  "traceability": [
+    {
+      "decision_id": "D-1",
+      "rule_ids": [
+        "ARCH-IDEMP",
+        "ARCH-TERMINAL",
+        "ARCH-LATENCY",
+        "ARCH-MINREPLICAS",
+        "ARCH-NO-DB-REPLACE",
+        "ARCH-LEAST-PRIV"
+      ],
+      "journey_ids": [
+        "checkout-pico",
+        "checkout-falha-provedor"
+      ],
+      "verification_ids": [
+        "V-01",
+        "V-02",
+        "V-03",
+        "V-04",
+        "V-06",
+        "V-07",
+        "V-08",
+        "V-09",
+        "V-10"
+      ]
+    }
+  ],
+  "conformance": [
+    {
+      "decision_id": "D-1",
+      "status": "not_verified",
+      "evidence_refs": [],
+      "note": "ADR proposto; conformidade será verificada após implementação em staging."
+    }
+  ],
+  "summary": {
+    "verdict": "revise",
+    "rationale": "A direção (desacoplar a cobrança) é adequada e reversível, mas a proposta ainda não garante a propriedade que motivou a mudança: cliente cobrado uma única vez. Há também uma troca destrutiva do banco de pedidos no mesmo plano.",
+    "top_risks": [
+      "A-01 cobrança duplicada por reentrega",
+      "A-05 recriação do banco de pedidos sem snapshot final",
+      "A-02 pedidos presos em 'em processamento'"
+    ],
+    "conditions": []
+  },
+  "limitations": [
+    "Revisão estática do ADR e dos artefatos; nenhum ambiente foi executado.",
+    "Assume SQS standard; o ADR não especifica o tipo de fila."
+  ]
+}

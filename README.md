@@ -20,7 +20,7 @@ once you run several of them at the same time:
   tells the session where the work continues: here, in a fresh session, or with
   the owner.
 
-It is a small thing: Markdown prompts, four Python hooks with no dependencies
+It is a small thing: Markdown prompts, Python hooks with no dependencies
 beyond the standard library, and one test suite. It is also an open question.
 The rules here came from watching real sessions fail, and there are many
 failures we have not seen yet. If you run AI agents in parallel, we want your
@@ -87,10 +87,11 @@ flowchart LR
 
     subgraph hooks["Hooks"]
         direction TB
-        router["squad-router<br/>routes the request"]
+        router["squad-router<br/>routes the request,<br/>flags owner rules"]
         watch["squad-watch<br/>measures, warns, denies"]
         switch["squad-switch<br/>fresh session + pickup"]
         turn["squad-turn<br/>merge queue"]
+        decisions["squad-decisions<br/>project decisions at session start"]
     end
 
     owner -- prompt --> router --> main
@@ -101,6 +102,7 @@ flowchart LR
     watch -. "every tool call" .-> squad
     watch --> switch
     watch --> turn
+    decisions -- "SessionStart: index" --> main
     switch -- "/clear, then pickup" --> main
 ```
 
@@ -138,22 +140,38 @@ Full catalogue with limits: [docs/agents.md](docs/agents.md).
 
 ## The watcher in one screen
 
-`hooks/squad-watch.py` runs on five Claude Code hook events and speaks to the
+`hooks/squad-watch.py` runs on seven Claude Code hook events and speaks to the
 session in messages that start with `[squad-watch]`.
 
 | It sees | It does |
 |---|---|
 | Main session at 80% of its window, or rereading itself for 60% of its spend above a floor that weighs how much it has already burned | `PROACTIVE HANDOFF`: the session writes a handoff and stops; the watcher clears the pane and a fresh session picks the work up |
 | A sub-session repeating the same call, or past 180k of context | Denies the call; the sub-session returns a short handoff to its parent |
-| An orchestrator at 600k of context, or with 40 sub-sessions, or a fourth session orchestrating at once, or a seventh reviewer on one card | `DISPATCH DENIED`, with the way forward spelled out |
+| An orchestrator at 800k of context, or with 60 sub-sessions, or a seventh session orchestrating at once, or a seventh reviewer on one card | `DISPATCH DENIED`, with the way forward spelled out |
+| `agenfk verify` on a card that sits on a review step, with no reviewer dispatched on it since it entered | `REVIEW REQUIRED`: dispatch the verifier, then verify again with its verdict as the evidence |
 | A merge to main while another session holds the turn | Denies it, queues the session, and wakes it with `MERGE TURN` |
 
 Every threshold is an environment variable. The arithmetic, with worked
 examples, is in [docs/watcher.md](docs/watcher.md).
 
+A separate hook, `hooks/squad-decisions.py`, runs on `SessionStart`: it prints
+the index of the project's active decisions (the standing rules the owner
+settled), so a new session in any worktree starts knowing them. Details in
+[docs/decisions.md](docs/decisions.md).
+
 ## Quickstart
 
 You need Claude Code, Python 3.10 or newer, `git`, and AgenFK.
+
+**On Windows**, one line in PowerShell does steps 2 and 3 below (clone, link,
+register the hooks); what to have first, options, update and uninstall are in
+[docs/installation.md](docs/installation.md#windows):
+
+```powershell
+irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1 | iex
+```
+
+On Linux, macOS and WSL:
 
 ```bash
 # 1. AgenFK first: the squad assumes its CLI is on your PATH
@@ -191,9 +209,10 @@ Then open a project that has an AgenFK board and ask for something:
 | [docs/architecture.md](docs/architecture.md) | Hooks and events, state on disk, one card from start to finish |
 | [docs/agents.md](docs/agents.md) | Each agent: role, tools, model, limits, when it is dispatched |
 | [docs/watcher.md](docs/watcher.md) | The handoff arithmetic, the dispatch brake, the soft stop, the session switch, the merge queue |
+| [docs/decisions.md](docs/decisions.md) | The project's decision store, `squad-decisions`, and the `SessionStart` hook that prints the index of active decisions at the start of every session |
 | [docs/agenfk-integration.md](docs/agenfk-integration.md) | Flow step → agent → AgenFK command → evidence; how to activate the flow |
 | [docs/configuration.md](docs/configuration.md) | Every `SQUAD_*` variable and its default |
-| [docs/installation.md](docs/installation.md) | Requirements, what the installer links, the `settings.json` hooks, uninstalling |
+| [docs/installation.md](docs/installation.md) | Requirements, what the installer links, the `settings.json` hooks, uninstalling, and the Windows section |
 | [docs/external-contributor-agent.md](docs/external-contributor-agent.md) | Copy-paste onboarding protocol for external Claude Code and other coding agents |
 | [ROADMAP.md](ROADMAP.md) | What is missing, and where help is most useful |
 
@@ -201,13 +220,38 @@ Then open a project that has an AgenFK board and ask for something:
 
 | Skill | What it is |
 |---|---|
-| `session-context` | Context indicators for Claude Code, Codex and pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |
+| `pr-evidence` | Repository-template answers and current-head independent reviews/checks/threads; offline, no auto-post or merge |
+| `ci-plan-evidence` | Complete current CI JSON plans, expected environments/checks and exact loss approval; no Terraform/cloud execution |
+| `parallel-plan` | The `Depends on` / `Touches` block the `scheduler` writes on each card and `scripts/waves.py`: iterative dependency waves with inherited parent constraints, blocked prerequisites and conservative file collisions, the critical path and the pairs kept apart by a shared file; forecast only |
+| `architect` | Plans a new app, stack or multi-front feature before it is built: contracts, a resource-to-PR table and optimistic/likely/conservative duration ranges computed from a task DAG (`scripts/plan.py`, `delivery_map.py`, `handoff.py`). It does not order dispatch: `parallel-plan` does that from the cards, and a `delivery_map.py` schedule is not a dispatch order |
+| `engineering-evidence` | On-demand diagnosis, contract, source-to-sink security and bounded-cost telemetry checklists |
+| `session-context` | Context indicators for Claude Code, Codex, pi and oh-my-pi sessions (`scripts/session_context.py`), the thresholds, and the protocol for switching tasks |
 | `clear-pickup` | Writes a handoff file from ground truth (git state plus session state) before a context clear, and reloads it afterwards |
 | `parallel-git` | One card = one branch = one worktree = one session; disjoint fronts; writer claims; merge train with squash and `rebase --onto` |
-| `parallel-plan` | The `Depends on` / `Touches` block on each card and `scripts/waves.py`, which turns a plan into waves of cards that run together, the critical path and the cards kept apart by a shared file |
 | `ci-cost` | Fewer CI minutes without loosening a gate: measure (billing API, per-job ceil, cancelled minutes), then cut in order of gain; PR mutation over the changed lines (`scripts/changed-ranges.mjs`, `scripts/mutation-since.sh`, Stryker) |
+| `board-heartbeat` | A scheduled, read-only look at the board between sessions (`scripts/heartbeat.py`): stalled cards, PRs with no review, a merge turn held too long, idle worktrees, old handoffs; one line each with who acts, silent when nothing is stuck |
 | `design-reference` | One design method: direction before code, a verifiable quality floor, the patterns that give away AI-generated UI, motion with rules |
+| `journey-qa` | Agentic QA of a running product: personas drive the web app through Playwright, an observer checks business rules with independent oracles, every observation lands in a hash-chained evidence ledger; also reviews ADRs, Terraform plans and Kubernetes manifests (`scripts/jqa.mjs`, Node 20+) |
+| `skill-trial` | Blind headless trials of a skill or hook change: N fresh `claude -p` sessions in a bubblewrap jail with a stub `gh`, no user hooks and no MCP, a check per trial, one PASS/FAIL/N/A table with cost and wall time (`scripts/trial.sh`, `scenarios/smoke`) |
 | `vendor/canvas-design`, `vendor/algorithmic-art` | Third-party skills by Anthropic, Apache-2.0, redistributed unmodified (see [NOTICE](NOTICE)) |
+
+Evidence-tool adoption decisions, exclusions and limits:
+[docs/bundle-adoption.md](docs/bundle-adoption.md). These are new generic
+implementations, not a copy of private tooling or its history, except
+`architect`, which is a port of the owner's own skill; its origin and what the
+port changed are in [skills/architect/PROVENANCE.md](skills/architect/PROVENANCE.md).
+Scripts use only Python's standard library and write stdout, except `journey-qa`,
+whose scripts are dependency-free Node (Playwright is installed on demand by
+`jqa setup`); each supports `--help`. The existing
+installer discovers the new skill directories without a settings change.
+
+```sh
+for t in tests/test_pr_evidence.py tests/test_ci_plan_evidence.py tests/test_parallel_plan.py tests/test_bundle_contracts.py; do
+  python3 -B "$t" || exit 1
+done
+```
+
+Scenario fixtures are contract examples, not a live-model benchmark.
 
 ## Specialising for one project
 
@@ -220,11 +264,14 @@ AgenFK flow. A `DESIGN.md` at the root guides `frontend`.
 ## Status
 
 This is the working setup of one person, published as it is. It runs daily on
-Linux with Claude Code. The automatic session switch depends on the
-[herdr](docs/installation.md#optional-dependencies) pane manager; without it the watcher still
+Linux with Claude Code; macOS is untested. It also runs natively on Windows 10
+and 11, with its own installer and CI job (see
+[Windows](docs/installation.md#windows)). The automatic session switch depends on the
+[herdr](docs/installation.md#optional-dependencies) pane manager, which
+Windows does not have; without it the watcher still
 orders the handoff and you type `/clear` and `/clear-pickup pickup` yourself.
-The session report reads Codex and pi transcripts too, but the hooks only
-drive Claude Code. [ROADMAP.md](ROADMAP.md) lists what that leaves open.
+The session report reads Codex, pi and oh-my-pi transcripts too, but the hooks
+only drive Claude Code. [ROADMAP.md](ROADMAP.md) lists what that leaves open.
 
 ## Contributing
 

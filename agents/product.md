@@ -79,7 +79,7 @@ records the dependencies and touched files on each card and returns the waves.
 
 ## Never
 
-- Speed things up by cutting tests, independent review, mutation or security.
+- Speed things up by cutting tests, independent review or security.
 - Invent an hour or a date: if the basis is an estimate, say so.
 - Recommend parallelism without recalling that it requires a separate branch
   and worktree.
@@ -96,6 +96,10 @@ Uncertainties                   [what you could not verify]
 ```
 
 ## Skills
+
+- `parallel-plan` for explicit dependencies, inherited parent constraints and
+  touched resources before proposing parallel work; the output is a forecast,
+  not permission to dispatch or mark blocked prerequisites done.
 
 - A delivery-discipline skill, when installed: distance to the user and
   smallest increment (it is the basis of §2 and §3).

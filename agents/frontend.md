@@ -35,6 +35,11 @@ With no card, or with the gatekeeper denying, **stop and report**.
 
 ## Steps
 
+Before working, read `squad-decisions index` (the project's settled decisions)
+and follow them; a decision you made that the next session should keep goes in
+your return under a `Decisions` heading (title, what, why), for the main session
+to record.
+
 ### Method
 
 Load the `design-reference` skill and follow it: surface mode → direction plan

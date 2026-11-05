@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Skill wiring/fixtures, not a claim about live-model behavior or accuracy."""
+import ast
+import json
+from pathlib import Path
+import re
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SKILLS = ('pr-evidence', 'ci-plan-evidence', 'parallel-plan', 'engineering-evidence')
+PUBLIC = (ROOT / 'agents/developer.md').exists()
+AGENTS = {
+    'pr-evidence': ('github', 'verifier' if PUBLIC else 'verificador'),
+    'ci-plan-evidence': ('infra', 'verifier' if PUBLIC else 'verificador'),
+    'parallel-plan': ('product' if PUBLIC else 'produto', 'github'),
+    'engineering-evidence': ('developer' if PUBLIC else 'desenvolvimento',
+                             'tester' if PUBLIC else 'testes', 'finops'),
+}
+
+
+class ContractTests(unittest.TestCase):
+    def test_skill_metadata_and_progressive_disclosure(self):
+        for name in SKILLS:
+            text = (ROOT / 'skills' / name / 'SKILL.md').read_text(encoding="utf-8")
+            self.assertTrue(text.startswith('---\nname: ' + name + '\n'), name)
+            desc = re.search(r'^description: (.+)$', text, re.M)
+            self.assertIsNotNone(desc, name)
+            self.assertLessEqual(len(desc[1]), 700, name)
+            if ': ' in desc[1]:
+                self.assertTrue(desc[1].startswith(('"', "'")), 'quote YAML colon-space: ' + name)
+            self.assertLess(len(text.splitlines()), 160, name)
+            for link in re.findall(r'\]\((references/[^)]+)\)', text):
+                self.assertTrue((ROOT / 'skills' / name / link).is_file(), (name, link))
+            for link in re.findall(r'`(references/[^`]+\.md)`', text):
+                self.assertTrue((ROOT / 'skills' / name / link).is_file(), (name, link))
+
+    def test_agents_point_to_each_procedure_on_demand(self):
+        for skill, agents in AGENTS.items():
+            for agent in agents:
+                self.assertIn('`' + skill + '`', (ROOT / 'agents' / (agent + '.md')).read_text(encoding="utf-8"), (skill, agent))
+        rules = (ROOT / 'CLAUDE.md').read_text(encoding="utf-8")
+        for skill in SKILLS:
+            self.assertIn('`' + skill + '`', rules, skill)
+
+    def test_eval_fixtures_include_positive_negative_and_assertions(self):
+        for skill in SKILLS:
+            data = json.loads((ROOT / 'skills' / skill / 'evals/evals.json').read_text(encoding="utf-8"))
+            self.assertEqual(data['skill_name'], skill)
+            self.assertEqual(len(data['evals']), 3)
+            self.assertEqual(len({e['id'] for e in data['evals']}), 3)
+            self.assertEqual({e['should_trigger'] for e in data['evals']}, {True, False})
+            for e in data['evals']:
+                self.assertGreater(len(e['prompt']), 65)
+                self.assertTrue(e['expected_output'] and e['assertions'])
+
+    def test_scripts_are_offline_and_stdlib_only(self):
+        allowed = {'argparse', 'collections', 'fnmatch', 'heapq', 'json', 'pathlib',
+                   'posixpath', 're', 'sys', 'unicodedata'}
+        for skill in SKILLS:
+            for path in (ROOT / 'skills' / skill).glob('scripts/*.py'):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                imports = set()
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        imports.update(a.name.split('.')[0] for a in node.names)
+                    elif isinstance(node, ast.ImportFrom):
+                        imports.add(node.module.split('.')[0])
+                self.assertLessEqual(imports, allowed, path)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        self.assertNotIn(node.func.id, ('exec', 'eval', '__import__', 'open'), path)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                        self.assertNotIn(node.func.attr, ('write_text', 'write_bytes', 'unlink', 'mkdir'), path)
+
+    def test_dispatch_rules_follow_the_flow_and_the_watcher(self):
+        rules = (ROOT / 'CLAUDE.md').read_text(encoding="utf-8")
+        # Rule 3: the parallel fronts ceiling is six, not four.
+        self.assertIn('Ceiling ~6 fronts.', rules)
+        self.assertNotRegex(rules, r'~4 fronts')
+        # Rule 4 and the table: the review has no mutation step.
+        self.assertNotIn('MUTATE', rules)
+        self.assertIn('REVIEW / ADVERSARIAL / VERIFY', rules)
+        self.assertRegex(rules, r'REVIEW, ADVERSARIAL and VERIFY go to the\s+`verifier`')
+        # Rule 4: the 2-round cap hands the owner the how, never the whether (rule 11).
+        rule4 = re.search(r'^4\. \*\*Whoever writes does not approve\.\*\*(.+?)(?=^\d+\. |\Z)', rules, re.M | re.S)
+        self.assertIsNotNone(rule4)
+        body4 = ' '.join(rule4[1].split())
+        self.assertIn('at most 2 rounds per card; after that the owner decides how to fix it', body4)
+        self.assertIn('never whether to ship it with the defect (rule 11)', body4)
+        self.assertNotIn("it is the owner's decision", body4)
+        # Rule 11: a red gate is work; no PR goes in with a defect or a failure.
+        rule = re.search(r'^11\. \*\*No PR passes or is merged with a defect or a failure\*\*(.+?)(?=^\d+\. |\Z)',
+                         rules, re.M | re.S)
+        self.assertIsNotNone(rule)
+        body = ' '.join(rule[1].split())
+        for phrase in ('A red gate is work, not a decision for the owner',
+                       'open a card in AgenFK for each cause',
+                       'rule 4 caps the rounds per card, not the number of causes',
+                       'Never propose "accept with the failures explained"',
+                       'through the merge queue, without asking for an OK'):
+            self.assertIn(phrase, body)
+        # Rule 7: the numbers are the watcher's own defaults, not older ones.
+        watch = (ROOT / 'hooks/squad-watch.py').read_text(encoding="utf-8")
+        ctx = (ROOT / 'skills/session-context/scripts/session_context.py').read_text(encoding="utf-8")
+
+        def default(src, var):
+            found = re.search(r'env_(?:int|num)\("' + var + r'", ([\d_]+)', src)
+            self.assertIsNotNone(found, var)
+            return int(found[1].replace('_', ''))
+
+        flat = ' '.join(rules.split())
+        self.assertIn('context ≥ %d%% of the window' % default(watch, 'SQUAD_CTX_PCT'), flat)
+        self.assertIn('%d%% of the window with burn ≥ %d%% of the session budget'
+                      % (default(ctx, 'SQUAD_REREAD_FLOOR'), default(ctx, 'SQUAD_BURN_FULL')), flat)
+        self.assertIn('rising to %d%% with zero burn' % default(watch, 'SQUAD_CTX_PCT'), flat)
+        # Lowest floor 50% since November 2026: at 70% no main session ever reached it.
+        self.assertEqual(default(ctx, 'SQUAD_REREAD_FLOOR'), 50)
+        # The "not the time" example sits at or above the lowest floor and below the floor for its burn.
+        example = re.search(r'context at (\d+)% with burn at (\d+)% is not the time', flat)
+        self.assertIsNotNone(example)
+        low, top, full = (default(ctx, 'SQUAD_REREAD_FLOOR'), default(watch, 'SQUAD_CTX_PCT'),
+                          default(ctx, 'SQUAD_BURN_FULL'))
+        at, burn = int(example[1]), int(example[2])
+        self.assertTrue(low <= at < top - (top - low) * min(1.0, burn / full), example[0])
+        self.assertIn('orchestrator context ≥ %dk' % (default(watch, 'SQUAD_CTX_CEILING') // 1000), flat)
+        self.assertIn('%d sub-sessions in the session' % default(watch, 'SQUAD_MAX_SUBS'), flat)
+        self.assertIn('%d sessions orchestrating at the same time' % default(watch, 'SQUAD_MAX_ORCH'), flat)
+        self.assertIn('with a heavy session, ≥ %dk' % (default(watch, 'SQUAD_ORCH_HERE') // 1000), flat)
+        self.assertIn('%dth reviewer on the same card' % (default(watch, 'SQUAD_MAX_REVIEWS') + 1), flat)
+
+    def test_no_mutation_rule_comes_back_through_skills_templates_or_roadmap(self):
+        # The delivery flow has no mutation step (owner's rule of 16/10/2026): the verifier judges
+        # test strength by reading the tests and reproducing the suite. These files once asked for
+        # mutation as a squad rule; none of them may again.
+        def read(rel):
+            return (ROOT / rel).read_text(encoding="utf-8")
+
+        mention = re.compile(r'mutat', re.I)
+        for rel in ('ROADMAP.md', 'templates/ci-light/README.md', 'skills/engineering-evidence/SKILL.md',
+                    'skills/pr-evidence/SKILL.md', 'skills/pull-request/references/review.md'):
+            self.assertIsNone(mention.search(read(rel)), rel)
+        # The PR evidence guide names mutation only in the infrastructure-PR ban, which
+        # skills/pull-request/scripts/pr_check.py enforces on the PR body.
+        evidence = read('skills/pull-request/references/evidence.md')
+        self.assertEqual([line for line in evidence.splitlines() if mention.search(line)],
+                         ['An infrastructure PR **carries no adversarial or mutation tests**: do not run'])
+        # ci-cost makes a project's own mutation job cheaper; it never requires one.
+        cost = ' '.join(read('skills/ci-cost/SKILL.md').split())
+        self.assertNotRegex(cost, r'(?i)mutation gate')
+        self.assertIn("The squad's delivery flow has no mutation step", cost)
+        self.assertIn('does not add one: it makes an existing job cheaper.', cost)
+        # No skill or template lists MUTATE as a flow step.
+        for path in [*(ROOT / 'skills').rglob('*.md'), *(ROOT / 'templates').rglob('*.md'),
+                     *(ROOT / 'templates').rglob('*.yml')]:
+            self.assertNotRegex(path.read_text(encoding="utf-8"), r'\bMUTATE\b', path)
+
+    def test_no_private_context_or_bundled_history_in_new_skills(self):
+        forbidden = re.compile(r'/home/[a-z]+/|(?<!\d)\d{12}(?!\d)|-----BEGIN .*PRIVATE KEY-----', re.I)
+        for skill in SKILLS:
+            for path in (ROOT / 'skills' / skill).rglob('*'):
+                if path.is_file():
+                    self.assertNotIn(path.suffix, ('.bundle', '.zip', '.pyc'), path)
+                    self.assertFalse(path.is_symlink(), path)
+                    self.assertIsNone(forbidden.search(path.read_text(encoding="utf-8")), path)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "run_id": null,
+  "mode": "design",
+  "objective": null,
+  "base_commit": null,
+  "updated_at": null,
+  "capabilities_observed": {
+    "repository_read": false,
+    "repository_write": false,
+    "shell": false,
+    "cloud_read": false,
+    "cloud_write": false,
+    "subagents": false
+  },
+  "authorization_references": [],
+  "delivery_tracking": {
+    "map_path": null,
+    "task_plan_path": null,
+    "baseline_id": null,
+    "previous_baseline_id": null,
+    "published_baseline_id": null,
+    "published_at": null,
+    "publication_evidence_ref": null,
+    "gate_observation": "not_evaluated",
+    "completeness_evidence_ref": null,
+    "next_mutation_resource_ids": [],
+    "unmapped_items": [],
+    "last_reforecast_at": null,
+    "reforecast_reason": null,
+    "inventory_reconciliation": {
+      "planned_inventory_ref": null,
+      "observed_plan_ref": null,
+      "differences": [],
+      "reconciled_baseline_id": null,
+      "evidence_ref": null
+    },
+    "note": "Pointers and observations from the companion map; they neither replace its schema nor validate the gate. Check the published baseline, completeness, resources and authorization before the mutation."
+  },
+  "decisions": [],
+  "assumptions": [],
+  "evidence": [],
+  "task_state": [],
+  "blockers": [],
+  "attempts": [],
+  "next_actions": [],
+  "note": "Capabilities set to false mean not yet verified in this template. References and a published gate neither grant authorization nor prove creation, merge, apply, deploy or runtime verified. Reuse the authorization in force and check evidence in the environment."
+}
+

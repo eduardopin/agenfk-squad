@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Short deck title</title>
+<!-- Project font: if the sweep found a Google Fonts family, load it here, e.g.:
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap">
+-->
+<style>
+/* ==========================================================================
+   The squad's deck template (skill `presentation`).
+   1. PROJECT DESIGN SYSTEM: replace the "--ds-*" block below with the output of
+        python3 -I ~/.claude/skills/design-reference/scripts/sweep.py <root> --css
+      (paste all of it, dark blocks included). The built-in default is the
+      squad's neutral palette. Nothing else changes: the semantics read --ds-* only.
+   2. Every colour is opaque on purpose: see html.render.
+   ========================================================================== */
+
+/* ---------- design system (paste the sweep --css output here) ---------- */
+/* the squad's neutral palette: the project has no design system (sweep.py) */
+:root {
+  --ds-bg: #f7f8fa;
+  --ds-surface: #ffffff;
+  --ds-fg: #15171c;
+  --ds-fg-2: #4b5262;
+  --ds-accent: #2f5bd3;
+  --ds-border: #d5dae2;
+  --ds-font-display: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --ds-font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --ds-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ds-bg: #111318;
+    --ds-surface: #1a1d24;
+    --ds-fg: #e8eaef;
+    --ds-fg-2: #a4abb9;
+    --ds-accent: #86a6ff;
+    --ds-border: #2e333d;
+  }
+}
+:root[data-theme="dark"] {
+  --ds-bg: #111318;
+  --ds-surface: #1a1d24;
+  --ds-fg: #e8eaef;
+  --ds-fg-2: #a4abb9;
+  --ds-accent: #86a6ff;
+  --ds-border: #2e333d;
+}
+/* ---------- end of the design system block ---------- */
+
+/* ---------- status primitives (chips and number signs only) ---------- */
+:root{
+  --p-green-700:#17683f; --p-green-100:#e3f2e9;
+  --p-amber-800:#7a4b00; --p-amber-100:#f8ecd6;
+  --p-red-700:#a8322a;
+  --p-green-300:#6fd19b; --p-green-950:#14281e;
+  --p-amber-300:#f0be6a; --p-amber-950:#2c2214;
+  --p-red-300:#ff8f84;
+}
+
+/* ---------- semantics (components read only from here) ---------- */
+:root{
+  color-scheme:light dark;
+  --color-bg:var(--ds-bg);
+  --color-surface:var(--ds-surface);
+  --color-ink:var(--ds-fg);                /* titles */
+  --color-ink-2:var(--ds-fg-2);            /* body */
+  --color-ink-3:var(--ds-fg-2);            /* caption, source: same AA contrast as the body */
+  --color-line:var(--ds-border);
+  --color-line-strong:color-mix(in oklab, var(--ds-border) 72%, var(--ds-fg));
+  --color-accent:var(--ds-accent);         /* the reviewer's pencil */
+  --color-positive:var(--p-green-700);
+  --color-negative:var(--p-red-700);
+  --chip-now-ink:var(--p-green-700);       --chip-now-bg:var(--p-green-100);
+  --chip-next-ink:var(--ds-accent);        --chip-next-bg:color-mix(in oklab, var(--ds-accent) 12%, var(--ds-bg));
+  --chip-partner-ink:var(--p-amber-800);   --chip-partner-bg:var(--p-amber-100);
+
+  --font-title:var(--ds-font-display);
+  --font-text:var(--ds-font-body);
+  --font-data:var(--ds-font-mono);
+
+  --w:min(1180px,90vw);
+  --f-meta:clamp(11px,.8vw,12.5px);
+  --f-body:clamp(15px,1.07vw,17px);
+  --f-lead:clamp(17px,1.45vw,22px);
+  --f-h2:clamp(28px,3.3vw,50px);
+  --f-h1:clamp(40px,5.6vw,84px);
+  --f-num:clamp(24px,2.4vw,36px);
+  --nav-h:44px;                            /* footer strip with the dots */
+}
+
+/* ---------- status in dark mode (the rest already follows --ds-*) ---------- */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --color-positive:var(--p-green-300); --color-negative:var(--p-red-300);
+    --chip-now-ink:var(--p-green-300); --chip-now-bg:var(--p-green-950);
+    --chip-partner-ink:var(--p-amber-300); --chip-partner-bg:var(--p-amber-950);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --color-positive:var(--p-green-300); --color-negative:var(--p-red-300);
+  --chip-now-ink:var(--p-green-300); --chip-now-bg:var(--p-green-950);
+  --chip-partner-ink:var(--p-amber-300); --chip-partner-bg:var(--p-amber-950);
+}
+:root[data-theme="light"]{color-scheme:light}
+
+/* ---------- base ---------- */
+*{box-sizing:border-box}
+html,body{height:100%; overflow:hidden}
+body{
+  margin:0; background:var(--color-bg); color:var(--color-ink);
+  font-family:var(--font-text); font-size:var(--f-body); line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:var(--chip-next-bg); color:var(--color-ink)}
+:focus-visible{outline:2px solid var(--color-accent); outline-offset:3px}
+a{color:var(--color-accent); text-underline-offset:.18em}
+
+/* ---------- stage: slides side by side, changed by a horizontal shift ---------- */
+.stage{position:fixed; inset:0; overflow:clip}
+.deck{display:flex; height:100%; transform:translateX(calc(var(--current,0) * -100%));
+  transition:transform .42s cubic-bezier(.77,0,.175,1)}
+@media (prefers-reduced-motion:reduce){.deck{transition:none}}
+.slide{
+  position:relative; flex:0 0 100%; width:100%; height:100%;
+  display:flex; flex-direction:column; justify-content:center;
+  padding:clamp(56px,7vh,88px) 0 calc(clamp(68px,8.5vh,100px) + var(--nav-h));
+  overflow:hidden;
+}
+.slide>.inner{width:var(--w); margin:0 auto; display:flex; flex-direction:column; gap:clamp(20px,2.6vh,32px)}
+/* slide number: it is data, so it is mono */
+.slide::after{
+  content:attr(data-num); position:absolute; top:clamp(20px,3vh,32px); right:calc((100% - var(--w))/2);
+  font-family:var(--font-data); font-size:var(--f-meta); color:var(--color-ink-3); letter-spacing:.06em;
+}
+.footer{
+  position:absolute; bottom:calc(clamp(18px,2.6vh,30px) + var(--nav-h)); left:calc((100% - var(--w))/2); width:var(--w);
+  display:flex; align-items:center; justify-content:space-between; gap:20px;
+  font-size:var(--f-meta); color:var(--color-ink-3);
+}
+.brand{display:flex; align-items:center; gap:10px; font-weight:700; color:var(--color-ink-2)}
+.brand svg{height:16px; width:auto; display:block; flex:none}
+
+/* ---------- type ---------- */
+h1,h2{font-family:var(--font-title)}
+h1{font-size:var(--f-h1); font-weight:800; letter-spacing:-.032em; line-height:1; margin:0; text-wrap:balance; max-width:18ch}
+h2{font-size:var(--f-h2); font-weight:700; letter-spacing:-.024em; line-height:1.08; margin:0; text-wrap:balance; max-width:24ch}
+h2.wide{max-width:32ch}
+h3{font-size:calc(var(--f-body)*1.05); font-weight:700; letter-spacing:-.008em; margin:0}
+p{margin:0; max-width:66ch; color:var(--color-ink-2); text-wrap:pretty}
+p strong,.lead strong{color:var(--color-ink); font-weight:700}
+.lead{font-size:var(--f-lead); line-height:1.42; max-width:58ch}
+.fineprint{font-size:calc(var(--f-body)*.86); color:var(--color-ink-3); max-width:76ch}
+/* signature 1: the reviewer's underline marks the word that carries the slide */
+em{font-style:normal; color:inherit; text-decoration:underline; text-decoration-color:var(--color-accent);
+  text-decoration-thickness:.09em; text-underline-offset:.16em; text-decoration-skip-ink:none}
+
+/* ---------- cover ---------- */
+.cover{justify-content:flex-end; padding-bottom:clamp(104px,14vh,150px)}
+.cover .inner{gap:0}
+.cover .subtitle{font-size:var(--f-lead); color:var(--color-ink-2); max-width:54ch; margin-top:24px}
+.cover-meta{
+  margin-top:clamp(36px,5.5vh,60px); padding-top:18px; border-top:1px solid var(--color-line-strong);
+  display:flex; flex-wrap:wrap; gap:8px clamp(28px,4.5vw,60px);
+  font-size:var(--f-meta); color:var(--color-ink-3);
+}
+.cover-meta b{color:var(--color-ink); font-weight:600}
+
+/* ---------- grids ---------- */
+.split{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:clamp(28px,4.5vw,72px); align-items:start}
+.column{display:flex; flex-direction:column; gap:clamp(14px,1.9vh,22px)}
+.cols{display:grid; gap:clamp(14px,1.5vw,24px)}
+.c2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
+
+/* ---------- ledger: fact + qualifier + value ---------- */
+.ledger{display:flex; flex-direction:column; border-top:1px solid var(--color-line-strong)}
+.ledger .lr{display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; align-items:baseline;
+  padding:13px 0; border-bottom:1px solid var(--color-line)}
+.ledger .k{font-weight:600; color:var(--color-ink)}
+.ledger .k small{display:block; font-weight:400; color:var(--color-ink-3); font-size:.86em; line-height:1.4; margin-top:2px}
+.ledger .v{font-size:var(--f-num); font-weight:700; letter-spacing:-.02em; white-space:nowrap; text-align:right; line-height:1}
+.ledger .v.up{color:var(--color-positive)}
+.ledger .v.dn{color:var(--color-negative)}
+
+/* ---------- signature 2: numbered source reference ---------- */
+sup.ref{font-family:var(--font-data); font-size:.42em; font-weight:500; color:var(--color-accent);
+  vertical-align:super; margin-left:3px; letter-spacing:0}
+.sources{list-style:none; margin:0; padding:10px 0 0; border-top:1px solid var(--color-line);
+  display:flex; flex-direction:column; gap:3px; counter-reset:f;
+  font-family:var(--font-data); font-size:var(--f-meta); line-height:1.45; color:var(--color-ink-3)}
+.sources li{counter-increment:f; display:grid; grid-template-columns:1.6em minmax(0,1fr)}
+.sources li::before{content:counter(f); color:var(--color-accent); font-weight:500}
+
+/* ---------- line to remember, caveat, label ---------- */
+.callout{border-top:1px solid var(--color-accent); padding-top:14px; max-width:42ch;
+  font-size:var(--f-lead); font-weight:600; letter-spacing:-.012em; line-height:1.35; color:var(--color-ink)}
+.note{border:1px solid var(--color-line-strong); border-radius:4px; padding:13px 16px; background:var(--color-surface);
+  font-size:calc(var(--f-body)*.88); color:var(--color-ink-2); max-width:none}
+.note b{color:var(--color-ink)}
+/* dashed = not real data. Use it on everything illustrative, simulated or a preview. */
+.label{display:inline-block; vertical-align:middle; font-family:var(--font-text); font-size:11px; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase; line-height:1; color:var(--color-ink-2);
+  border:1px dashed var(--color-ink-3); border-radius:3px; padding:4px 7px; white-space:nowrap}
+
+/* ---------- status chips ----------
+   now      exists today, can be shown
+   next     the team can build it alone, without depending on anyone
+   partner  depends on a third party: say on whom                      */
+.chip{display:inline-block; align-self:flex-start; font-size:12px; font-weight:700; letter-spacing:.02em;
+  line-height:1; padding:6px 9px; border-radius:3px; white-space:nowrap}
+.chip.now{color:var(--chip-now-ink); background:var(--chip-now-bg)}
+.chip.next{color:var(--chip-next-ink); background:var(--chip-next-bg)}
+.chip.partner{color:var(--chip-partner-ink); background:var(--chip-partner-bg)}
+
+/* ---------- status list (closing) ---------- */
+.status{display:flex; flex-direction:column; border-top:1px solid var(--color-line-strong)}
+.status .sr{display:grid; grid-template-columns:11.5em minmax(0,1fr) minmax(0,15em); gap:20px; align-items:baseline;
+  padding:14px 0; border-bottom:1px solid var(--color-line)}
+.status .sr .chip{justify-self:start}
+.status .sr h3{margin-bottom:2px}
+.status .sr p{font-size:calc(var(--f-body)*.92)}
+.status .who{font-size:calc(var(--f-body)*.88); color:var(--color-ink-3)}
+.status .who b{color:var(--color-ink-2); font-weight:600}
+
+/* ---------- steps (a journey in N steps) ---------- */
+.steps{display:grid; grid-template-columns:repeat(auto-fit,minmax(0,1fr)); grid-auto-flow:column; gap:0;
+  border-top:1px solid var(--color-line-strong)}
+.step{padding:14px 18px 4px 0; display:flex; flex-direction:column; gap:6px; border-top:3px solid transparent; margin-top:-2px}
+.step .num{font-family:var(--font-data); font-size:var(--f-meta); color:var(--color-ink-3)}
+.step p{font-size:calc(var(--f-body)*.9)}
+.step.new{border-top-color:var(--color-accent)}
+.step.new .num{color:var(--color-accent)}
+
+/* ---------- table ---------- */
+table{width:100%; border-collapse:collapse; font-size:calc(var(--f-body)*.92)}
+th,td{text-align:left; padding:10px 14px 10px 0; border-bottom:1px solid var(--color-line)}
+thead th{font-size:var(--f-meta); font-weight:600; color:var(--color-ink-3); border-bottom-color:var(--color-line-strong)}
+/* tabular figures only where they align a column: in some grotesques tnum
+   also widens the period and the comma, which opens gaps in running text */
+td.n,th.n{text-align:right; font-variant-numeric:tabular-nums}
+
+/* ---------- product mockup (phone frame) ----------
+   The --app-* tokens belong to the PRODUCT, not to the deck. Replace them
+   with the real tokens of the product's design system; never invent a look. */
+.phone{
+  --app-bg:#ffffff; --app-ink:#1f2329; --app-ink-2:#5f6670; --app-line:#e6e9ed;
+  --app-accent:#30343b; --app-bubble-ai:#f1f3f5; --app-font:var(--font-text);
+  width:262px; height:536px; flex:none; position:relative; overflow:hidden; margin:0 auto;
+  background:var(--app-bg); color:var(--app-ink); font-family:var(--app-font);
+  border:9px solid #16191d; border-radius:42px;
+  box-shadow:0 0 0 1px #3a4048, 0 24px 56px rgba(15,19,26,.28);
+}
+.phone .island{position:absolute; top:8px; left:50%; transform:translateX(-50%); width:76px; height:22px; background:#16191d; border-radius:12px}
+.phone .statusbar{display:flex; justify-content:space-between; padding:10px 22px 4px; font-size:11px; font-weight:700}
+.phone .appbar{display:flex; align-items:center; gap:8px; padding:8px 16px 10px; border-bottom:1px solid var(--app-line);
+  font-size:14px; font-weight:800}
+.phone .thread{padding:12px 11px 0; display:flex; flex-direction:column; gap:8px}
+.b-user{align-self:flex-end; max-width:84%; background:var(--app-accent); color:#fff; border-radius:15px 15px 5px 15px;
+  padding:8px 11px; font-size:11px; line-height:1.45}
+.b-ai{align-self:flex-start; max-width:90%; background:var(--app-bubble-ai); border-radius:5px 15px 15px 15px;
+  padding:8px 11px; font-size:11px; line-height:1.45}
+.widget{border:1px solid var(--app-line); border-radius:13px; padding:11px 12px; display:flex; flex-direction:column; gap:6px}
+.widget .wt{font-size:10px; font-weight:700; color:var(--app-ink-2); letter-spacing:.04em; text-transform:uppercase}
+.widget .wl{display:flex; justify-content:space-between; gap:8px; padding-top:5px; border-top:1px solid var(--app-line); font-size:10.5px}
+.widget .wl span{color:var(--app-ink-2)}
+.phone .label{font-size:9px; color:var(--app-ink-2); border-color:var(--app-ink-2); padding:3px 6px; align-self:flex-start}
+.phone .composer{position:absolute; left:11px; right:11px; bottom:14px; background:var(--app-bubble-ai); border-radius:999px;
+  padding:9px 14px; font-size:10.5px; color:var(--app-ink-2)}
+/* staggered entrance: the template's only motion, and only in the mockup */
+.phone .msg{opacity:1}
+@media (prefers-reduced-motion:no-preference){
+  .phone.seen .msg{animation:enter .42s cubic-bezier(.23,1,.32,1) both; animation-delay:var(--d,0s)}
+}
+@keyframes enter{from{opacity:0; transform:translateY(10px)}to{opacity:1; transform:none}}
+
+/* ---------- dots in two places, kept in sync ----------
+   A vertical rail on the right edge and a row in the footer, next to the
+   counter. 24x24 target, 8px dot; the current one is larger AND in the accent
+   colour, so it does not depend on colour alone. On a narrow screen (<=640px)
+   the right rail goes away: it would cover the text, and the thumb reaches
+   the footer.                                                              */
+.dots{display:flex; gap:0; margin:0; padding:0}
+.dots button{all:unset; box-sizing:border-box; width:24px; height:24px; display:grid; place-items:center;
+  border-radius:50%; cursor:pointer}
+.dots button::before{content:""; width:8px; height:8px; border-radius:50%; background:var(--color-line-strong);
+  transition:background-color .15s ease, transform .15s ease}
+@media (hover:hover){.dots button:hover::before{background:var(--color-ink-3)}}
+.dots button[aria-current="step"]::before{background:var(--color-accent); transform:scale(1.5)}
+.dots button:focus-visible{outline:2px solid var(--color-accent); outline-offset:0}
+.rail{position:fixed; right:10px; top:50%; transform:translateY(-50%); z-index:40; flex-direction:column}
+.navbar{position:fixed; left:0; right:0; bottom:0; height:var(--nav-h); z-index:40;
+  display:flex; align-items:center; justify-content:center; gap:14px}
+.counter{font-family:var(--font-data); font-size:var(--f-meta); color:var(--color-ink-3);
+  letter-spacing:.06em; font-variant-numeric:tabular-nums; min-width:5ch}
+@media (max-width:640px){.rail{display:none}}
+
+/* ---------- responsive (screen; render pins the desktop below) ---------- */
+@media (max-width:900px){
+  .slide{justify-content:flex-start; overflow-y:auto; overscroll-behavior:contain}
+  .split,.c2,.c3{grid-template-columns:1fr}
+  .steps{grid-auto-flow:row; grid-template-columns:1fr}
+  .status .sr{grid-template-columns:1fr; gap:6px}
+}
+
+/* ==========================================================================
+   Render mode (scripts/export-deck.sh adds html.render). Each rule exists
+   because a real export failed without it:
+   1. fixed 13.333in x 7.5in page (16:9), one slide per page;
+   2. animation and transition resolved to their final state;
+   3. blurred shadows go: they turn into hard bands in the PDF and the
+      headless PNG;
+   4. the desktop grid is pinned, because the media query is evaluated
+      against the print viewport and would collapse the columns;
+   5. opaque background per slide; with .transparent the background goes and
+      only what is opaque by token is left (which is why no token here is
+      translucent).
+   ========================================================================== */
+html.render,html.render body{height:auto; overflow:visible}
+html.render body{width:13.333in}
+html.render .rail,html.render .navbar{display:none!important}
+html.render .stage{position:static; overflow:visible}
+html.render .deck{display:block; transform:none!important}
+html.render .slide{width:13.333in; height:7.5in; min-height:0; max-height:7.5in; overflow:hidden;
+  break-after:page; page-break-after:always; padding-top:.5in; padding-bottom:.62in;
+  justify-content:center; background:var(--color-bg)!important}
+html.render .footer{bottom:clamp(18px,2.6vh,30px)}
+html.render .cover{padding-bottom:1.1in}
+html.render .slide:last-child{break-after:auto; page-break-after:auto}
+html.render{--w:11.7in; --f-meta:11px; --f-body:15px; --f-lead:19px; --f-h2:40px; --f-h1:70px; --f-num:30px}
+html.render .split{grid-template-columns:minmax(0,1fr) minmax(0,1.1fr)!important}
+html.render .c2{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+html.render .c3{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+html.render .steps{grid-auto-flow:column!important; grid-template-columns:repeat(auto-fit,minmax(0,1fr))!important}
+html.render .status .sr{grid-template-columns:11.5em minmax(0,1fr) minmax(0,15em)!important; gap:20px!important}
+html.render *,html.render *::before,html.render *::after{animation:none!important; transition:none!important}
+html.render .phone .msg{opacity:1!important; transform:none!important}
+html.render .phone{box-shadow:0 0 0 1px #3a4048!important}
+html.render.transparent,html.render.transparent body,html.render.transparent .slide{background:transparent!important}
+@page{size:13.333in 7.5in; margin:0}
+</style>
+</head>
+<body>
+
+<!-- Optional brand mark. If the project provides an SVG logo, paste it ONCE here
+     as a symbol with id="brand" (keeping the original file's viewBox) and replace
+     the text of each .brand with: <svg viewBox="..." role="img" aria-label="Name"><use href="#brand"></use></svg>
+     Without a project logo, the text is enough. Never draw a logo. -->
+
+<div class="stage">
+<main class="deck">
+
+<!-- COVER -->
+<section class="slide cover" id="s1" aria-label="Cover">
+  <div class="inner">
+    <h1>One sentence that says what the audience <em>takes away</em> from this talk.</h1>
+    <p class="subtitle">One or two sentences, in plain language, on what the deck is about and why it matters to the people in the room.</p>
+    <div class="cover-meta">
+      <span>For <b>the audience</b></span>
+      <span>By <b>the presenter</b></span>
+      <span><b>Month dd, yyyy</b></span>
+      <span>Status <b>draft</b></span>
+    </div>
+  </div>
+  <div class="footer"><span class="brand">Project name</span><span>Confidential</span></div>
+</section>
+
+<!-- CLAIM ON THE LEFT, EVIDENCE ON THE RIGHT -->
+<section class="slide" id="s2" aria-label="Claim and evidence">
+  <div class="inner">
+    <div class="split">
+      <div class="column">
+        <h2>The title is a full sentence that states the slide's point.</h2>
+        <p class="lead">The supporting paragraph is also written in whole, short sentences, the way a person would say it in the room.</p>
+        <div class="callout">One sentence for the audience to remember, set apart from the rest.</div>
+      </div>
+      <div class="column">
+        <div class="ledger">
+          <div class="lr"><span class="k">A fact with its context<small>The qualifier that keeps the number honest.</small></span><span class="v up">$12,345<sup class="ref">1</sup></span></div>
+          <div class="lr"><span class="k">A second fact<small>Same unit and same period as the first.</small></span><span class="v dn">−$678<sup class="ref">2</sup></span></div>
+        </div>
+        <div class="note"><span class="label">Illustrative</span> <b>Both values on this slide are examples.</b> In a real deck, this box says what is illustrative, what was simulated and what still depends on someone else.</div>
+        <ol class="sources">
+          <li>Where the number came from: system, spreadsheet or report, with the cut-off date.</li>
+          <li>Cost comes from the finops or finance agent, never from an estimate made on the slide.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span class="brand">Project name</span><span>Short deck title</span></div>
+</section>
+
+<!-- STEPS -->
+<section class="slide" id="s3" aria-label="Steps">
+  <div class="inner">
+    <h2 class="wide">A journey in steps fits in one strip, with the new step marked.</h2>
+    <div class="steps">
+      <div class="step"><span class="num">1</span><h3>First step</h3><p>What the person does here, in one sentence.</p></div>
+      <div class="step"><span class="num">2</span><h3>Second step</h3><p>What changes for them at this point.</p></div>
+      <div class="step new"><span class="num">3 · new</span><h3>The step the deck proposes</h3><p>The only one marked with the accent.</p></div>
+      <div class="step"><span class="num">4</span><h3>Fourth step</h3><p>No acronyms that only the team knows.</p></div>
+      <div class="step"><span class="num">5</span><h3>Outcome</h3><p>What the person has at the end.</p></div>
+    </div>
+    <p class="fineprint">Five steps is the most that reads from the back of the room. With more, group the steps or split the subject across two slides.</p>
+  </div>
+  <div class="footer"><span class="brand">Project name</span><span>Short deck title</span></div>
+</section>
+
+<!-- PRODUCT MOCKUP -->
+<section class="slide" id="s4" aria-label="Product mockup">
+  <div class="inner">
+    <div class="split">
+      <div class="column">
+        <h2>Showing the product's screen convinces more than a feature table.</h2>
+        <p>The phone uses the product's real tokens, taken from its design system. What does not exist yet carries the preview label and says what it depends on.</p>
+        <div class="note"><b>Before using it:</b> replace the <code>--app-*</code> tokens of <code>.phone</code> with the product's own. The text inside the screen is an example.</div>
+      </div>
+      <div class="phone" role="img" aria-label="Example product screen, with a question, an answer and a summary marked as a preview">
+        <div class="island"></div>
+        <div class="statusbar"><span>9:41</span><span>100%</span></div>
+        <div class="appbar">Your product</div>
+        <div class="thread">
+          <div class="b-user msg" style="--d:.1s">A question a customer would really ask.</div>
+          <div class="b-ai msg" style="--d:.5s">The answer the product gives today, in its own words.</div>
+          <div class="widget msg" style="--d:.9s">
+            <span class="label">Preview · depends on a partner</span>
+            <span class="wt">Summary</span>
+            <div class="wl"><span>First item</span><b>$1,000</b></div>
+            <div class="wl"><span>Second item</span><b>$250</b></div>
+            <div class="wl"><span>Total</span><b>$1,250</b></div>
+          </div>
+        </div>
+        <div class="composer">Write a message…</div>
+      </div>
+    </div>
+  </div>
+  <div class="footer"><span class="brand">Project name</span><span>Short deck title</span></div>
+</section>
+
+<!-- CLOSING WITH STATUS -->
+<section class="slide" id="s5" aria-label="Next steps">
+  <div class="inner">
+    <h2 class="wide">The closing slide says what you are asking for, and from whom.</h2>
+    <div class="status">
+      <div class="sr"><span class="chip now">Exists today</span><div><h3>What is already standing</h3><p>It can be shown now, in the product the customer uses.</p></div><span class="who">Owner <b>the team</b></span></div>
+      <div class="sr"><span class="chip next">Team can do it alone</span><div><h3>What the team builds without anyone else</h3><p>Say how long it takes and with which people.</p></div><span class="who">Due <b>a date</b></span></div>
+      <div class="sr"><span class="chip partner">Depends on a partner</span><div><h3>What is truly blocked</h3><p>Say by whom, without inventing a partner's name.</p></div><span class="who">Depends on <b>a kind of partner</b></span></div>
+    </div>
+  </div>
+  <div class="footer"><span class="brand">Project name</span><span>Short deck title · Confidential</span></div>
+</section>
+
+</main>
+</div>
+
+<nav class="dots rail" aria-label="Slides"></nav>
+<nav class="navbar" aria-label="Deck navigation">
+  <div class="dots footer-dots"></div>
+  <span class="counter" aria-live="polite"></span>
+</nav>
+
+<script>
+/* Navigation: any arrow changes slide. → ↓ PageDown Space go forward; ← ↑ PageUp
+   Shift+Space go back; Home and End go to the ends. Horizontal swipe on touch.
+   #3 opens slide 3 and the URL follows. Both rows of dots and the counter come
+   from the same state. Do not rename anything: the test and the export use it. */
+(function(){
+  var r=document.documentElement, deck=document.querySelector(".deck");
+  var slides=[].slice.call(document.querySelectorAll(".slide")), N=slides.length, current=-1;
+  var two=function(n){return (n<10?"0":"")+n;};
+  slides.forEach(function(s,i){ s.setAttribute("data-num", two(i+1)+" / "+two(N)); });
+  var groups=[].slice.call(document.querySelectorAll(".rail,.footer-dots")).map(function(g){
+    return slides.map(function(s,i){
+      var b=document.createElement("button");
+      b.type="button"; b.setAttribute("aria-label","Go to slide "+(i+1)+" of "+N);
+      b.addEventListener("click",function(){ go(i); });
+      g.appendChild(b); return b;
+    });
+  });
+  var counter=document.querySelector(".counter");
+
+  function go(n, noUrl){
+    n=Math.max(0,Math.min(N-1,n));
+    if(n===current) return;
+    current=n;
+    deck.style.setProperty("--current", n);
+    slides.forEach(function(s,i){
+      if(i===n){ s.removeAttribute("inert"); s.removeAttribute("aria-hidden"); }
+      else { s.setAttribute("inert",""); s.setAttribute("aria-hidden","true"); }
+      [].forEach.call(s.querySelectorAll(".phone"),function(c){ c.classList.toggle("seen", i===n); });
+    });
+    groups.forEach(function(g){ g.forEach(function(b,i){
+      if(i===n) b.setAttribute("aria-current","step"); else b.removeAttribute("aria-current");
+    }); });
+    if(counter) counter.textContent=(n+1)+" / "+N;
+    if(!noUrl && history.replaceState) history.replaceState(null,"","#"+(n+1));
+  }
+  function fromHash(){
+    var h=decodeURIComponent(location.hash.slice(1)), n=parseInt(h,10);
+    if(String(n)===h) return n-1;
+    var s=h&&document.getElementById(h);
+    return s&&slides.indexOf(s)>=0?slides.indexOf(s):0;
+  }
+
+  document.addEventListener("keydown",function(e){
+    var t=e.target, k=e.key, tag=t&&t.tagName;
+    if(e.defaultPrevented||e.altKey||e.ctrlKey||e.metaKey) return;
+    if(t&&(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"||t.isContentEditable)) return;
+    if((k===" "||k==="Enter")&&(tag==="BUTTON"||tag==="A"||tag==="SUMMARY")) return;
+    var n;
+    if(k==="ArrowRight"||k==="ArrowDown"||k==="PageDown"||(k===" "&&!e.shiftKey)) n=current+1;
+    else if(k==="ArrowLeft"||k==="ArrowUp"||k==="PageUp"||(k===" "&&e.shiftKey)) n=current-1;
+    else if(k==="Home") n=0;
+    else if(k==="End") n=N-1;
+    else return;
+    e.preventDefault(); go(n);
+  });
+
+  var x0=null, y0=0;
+  addEventListener("touchstart",function(e){ if(e.touches.length===1){ x0=e.touches[0].clientX; y0=e.touches[0].clientY; } },{passive:true});
+  addEventListener("touchend",function(e){
+    if(x0===null) return;
+    var dx=e.changedTouches[0].clientX-x0, dy=e.changedTouches[0].clientY-y0; x0=null;
+    if(Math.abs(dx)>48 && Math.abs(dx)>Math.abs(dy)*1.5) go(current+(dx<0?1:-1));
+  },{passive:true});
+  addEventListener("hashchange",function(){ go(fromHash(), true); });
+
+  go(fromHash(), true);
+  window.deck={go:go, current:function(){return current;}, total:N};
+})();
+</script>
+</body>
+</html>

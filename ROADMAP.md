@@ -25,13 +25,19 @@ worktree where another live session has edited recently, deny the first edit
 and say which session holds the tree and how to get a worktree of its own.
 
 ### Other harnesses
-The agents are Markdown and the session report already reads Codex and pi
-transcripts. The hooks speak only Claude Code's hook protocol.
+The agents are Markdown and the session report already reads Codex, pi and
+oh-my-pi transcripts. The hooks speak only Claude Code's hook protocol.
 
-*Wanted:* the watcher's rules ported to Codex, pi, Gemini CLI or OpenCode. The
-arithmetic (`handoff_math`) is harness-neutral; the event plumbing is not. A
-port should say which rules the harness can enforce mechanically and which it
-can only advise.
+Oh-my-pi (omp) is ported: `skills/harness-port/SKILL.md` renders the agents
+into its task-agent contract, `hooks/squad-watch-omp.py` plus
+`extensions/squad-watch-omp.ts` route its events into the watcher, and the
+skill states which rules omp enforces mechanically and which it can only
+advise.
+
+*Wanted:* the same for Codex, pi, Gemini CLI or OpenCode. The arithmetic
+(`handoff_math`) is harness-neutral; the event plumbing is not. A port should
+say which rules the harness can enforce mechanically and which it can only
+advise.
 
 ### An observe-only mode
 There is no way to run the watcher so that it logs what it *would* have done
@@ -55,8 +61,9 @@ have `Bash`, which can write.
 
 *Wanted:* per-agent permission rules that allow the read-only commands each
 one needs (`git log`, `git diff`, the suite, `agenfk`, `gh pr view`) and deny
-the rest. The verifier is the hard one: it mutates code to test the tests, so
-it needs a scratch worktree it can write to and nothing else.
+the rest. The verifier is the hard one: reproducing the suite and probing the branch
+write caches and scratch files, so it needs a scratch worktree it can write
+to and nothing else.
 
 ### Internationalisation
 Everything is in English. The two regexes that read the owner's prompt accept
@@ -92,10 +99,13 @@ These need data more than code.
 ## Smaller things
 
 - macOS: untested. The hooks use `fcntl` and POSIX paths; reports welcome.
-- Windows: not supported. WSL should behave like Linux.
+- Windows: supported natively (`get.ps1`, `install.ps1`, a Windows CI job);
+  WSL behaves like Linux. Open on Windows: a session switch without herdr, a
+  marked copy that becomes a link by itself when Developer Mode is turned on,
+  and a hook command that works in PowerShell when only an absolute
+  interpreter path is found. See [Known limitations on
+  Windows](docs/installation.md#known-limitations-on-windows).
 - `install.sh --uninstall` and `install.sh --dry-run`.
-- A `squad-watch doctor` command that checks hook registration and prints the
-  effective thresholds.
 - A report that turns `metrics.jsonl` into the table at the top of the
   README, for your own machine.
 - More tests around the session report (`session_context.py`); the suite

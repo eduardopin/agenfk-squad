@@ -1,0 +1,942 @@
+{
+  "schema_version": 1,
+  "project": "Hypothetical example: work-order bootstrap in one staging environment",
+  "max_workers": 4,
+  "contracts": [
+    {
+      "id": "API",
+      "version": "0.1.0",
+      "status": "draft",
+      "owner": "worker-api"
+    },
+    {
+      "id": "DATA",
+      "version": "0.1.0",
+      "status": "draft",
+      "owner": "worker-api"
+    },
+    {
+      "id": "RUNTIME",
+      "version": "0.1.0",
+      "status": "draft",
+      "owner": "worker-platform"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "DISCOVERY",
+      "title": "Verify scope, existing resources and bootstrap access",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [],
+      "writes": [
+        "reports/discovery/**"
+      ],
+      "locks": [],
+      "requires_contracts": [],
+      "produces": [
+        "Observed inventory with sources and gaps",
+        "Inputs for account, region, network, repo, runner, identity and budget"
+      ],
+      "acceptance": [
+        "Confirm or reject each reuse assumption without creating resources",
+        "Identify the real OIDC format and the backend locking mechanism",
+        "Record any absence as a blocker of the dependent actions, preserving independent authoring"
+      ],
+      "estimate_minutes": 35
+    },
+    {
+      "id": "CONTRACT-DRAFT",
+      "title": "Draft minimal contracts for the flow, the data and the runtime",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [],
+      "writes": [
+        "contracts/**"
+      ],
+      "locks": [
+        "contract-registry"
+      ],
+      "requires_contracts": [],
+      "produces": [
+        "Versioned drafts of API, DATA and RUNTIME",
+        "Examples and fakes for opening, listing, updating and completing an order with a synthetic attachment"
+      ],
+      "acceptance": [
+        "Declare assumptions, exclusions, roles and expected errors",
+        "Define serving the web from the same artifact as the API, configuration, health/readiness, identity and secret refs",
+        "Do not present drafts as approved or implemented"
+      ],
+      "estimate_minutes": 50
+    },
+    {
+      "id": "CONTRACT-REVIEW",
+      "title": "Review contracts and decide on releasing the consumers",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "DISCOVERY",
+        "CONTRACT-DRAFT"
+      ],
+      "writes": [
+        "reports/contracts/**"
+      ],
+      "locks": [
+        "reviewer:shared",
+        "contract-registry"
+      ],
+      "requires_contracts": [],
+      "produces": [
+        "Decision recorded per contract with review and open items",
+        "Conditions for a future snapshot with stable contracts"
+      ],
+      "acceptance": [
+        "Resolve differences between discovery and drafts before releasing consumers",
+        "Obtain acceptance from the contract owners and record evidence of the decision",
+        "Keep contracts draft in the initial snapshot; the forecast conditionally assumes this task is complete"
+      ],
+      "estimate_minutes": 25
+    },
+    {
+      "id": "BASE-AUTHOR",
+      "title": "Prepare, in one PR, the platform base that is independent of the application",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "DISCOVERY"
+      ],
+      "writes": [
+        "infra/foundation/**",
+        "docs/foundation/**"
+      ],
+      "locks": [],
+      "requires_contracts": [],
+      "produces": [
+        "IaC composition for registry, private bucket, DB, identities and logs",
+        "Typed inputs and outputs, static validation and cost assumption"
+      ],
+      "acceptance": [
+        "Do not depend on an application image or backend code",
+        "Use network, backend, runner and bootstrap identity only if verified",
+        "Preserve parametric configuration and review conformance to DATA/RUNTIME before the merge"
+      ],
+      "estimate_minutes": 70
+    },
+    {
+      "id": "BASE-REVIEW",
+      "title": "Review the platform base PR",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "BASE-PLAN"
+      ],
+      "writes": [
+        "reports/reviews/base/**"
+      ],
+      "locks": [
+        "reviewer:shared"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Review opinion on diff, interfaces, IAM, data, cost and recovery"
+      ],
+      "acceptance": [
+        "A reviewer other than the authoring owner examines the IaC diff and the real plan of the same candidate revision",
+        "Check that inventory, inputs, effects, cost and recovery match the published plan; require updated evidence if the content changes",
+        "Examine concrete risks and relevant tests, without requiring the application or the backend to be ready"
+      ],
+      "estimate_minutes": 25
+    },
+    {
+      "id": "BASE-MERGE",
+      "title": "Integrate the base PR according to the applicable checks",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "BASE-REVIEW"
+      ],
+      "writes": [],
+      "locks": [
+        "repo:merge"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Integrated commit of the foundation composition"
+      ],
+      "acceptance": [
+        "Merge identified by SHA and the repository's real checks",
+        "Run only within the authorized scope, preserving existing rules"
+      ],
+      "estimate_minutes": 10
+    },
+    {
+      "id": "BASE-PLAN",
+      "title": "Generate the real plan of the base in the verified environment",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "BASE-AUTHOR",
+        "CONTRACT-REVIEW"
+      ],
+      "writes": [
+        "evidence/staging/foundation-plan/**"
+      ],
+      "locks": [
+        "terraform:staging-foundation"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Real plan of the authoring branch, identified by commit, IaC content, lockfiles and inputs",
+        "Summary of creations, estimated cost and effects for the review of PR-01"
+      ],
+      "acceptance": [
+        "Confirm account, region, backend and identity before the real plan of the candidate branch",
+        "Reconcile the resource inventory with the plan diff; republish the plan and the map if creations, changes or dependencies that were not forecast appear",
+        "Do not publish sensitive values or use a state change to work around a divergence"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "BASE-APPLY",
+      "title": "Apply the base using the already verified bootstrap identity",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "BASE-MERGE"
+      ],
+      "writes": [
+        "evidence/staging/foundation-apply/**"
+      ],
+      "locks": [
+        "terraform:staging-foundation",
+        "environment:staging-foundation"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Base resources created in staging and outputs observed"
+      ],
+      "acceptance": [
+        "Confirm that the integrated commit, IaC content, lockfiles, inputs and target match the reviewed plan immediately before the apply",
+        "If content or relevant state changed, recompute the plan, reconcile and republish the inventory and review only the material differences; do not require redundant approval of an unchanged plan",
+        "Check existing authorization and budget; a real absence blocks this apply",
+        "Do not wait for API, web, runtime PR or image to create registry, DB, bucket and identities"
+      ],
+      "estimate_minutes": 35
+    },
+    {
+      "id": "BASE-VERIFY",
+      "title": "Prove the readiness of the base before the runtime",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "BASE-APPLY"
+      ],
+      "writes": [
+        "evidence/staging/foundation-verify/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Evidence of registry, DB, private bucket, roles and logs",
+        "Outputs published without plaintext secrets"
+      ],
+      "acceptance": [
+        "Check existence, configuration, network reach and allowed/denied permissions",
+        "Verify the DB is available without claiming the application schema is installed",
+        "Record the base as ready regardless of when coding ends"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "API-AUTHOR",
+      "title": "Implement API, migration and restricted credential bootstrap",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "CONTRACT-REVIEW"
+      ],
+      "writes": [
+        "apps/api/**",
+        "db/migrations/**",
+        "tests/api/**"
+      ],
+      "locks": [
+        "db:schema-authoring"
+      ],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Local API with dependency fakes",
+        "Additive migration and idempotent routine for the restricted DB user",
+        "Contract and behavior tests"
+      ],
+      "acceptance": [
+        "Implement only orders, the planned roles and the synthetic attachments of the slice",
+        "Validate IdP tokens and prevent access outside the role",
+        "Do not use the DB administrative credential in the normal runtime"
+      ],
+      "estimate_minutes": 150
+    },
+    {
+      "id": "WEB-AUTHOR",
+      "title": "Implement the web flow against the contract and fakes",
+      "owner": "worker-web",
+      "status": "todo",
+      "depends_on": [
+        "CONTRACT-REVIEW"
+      ],
+      "writes": [
+        "apps/web/**",
+        "tests/web/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "API",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Navigable web with login through the existing IdP and the orders flow",
+        "Static build to be served in the API artifact"
+      ],
+      "acceptance": [
+        "Cover loading, error, empty and validation states",
+        "Use compatible fakes without requiring applied infrastructure",
+        "Keep the web dependencies and lockfile within its area"
+      ],
+      "estimate_minutes": 120
+    },
+    {
+      "id": "CI-AUTHOR",
+      "title": "Prepare CI and delivery by digest in one capability PR",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "CONTRACT-REVIEW"
+      ],
+      "writes": [
+        ".github/workflows/**",
+        "build/**",
+        "delivery/github/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "CI and delivery workflows",
+        "Build of the single artifact with web and API",
+        "Declared environment and identity configuration"
+      ],
+      "acceptance": [
+        "Separate credential-free validation from privileged jobs",
+        "Provide for an identity smoke test without requiring an integrated app",
+        "Prepare promotion by digest and migration through the verified private runner"
+      ],
+      "estimate_minutes": 45
+    },
+    {
+      "id": "QA-AUTHOR",
+      "title": "Prepare acceptance scenarios and fixtures independent of the backend",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "CONTRACT-REVIEW"
+      ],
+      "writes": [
+        "tests/e2e/**",
+        "tests/fixtures/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Scenarios for the flow, denied access and attachment behavior",
+        "Synthetic fixtures and evidence criteria"
+      ],
+      "acceptance": [
+        "Relate scenarios to the contract and to the risks of the slice",
+        "Do not treat test preparation as a successful run"
+      ],
+      "estimate_minutes": 35
+    },
+    {
+      "id": "QA-REVIEW",
+      "title": "Review the scenarios written by the delivery owner",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "QA-AUTHOR"
+      ],
+      "writes": [
+        "reports/reviews/quality/**"
+      ],
+      "locks": [
+        "reviewer:shared"
+      ],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Independent review of scenarios and fixtures"
+      ],
+      "acceptance": [
+        "Check expected results and the absence of a circular dependency with the implementation",
+        "Do not approve a scenario only because it repeats the code"
+      ],
+      "estimate_minutes": 15
+    },
+    {
+      "id": "RUNTIME-AUTHOR",
+      "title": "Prepare the runtime composition without waiting for the backend to be ready",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "CONTRACT-REVIEW"
+      ],
+      "writes": [
+        "infra/runtime/**",
+        "docs/runtime/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "IaC for task definition, service, target group, listener rule and alarms",
+        "Inputs for digest, secrets and foundation outputs"
+      ],
+      "acceptance": [
+        "Validate authoring with typed inputs and identified placeholders",
+        "Separate the real plan/apply, which depend on the image and the prepared DB",
+        "Do not create Kubernetes, a new ALB or a new VPC"
+      ],
+      "estimate_minutes": 60
+    },
+    {
+      "id": "CI-REVIEW",
+      "title": "Review the CI/CD PR and the identity limits",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "CI-AUTHOR"
+      ],
+      "writes": [
+        "reports/reviews/delivery/**"
+      ],
+      "locks": [
+        "reviewer:shared"
+      ],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "Review opinion on workflows, permissions, build and promotion"
+      ],
+      "acceptance": [
+        "Check immutable references and the handling of untrusted inputs",
+        "Check that the pipeline does not require the new role to run the first bootstrap"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "CI-MERGE",
+      "title": "Integrate workflows and the declared delivery configuration",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "CI-REVIEW"
+      ],
+      "writes": [],
+      "locks": [
+        "repo:merge"
+      ],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "Integrated commit of the CI/CD PR"
+      ],
+      "acceptance": [
+        "Preserve the checks and authorization already established",
+        "Record the integrated SHA without claiming the workflow ran"
+      ],
+      "estimate_minutes": 10
+    },
+    {
+      "id": "CI-ACTIVATE",
+      "title": "Activate the environment and configure the use of the new identity",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "CI-MERGE",
+        "BASE-VERIFY"
+      ],
+      "writes": [
+        "evidence/staging/delivery-activate/**"
+      ],
+      "locks": [
+        "github:environment-staging"
+      ],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "Staging environment and workflows configured in the existing repository"
+      ],
+      "acceptance": [
+        "Reconcile declared configuration and references to secrets without exposing values",
+        "Use the delivery role created by the foundation, without a permanent credential in a file",
+        "Record the workflow revision materialized by the merge and its activation"
+      ],
+      "estimate_minutes": 15
+    },
+    {
+      "id": "CI-VERIFY",
+      "title": "Run a CI and identity smoke test without deploying",
+      "owner": "worker-web",
+      "status": "todo",
+      "depends_on": [
+        "CI-ACTIVATE"
+      ],
+      "writes": [
+        "evidence/staging/delivery-verify/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "Verifiable validation and identity run",
+        "Evidence of correct permissions and targets"
+      ],
+      "acceptance": [
+        "Observe the real workflow and the restricted federated identity",
+        "Keep this evidence separate from the application build and deploy, still pending"
+      ],
+      "estimate_minutes": 15
+    },
+    {
+      "id": "APP-ASSEMBLE",
+      "title": "Consolidate the flow into one reviewable diff before the PR review",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "API-AUTHOR",
+        "WEB-AUTHOR",
+        "QA-REVIEW"
+      ],
+      "writes": [
+        "apps/api/**",
+        "apps/web/**",
+        "db/migrations/**",
+        "tests/api/**",
+        "tests/web/**",
+        "tests/e2e/**",
+        "tests/fixtures/**",
+        "reports/integration/application/**"
+      ],
+      "locks": [
+        "integration:application",
+        "branch:pr-02"
+      ],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Consolidated branch/commit of API, web, migration and tests for PR-02",
+        "Integrated diff and results of the local tests relevant to the set"
+      ],
+      "acceptance": [
+        "Consolidate identified commits from the independent worktrees and resolve conflicts before requesting review",
+        "Confirm the set's contracts, lockfiles and migrations and run the relevant local tests",
+        "Keep a single PR for the flow; do not claim real integration in staging from these local tests"
+      ],
+      "estimate_minutes": 30
+    },
+    {
+      "id": "APP-REVIEW",
+      "title": "Review the flow PR with API, web, migration and tests",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "APP-ASSEMBLE"
+      ],
+      "writes": [
+        "reports/reviews/application/**"
+      ],
+      "locks": [
+        "reviewer:shared"
+      ],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Integrated review opinion on the first product capability"
+      ],
+      "acceptance": [
+        "Review the consolidated diff and commit in APP-ASSEMBLE, with evidence of the set's local tests",
+        "Review API and web code with an owner other than the authors",
+        "Use the independent review of the reviewer's own QA files",
+        "Validate contract, relevant tests and migration plan"
+      ],
+      "estimate_minutes": 30
+    },
+    {
+      "id": "APP-MERGE",
+      "title": "Integrate the first product capability",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "APP-REVIEW"
+      ],
+      "writes": [],
+      "locks": [
+        "repo:merge"
+      ],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Integrated commit of the work-order flow"
+      ],
+      "acceptance": [
+        "Tie the merge to the checks and reviews actually completed",
+        "Do not equate a merge with a deployed application"
+      ],
+      "estimate_minutes": 10
+    },
+    {
+      "id": "BUILD-PUBLISH",
+      "title": "Build and publish the release candidate by digest",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "APP-MERGE",
+        "CI-VERIFY",
+        "BASE-VERIFY"
+      ],
+      "writes": [
+        "evidence/staging/build/**"
+      ],
+      "locks": [
+        "registry:orders-staging"
+      ],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "OCI image containing API and web",
+        "Digest, commit, dependency inventory and build results"
+      ],
+      "acceptance": [
+        "Publish to the ECR created by the foundation using a restricted identity",
+        "Use identified sources and dependencies and do not include secrets"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "IMAGE-VERIFY",
+      "title": "Check the identity and minimal behavior of the artifact",
+      "owner": "worker-web",
+      "status": "todo",
+      "depends_on": [
+        "BUILD-PUBLISH"
+      ],
+      "writes": [
+        "evidence/staging/image-verify/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "Verified digest and local smoke test of the published artifact"
+      ],
+      "acceptance": [
+        "Check the link between the digest and the tested commit",
+        "Verify port, health, web assets and the absence of embedded sensitive configuration"
+      ],
+      "estimate_minutes": 10
+    },
+    {
+      "id": "RUNTIME-REVIEW",
+      "title": "Review the runtime PR and its integration with the base",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "RUNTIME-AUTHOR"
+      ],
+      "writes": [
+        "reports/reviews/runtime/**"
+      ],
+      "locks": [
+        "reviewer:shared"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Review opinion on runtime, exposure, secret refs and alarms"
+      ],
+      "acceptance": [
+        "Check stable inputs and a compatible network",
+        "Require a real digest only in the plan and apply, without blocking authoring"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "RUNTIME-MERGE",
+      "title": "Integrate the reviewed runtime composition",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "RUNTIME-REVIEW"
+      ],
+      "writes": [],
+      "locks": [
+        "repo:merge"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Integrated commit of the runtime"
+      ],
+      "acceptance": [
+        "Record SHA and completed checks",
+        "Keep foundation and runtime in separate roots/states"
+      ],
+      "estimate_minutes": 10
+    },
+    {
+      "id": "RUNTIME-PLAN",
+      "title": "Generate the runtime plan with real outputs and digest",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "RUNTIME-MERGE",
+        "BASE-VERIFY",
+        "IMAGE-VERIFY"
+      ],
+      "writes": [
+        "evidence/staging/runtime-plan/**"
+      ],
+      "locks": [
+        "terraform:staging-runtime"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Real plan of the service activation with a verified digest"
+      ],
+      "acceptance": [
+        "Check replacements, exposure and capacity of one staging replica",
+        "Record the dependency on the schema verification before the apply"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "SCHEMA-APPLY",
+      "title": "Apply the migration and initialize the restricted DB identity",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "IMAGE-VERIFY",
+        "BASE-VERIFY"
+      ],
+      "writes": [
+        "evidence/staging/schema-apply/**"
+      ],
+      "locks": [
+        "database:orders-staging"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Orders schema and application user",
+        "Initial version of the application secret"
+      ],
+      "acceptance": [
+        "Run on the verified private runner using an identified artifact",
+        "Generate and store the restricted credential without printing the value or including it in state",
+        "Make the routine idempotent and preserve semantics on resume"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "SCHEMA-VERIFY",
+      "title": "Verify integrity and privilege of the prepared schema",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "SCHEMA-APPLY"
+      ],
+      "writes": [
+        "evidence/staging/schema-verify/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Evidence of migration, restricted user and retrievable secret"
+      ],
+      "acceptance": [
+        "Validate positive and negative permissions with synthetic data",
+        "Check the integrity and version of the migration before the runtime"
+      ],
+      "estimate_minutes": 15
+    },
+    {
+      "id": "RUNTIME-APPLY",
+      "title": "Activate the service after the image and schema are verified",
+      "owner": "worker-platform",
+      "status": "todo",
+      "depends_on": [
+        "RUNTIME-PLAN",
+        "SCHEMA-VERIFY"
+      ],
+      "writes": [
+        "evidence/staging/runtime-apply/**"
+      ],
+      "locks": [
+        "terraform:staging-runtime",
+        "environment:staging-runtime"
+      ],
+      "requires_contracts": [
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Fargate service, routing and alarms applied"
+      ],
+      "acceptance": [
+        "Apply the plan that matches the authorized digest, commit and environment",
+        "Preserve the real lock of the runtime state",
+        "Record one staging replica without claiming high availability"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "RUNTIME-VERIFY",
+      "title": "Verify the deployment and its operational signals",
+      "owner": "worker-delivery-qa",
+      "status": "todo",
+      "depends_on": [
+        "RUNTIME-APPLY"
+      ],
+      "writes": [
+        "evidence/staging/runtime-verify/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "RUNTIME"
+      ],
+      "produces": [
+        "Evidence of deployed digest, readiness, routing, logs and alarms"
+      ],
+      "acceptance": [
+        "Check the real resource and smoke traffic through the planned ingress",
+        "Verify secret refs and log arrival without leakage",
+        "Record the absence of data in the alarms without calling it a completed alert test"
+      ],
+      "estimate_minutes": 20
+    },
+    {
+      "id": "E2E-VERIFY",
+      "title": "Run the complete flow in staging with real implementations",
+      "owner": "worker-web",
+      "status": "todo",
+      "depends_on": [
+        "RUNTIME-VERIFY",
+        "QA-AUTHOR"
+      ],
+      "writes": [
+        "evidence/staging/e2e/**"
+      ],
+      "locks": [],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Results of opening, listing, updating, completing and attachments",
+        "Evidence of allowed/denied access and data integration"
+      ],
+      "acceptance": [
+        "Run scenarios against the real service and IdP of the authorized staging",
+        "Use only synthetic data and identified test objects",
+        "Verify behavior and the corresponding operational evidence"
+      ],
+      "estimate_minutes": 35
+    },
+    {
+      "id": "RELEASE-REVIEW",
+      "title": "Consolidate staging readiness, limits and recovery",
+      "owner": "worker-api",
+      "status": "todo",
+      "depends_on": [
+        "E2E-VERIFY"
+      ],
+      "writes": [
+        "reports/release/**"
+      ],
+      "locks": [
+        "reviewer:shared"
+      ],
+      "requires_contracts": [
+        "API",
+        "DATA",
+        "RUNTIME"
+      ],
+      "produces": [
+        "Readiness report for the slice and resume runbook",
+        "Explicit list of what was not run or validated"
+      ],
+      "acceptance": [
+        "Reference real commits, digests, runs and verifications",
+        "Distinguish the test environment from production",
+        "Do not turn the absence of an observed failure into a guarantee of availability or security"
+      ],
+      "estimate_minutes": 20
+    }
+  ]
+}

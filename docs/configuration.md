@@ -33,9 +33,15 @@ are taken as given: `SQUAD_MAX_REVIEWS=0` denies every reviewer.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SQUAD_WATCH` | on | `0` disables the watcher entirely (all five events) |
+| `SQUAD_WATCH` | on | `0` disables the watcher entirely (all seven events) |
 | `SQUAD_SWITCH` | on | `0` disables only the automatic session switch; handoffs are still ordered |
 | `SQUAD_TURN` | on | `0` disables only the merge queue |
+
+## Skill trials
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SKILL_TRIAL_OUT` | `~/.cache/skill-trial` | Folder under which `skills/skill-trial/scripts/trial.sh` writes one folder per run. `--out` overrides it. It is bound writable inside the trial's jail, so `trial.sh` refuses (exit 64, nothing created) a folder that is, holds or sits inside `~/.claude`, `~/.config`, `~/.local`, `~/.ssh` or `~/.aws`, or that is `$HOME` or holds it |
 
 ## Main session: when to hand off
 
@@ -44,7 +50,7 @@ See [watcher.md](watcher.md#the-handoff-arithmetic) for the arithmetic.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SQUAD_WINDOW` | 1,000,000 | Context window of the main session, in tokens. When unset, the watcher uses 1M, or a larger value if a status line recorded one in `~/.claude/cache/session-tokens/<session>.json` |
-| `SQUAD_CTX_PCT` | 80 | Percent of the window at which the handoff is ordered regardless of anything else. Clamped to 10–100 |
+| `SQUAD_CTX_PCT` | 90 | Percent of the window at which the handoff is ordered regardless of anything else. Clamped to 10–100 |
 | `SQUAD_REREAD` | 60 | Reread share, in percent, at which the reread rule can fire. Clamped to 10–95 |
 | `SQUAD_REREAD_FLOOR` | 50 | Percent of the window that is the lowest the floor can go |
 | `SQUAD_BURN_FULL` | 50 | Percent of the session budget at which the floor reaches its lowest point |
@@ -69,20 +75,50 @@ denial after 3 identical calls in a row.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SQUAD_CTX_CEILING` | 600,000 | Orchestrator context above which a new dispatch is denied and a handoff ordered |
-| `SQUAD_MAX_SUBS` | 40 | Sub-sessions one main session may spawn |
-| `SQUAD_MAX_ORCH` | 3 | Sessions that may orchestrate sub-agents at the same time, across the machine |
-| `SQUAD_ORCH_HERE` | 120,000 | With no orchestrator slot: below this context the card is implemented in the session itself; at or above it, handoff with the plan |
+| `SQUAD_CTX_CEILING` | 800,000 | Orchestrator context above which a new dispatch is denied and a handoff ordered |
+| `SQUAD_MAX_SUBS` | 60 | Sub-sessions one main session may spawn |
+| `SQUAD_MAX_ORCH` | 6 | Sessions that may orchestrate sub-agents at the same time, across the machine |
+| `SQUAD_ORCH_HERE` | 500,000 | With no orchestrator slot: below this context the card is implemented in the session itself; at or above it, handoff with the plan |
 | `SQUAD_MAX_REVIEWS` | 6 | Reviewer dispatches allowed for the same card. The next one is denied |
+
+## The review gate
+
+See [watcher.md](watcher.md#the-review-gate-no-self-approval).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SQUAD_REVIEW_STEPS` | `REVIEW,ADVERSARIAL` | Comma-separated flow steps (case does not matter) that `agenfk verify` may not leave without a recorded reviewer dispatch for the card. `HEAVY_REVIEW` is not in the default: its review is `squad-review`, run by the main session with another model, not a dispatch; name it here to gate it anyway. Empty turns the gate off |
+| `SQUAD_REVIEW_MEMORY_DAYS` | 14 | Days a reviewer dispatch for a card is remembered, across sessions, in `~/.claude/squad/reviews/`. Minimum 1 |
+| `SQUAD_SELF_REVIEW_OK` | unset | A card id: the owner lets that card through the gate once, and the pass is logged. Set it in the environment Claude Code runs in; a prefix on a command does not reach the hook |
 
 ## The merge queue
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SQUAD_TURN_IDLE` | 900 | Seconds without activity from the holding session before the turn is released |
-| `SQUAD_TURN_MAX` | 3600 | Seconds after which the turn is released in any case |
-| `SQUAD_TURN_CLAIM` | 300 | Seconds a called session has to show up before the turn passes on |
+| `SQUAD_TURN_HOLD` | 120 | Seconds a merge call may hold the turn; a turn held longer expires (the call never came back) |
+| `SQUAD_TURN` | unset | `0` turns off the turn, the conflict check and the seal |
+| `SQUAD_SEAL` | unset | `1` turns the merge seal on, `0` off; unset, `git config squad.seal` decides |
 | `SQUAD_GH` | `gh` | The GitHub CLI binary used to read a PR's state |
+
+Per repository, with `git config`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `squad.seal` | `false` | `true`: a PR merge or a push to the trunk passes only if the SHA has a SHIP seal (`squad-seal record`) |
+| `squad.trunk` | unset | Comma-separated branches that also count as the trunk, besides main, master and the remote's default branch |
+
+`SQUAD_TURN_IDLE`, `SQUAD_TURN_MAX` and `SQUAD_TURN_CLAIM` were removed: the turn now covers only the merge call itself.
+
+## Project decisions
+
+Read by `hooks/squad-decisions.py` (the SessionStart index and the
+`squad-decisions` command). See [decisions.md](decisions.md).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SQUAD_DECISIONS` | on | `0` turns the SessionStart index off; the `squad-decisions` command still works |
+| `SQUAD_DECISIONS_DIR` | `~/.claude/squad/decisions` | Root of the decision stores; each repository gets `<root>/<repo key>/`, the same key from every worktree |
+| `SQUAD_DECISIONS_BUDGET` | 4000 | Bytes the SessionStart index may print; newest first, the rest named as left out |
 
 ## The session switch
 
@@ -91,6 +127,9 @@ denial after 3 identical calls in a row.
 | `HERDR_PANE_ID` | set by herdr | The pane the session runs in. Without it there is no automatic switch |
 | `HERDR_BIN_PATH` | `herdr` | The herdr binary |
 | `SQUAD_SWITCH_PROMPT` | `/clear-pickup pickup` | The command sent to the fresh session. Exists for testing |
+| `SQUAD_SWITCH_WAIT` | 600 | Seconds the switch waits for a background shell or monitor before going out anyway |
+| `SQUAD_SWITCH_WAIT_AGENT` | 2,400 | Seconds the switch waits for a background sub-agent before going out anyway |
+| `SQUAD_SWITCH_BUSY` | 1,800 | Seconds past that deadline the wait keeps going while the session is busy or herdr does not answer; then it gives up |
 
 ## The session report
 

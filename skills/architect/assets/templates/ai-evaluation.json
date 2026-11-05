@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "feature_id": null,
+  "status": "draft",
+  "baseline": null,
+  "candidate": {
+    "model_profile": null,
+    "prompt_version": null,
+    "tool_contract_versions": []
+  },
+  "datasets": {
+    "development": null,
+    "held_out": null,
+    "critical_failure_cases": null
+  },
+  "dimensions": [
+    "task_success",
+    "correctness",
+    "grounding",
+    "authorization",
+    "abstention",
+    "latency",
+    "cost_per_completed_task"
+  ],
+  "thresholds": [],
+  "graders": [],
+  "cases": [],
+  "results": [],
+  "rollback": {
+    "profile": null,
+    "trigger": null
+  },
+  "note": "Define cases/thresholds according to the product. An empty template is not an executed evaluation."
+}
+

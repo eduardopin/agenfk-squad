@@ -1,0 +1,24 @@
+# Reference manifest; it is not a Backstage template or executable Terraform.
+id: to-define
+version: 0.1.0
+status: draft
+owner: to-define
+purpose: to-define
+supported_workloads: []
+prerequisites: []
+inputs: []
+defaults: {}
+contracts: []
+templates: []
+iac_modules: []
+pipeline: {}
+observability: {}
+security_controls: []
+validation: []
+example_service: null
+compatibility: {}
+upgrade_path: null
+deprecation_policy: null
+exception_process: null
+cost_assumptions: []
+

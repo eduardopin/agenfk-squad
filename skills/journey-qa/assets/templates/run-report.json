@@ -1,0 +1,58 @@
+{
+  "schema_version": "0.3",
+  "skill_version": "2.0.0",
+  "run_id": "run-template",
+  "product_id": "meu-produto",
+  "profile_version": "1.0",
+  "journey_id": "journey-01",
+  "title": "Run not started",
+  "source_snapshot": [],
+  "host": {
+    "name": "A identificar",
+    "version": null,
+    "model": null,
+    "adapter": "unknown"
+  },
+  "execution_mode": "human_ui",
+  "environment": {
+    "name": "Not configured",
+    "base_url": null,
+    "kind": "unknown",
+    "build_ref": null,
+    "dependencies": []
+  },
+  "isolation": {
+    "model_context": "unknown",
+    "browser_sessions": "unknown",
+    "checked": false,
+    "evidence_ids": []
+  },
+  "scope": {
+    "objective": "Objetivo a configurar.",
+    "mandatory_rule_ids": [],
+    "exclusions": []
+  },
+  "run_status": "blocked",
+  "stop_reason": {
+    "code": "not_configured",
+    "summary": "Template; no product action was executed."
+  },
+  "actor_outcomes": [
+    {
+      "actor_id": "actor-01",
+      "role": "usuario",
+      "outcome": "undetermined",
+      "reason": "Journey not started.",
+      "evidence_ids": []
+    }
+  ],
+  "qa_verdict": "not_evaluated",
+  "rule_checks": [],
+  "evidence": [],
+  "findings": [],
+  "interventions": [],
+  "trace_file": null,
+  "limitations": [
+    "Not a test result."
+  ]
+}

@@ -17,6 +17,9 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if os.name == "nt":
+    print("skipped: get.sh is for Linux, WSL and macOS; Windows has get.ps1 (tests/test_get_ps1.py)")
+    sys.exit(0)
 GET = os.path.join(ROOT, "get.sh")
 with open(os.path.join(ROOT, "hooks", "manifest.json")) as _fh:
     MANIFEST = json.load(_fh)
@@ -218,6 +221,9 @@ def test_fresh_install_takes_the_latest_release_tag_and_registers_every_hook():
     assert head(h) == REFS["v0.10.0"], "stable is the highest v* tag on main, by version"
     assert_registered(h)
     assert "PostToolUseFailure" in read_settings(h)["hooks"]
+    precompact = read_settings(h)["hooks"].get("PreCompact")
+    assert precompact and "matcher" not in precompact[0], precompact
+    assert precompact[0]["hooks"][0]["timeout"] == 20, precompact
     assert backups(h) == [], "there was nothing to back up"
     assert leftovers(h) == []
     for path in ("agents/developer.md", "hooks/squad-watch.py", "hooks/squad-router.py", "CLAUDE.md"):

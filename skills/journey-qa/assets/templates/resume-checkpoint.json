@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "run_id": "run-template",
+  "saved_at": null,
+  "product_ref": null,
+  "session_alias": null,
+  "actor_id": "actor-01",
+  "current_url": null,
+  "last_observation": "",
+  "completed_effects": [],
+  "uncertain_operations": [],
+  "evidence_ids": [],
+  "remaining_budget": {
+    "max_actions": 60,
+    "max_minutes": 20,
+    "max_retries": 2
+  },
+  "next_allowed_action": "Configurar alvo e verificar capacidades.",
+  "limitations": [
+    "No session started."
+  ]
+}

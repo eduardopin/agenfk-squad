@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:journey-qa:session-binding:2",
+  "title": "Journey QA session-binding",
+  "type": "object",
+  "properties": {
+    "capability_report_version": {
+      "type": "string",
+      "enum": [
+        "1.0",
+        "1.1"
+      ]
+    },
+    "host": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "connection_mode": {
+          "type": "string",
+          "enum": [
+            "driver_launch",
+            "driver_cdp",
+            "extension",
+            "cdp",
+            "mcp",
+            "computer_use",
+            "unknown"
+          ]
+        },
+        "session_alias": {
+          "type": "string",
+          "minLength": 1
+        },
+        "allowed_origins": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "connection_mode",
+        "session_alias",
+        "allowed_origins"
+      ],
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "capability": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "declared",
+              "verified",
+              "unavailable",
+              "unknown"
+            ]
+          },
+          "tool_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proof_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability",
+          "status",
+          "tool_name",
+          "proof_ref",
+          "notes"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0
+    },
+    "required_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "observation_alternatives": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+      },
+      "minItems": 1
+    },
+    "isolation": {
+      "type": "object",
+      "properties": {
+        "model_context": {
+          "type": "string",
+          "enum": [
+            "isolated",
+            "shared",
+            "single_actor",
+            "unknown"
+          ]
+        },
+        "browser_sessions": {
+          "type": "string",
+          "enum": [
+            "isolated",
+            "shared",
+            "single_actor",
+            "unknown"
+          ]
+        },
+        "proof_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "model_context",
+        "browser_sessions",
+        "proof_refs"
+      ],
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 0
+    },
+    "adapter": {
+      "type": "string",
+      "enum": [
+        "jqa_driver",
+        "host_tools",
+        "none"
+      ]
+    }
+  },
+  "required": [
+    "capability_report_version",
+    "host",
+    "browser",
+    "capabilities",
+    "required_capabilities",
+    "observation_alternatives",
+    "isolation",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

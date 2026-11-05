@@ -21,6 +21,11 @@ import subprocess
 import sys
 import tempfile
 
+if os.name == "nt":
+    # it runs install.sh with a fake uv; install.ps1 does not install graphify (docs/installation.md)
+    print("skipped: install.sh is for Linux, WSL and macOS; install.ps1 does not install graphify")
+    sys.exit(0)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PIN = os.path.join(ROOT, "hooks", "graphify.pin")
 TMP = tempfile.mkdtemp(prefix="install-graph-")

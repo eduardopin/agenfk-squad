@@ -27,6 +27,12 @@ import sys
 import tempfile
 import time
 
+if os.name == "nt":
+    # the fake graphify is a script with a shebang on PATH, which Windows does not run by name; the hook
+    # is linked there but graphify is not installed and the pair is not yet verified (docs/installation.md)
+    print("skipped: the code-graph hook is not yet verified on Windows")
+    sys.exit(0)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "hooks", "squad-graph.py")
 SKILL = os.path.join(ROOT, "skills", "graph-context", "SKILL.md")

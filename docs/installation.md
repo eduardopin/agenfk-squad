@@ -70,7 +70,8 @@ thresholds. Elsewhere (macOS, a container, no user manager) the installer
 prints `SKIPPED squad-wake.timer` with the command to run every 2 minutes from
 cron or launchd, and does not fail. Windows is not covered yet.
 
-It also installs the graphify CLI that `squad-graph.py` calls, with
+It also installs the graphify CLI that `squad-graph.py` calls (not on
+Windows: see [Known limitations on Windows](#known-limitations-on-windows)), with
 `uv tool install graphifyy[terraform]==<version>`, the version being the one in
 `hooks/graphify.pin`. Without `uv`, or with `SQUAD_GRAPHIFY=0`, it prints `SKIPPED`
 with that command and carries on. It never runs `graphify install`, which would
@@ -414,6 +415,14 @@ directory if you want it gone.
   herdr panes, so it does not run on Windows either: `install.ps1` does not
   install it and no timer is set up. A session that stops without
   delivering waits until you look at it.
+- **No graphify.** `install.ps1` links `hooks/squad-graph.py` and the
+  settings script registers it, like every hook in `hooks/manifest.json`,
+  but neither installs graphify. Without a `graphify` on `PATH` the hook
+  prints nothing and every call goes ahead as before; `SQUAD_GRAPHIFY=0`
+  turns it off. With a graphify you installed yourself it is not yet
+  verified: there are no POSIX locks, so its per-session counters may
+  undercount and a once-per-session notice may show twice. Its tests say so
+  and exit 0 on Windows.
 - **No chmod.** The squad's state under `%USERPROFILE%\.claude\squad` is
   protected by your profile's folder permissions (ACLs), not by mode bits:
   the `0600` and `0700` the Linux hooks set are not applied, and the

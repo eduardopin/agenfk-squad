@@ -7,7 +7,7 @@ forecasts computed from a task DAG.
 | | |
 |---|---|
 | Origin | the repository owner's own work; first generated with ChatGPT on 2026-10-23, reworked since |
-| Version | 1.4.0 |
+| Version | 1.5.1 |
 | Licence | the repository's licence; no third-party code |
 | Language | defined in English, with pt-BR trigger phrases; the rendered map is English only |
 | Scripts | `plan.py`, `delivery_map.py`, `handoff.py`: Python standard library only |

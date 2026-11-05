@@ -134,8 +134,8 @@ def text(minutes):
             "cards in DONE, and then the project's open cards. If you are waiting for something that will "
             "call you back on its own (the merge turn, a live background command), say in one line what you "
             "are waiting for and stop. Only stop for good by ending with one of these lines: "
-            "`[squad] BLOCKED: <what only the owner can do>` or "
-            "`[squad] END: <why nothing is left that you can do>`.")
+            "`[squad] BLOCKED: merge approval on PR #64 is the owner's` or "
+            "`[squad] END: no card is left that I can take` (your own text, not a <placeholder>).")
 
 
 def log(pane, msg):

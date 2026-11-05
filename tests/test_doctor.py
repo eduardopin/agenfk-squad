@@ -29,6 +29,7 @@ import squad_doctor as doc  # noqa: E402
 
 DOCTOR = os.path.join(ROOT, "scripts", "squad_doctor.py")
 WATCH = os.path.join(ROOT, "hooks", "squad-watch.py")
+DECISIONS = os.path.join(ROOT, "hooks", "squad-decisions.py")
 TMP = tempfile.mkdtemp(prefix="squad-doctor-")
 
 
@@ -553,6 +554,95 @@ def test_a_squad_turn_on_path_that_is_not_executable_says_so():
     assert turn["status"] == doc.FAIL and "not an executable file" in turn["summary"], turn
     assert "not on PATH" not in turn["summary"] and shlex.split(turn["fix"])[0] == "run", turn
     assert turn["fix"].endswith("install.sh"), turn
+
+
+# ---------------------------------------------------------------- review gate, decisions, clamps
+
+def test_squad_watch_zero_says_it_takes_the_review_gate_with_it():
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_WATCH": "0"})}
+    assert by["SQUAD_WATCH"]["status"] == doc.WARN and "review gate" in by["SQUAD_WATCH"]["detail"], by["SQUAD_WATCH"]
+
+
+def test_an_empty_review_steps_list_warns_that_the_gate_is_off():
+    for raw in ("", " ", ",", " , ,"):                  # the watcher drops blanks: no step is left
+        by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_REVIEW_STEPS": raw})}
+        gate = by["SQUAD_REVIEW_STEPS"]
+        assert gate["status"] == doc.WARN and "review gate" in gate["detail"], (raw, gate)
+    check = doc.check_thresholds(environ={"SQUAD_REVIEW_STEPS": ""})
+    assert check["status"] == doc.WARN and "SQUAD_REVIEW_STEPS" in check["fix"], check
+    assert "whole number" not in check["fix"], check      # it is not a number to fix, it is a switch to unset
+    for raw in ("REVIEW", "review, adversarial", "REVIEW,"):
+        by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_REVIEW_STEPS": raw})}
+        assert by["SQUAD_REVIEW_STEPS"]["status"] == doc.OK, (raw, by["SQUAD_REVIEW_STEPS"])
+    by = {i["name"]: i for i in doc.watcher_env(environ={})}      # the default comes from the hook, not the doctor
+    assert by["SQUAD_REVIEW_STEPS"]["status"] == doc.OK and by["SQUAD_REVIEW_STEPS"]["default"].startswith("REVIEW")
+
+
+def test_a_bound_on_one_side_still_clamps_to_the_watchers_value():
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_REVIEW_MEMORY_DAYS": "0"})}
+    days = by["SQUAD_REVIEW_MEMORY_DAYS"]
+    assert days["status"] == doc.WARN and days["effective"] == 1 and "uses 1" in days["detail"], days
+    by = {i["name"]: i for i in doc.watcher_env(environ={"SQUAD_REVIEW_MEMORY_DAYS": "30"})}
+    assert by["SQUAD_REVIEW_MEMORY_DAYS"]["status"] == doc.OK and by["SQUAD_REVIEW_MEMORY_DAYS"]["effective"] == 30
+    # every clamp the doctor finds in the watcher, one side or both: a value past it reads as the bound
+    with open(WATCH, encoding="utf-8") as fh:
+        bounds = doc.code_bounds(ast.parse(fh.read()))
+    assert bounds["SQUAD_REVIEW_MEMORY_DAYS"] == (1, None), bounds
+    for name, (low, high) in bounds.items():
+        if low is not None:
+            got = {i["name"]: i for i in doc.watcher_env(environ={name: str(int(low) - 1)})}[name]
+            assert got["status"] == doc.WARN and got["effective"] == low, (name, got)
+        if high is not None:
+            got = {i["name"]: i for i in doc.watcher_env(environ={name: str(int(high) + 1)})}[name]
+            assert got["status"] == doc.WARN and got["effective"] == high, (name, got)
+
+
+def test_the_decisions_settings_are_read_and_squad_decisions_zero_warns():
+    with open(DECISIONS, encoding="utf-8") as fh:
+        text = fh.read()
+    in_text = set(re.findall(r"(?<![A-Za-z0-9_])SQUAD_[A-Z0-9_]*[A-Z0-9]", text))
+    assert {"SQUAD_DECISIONS", "SQUAD_DECISIONS_DIR"} <= in_text, in_text
+    clean = doc.check_decisions(environ={})
+    assert clean["status"] == doc.OK and clean["fix"] is None, clean
+    assert {i["name"] for i in clean["items"]} == in_text, clean
+    off = doc.check_decisions(environ={"SQUAD_DECISIONS": "0"})
+    by = {i["name"]: i for i in off["items"]}
+    assert off["status"] == doc.WARN and by["SQUAD_DECISIONS"]["status"] == doc.WARN, off
+    assert "decisions hook disabled" in by["SQUAD_DECISIONS"]["detail"] and "SQUAD_DECISIONS" in off["fix"], off
+    for raw in ("1", " 0"):                                 # only exactly "0", as the hook compares it
+        assert doc.check_decisions(environ={"SQUAD_DECISIONS": raw})["status"] == doc.OK, raw
+    where = {i["name"]: i for i in doc.check_decisions(environ={"SQUAD_DECISIONS_DIR": "/somewhere/else"})["items"]}
+    assert where["SQUAD_DECISIONS_DIR"]["value"] == "/somewhere/else" and not where["SQUAD_DECISIONS_DIR"]["is_default"]
+
+
+def test_squad_decisions_zero_in_the_shell_warns_without_failing_the_doctor():
+    base, home, config = wired()
+    data, checks = as_json(doctor(base, home, config, "--json", extra={"SQUAD_DECISIONS": "0"}))
+    assert data["exit"] == 0 and checks["decisions"]["status"] == doc.WARN, checks["decisions"]
+    data, checks = as_json(doctor(base, home, config, "--json"))
+    assert checks["decisions"]["status"] == doc.OK and checks["squad-decisions"]["status"] == doc.OK, checks
+
+
+def test_a_missing_squad_decisions_command_fails_by_name_and_squad_turn_stays_ok():
+    base, home, config = wired()
+    local = os.path.join(home, ".local", "bin", "squad-decisions")
+    assert os.path.lexists(local), "install.sh no longer links squad-decisions"
+    os.unlink(local)
+    data, checks = as_json(doctor(base, home, config, "--json"))
+    cmd = checks["squad-decisions"]
+    assert data["exit"] == 1 and cmd["status"] == doc.FAIL and "squad-decisions" in cmd["summary"], cmd
+    assert shlex.split(cmd["fix"])[0] == "run" and cmd["fix"].endswith("install.sh"), cmd
+    assert checks["squad-turn"]["status"] == doc.OK, checks["squad-turn"]
+    os.symlink(os.path.join(base, "gone.py"), local)       # dangling: named as such
+    _, checks = as_json(doctor(base, home, config, "--json"))
+    assert checks["squad-decisions"]["status"] == doc.FAIL and "dangling" in checks["squad-decisions"]["summary"]
+    os.unlink(local)
+    os.symlink(os.path.join(base, "other-squad-decisions.py"), local)
+    open(os.path.join(base, "other-squad-decisions.py"), "w").close()
+    os.chmod(os.path.join(base, "other-squad-decisions.py"), 0o755)
+    _, checks = as_json(doctor(base, home, config, "--json"))      # a link to another clone's script
+    assert checks["squad-decisions"]["status"] == doc.WARN, checks["squad-decisions"]
+
 
 if __name__ == "__main__":
     try:

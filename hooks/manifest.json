@@ -4,7 +4,8 @@
     "UserPromptSubmit": "*",
     "PreToolUse": "*",
     "PostToolUse": "*",
-    "PostToolUseFailure": "*"
+    "PostToolUseFailure": "*",
+    "PermissionRequest": "Write|Edit|MultiEdit|NotebookEdit"
   },
   "hooks": [
     {
@@ -26,6 +27,11 @@
       "script": "squad-decisions.py",
       "timeout": 5,
       "events": ["SessionStart"]
+    },
+    {
+      "script": "squad-allow.py",
+      "timeout": 5,
+      "events": ["PermissionRequest"]
     }
   ]
 }

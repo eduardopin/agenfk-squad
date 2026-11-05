@@ -79,6 +79,28 @@ To try a change safely, point a throwaway config at your clone:
 CLAUDE_CONFIG_DIR=/tmp/claude-test HOME=/tmp/claude-test-home ./install.sh
 ```
 
+## Your first contribution
+
+Start with one observed gap and the smallest artifact that makes it easier to
+check. A useful first pull request can be a regression test, a documentation
+correction, a sanitized macOS or WSL smoke-test report, or one narrowly scoped
+prompt-regex case with its test. You do not need to change the watcher.
+
+1. Check the [roadmap](ROADMAP.md) and open Issues so you do not duplicate work.
+2. State the failure or missing evidence in one sentence. For behavioral or
+   policy changes, open a Proposal issue before writing code.
+3. Keep the change to one concern and remove all private paths, project names,
+   session ids and transcript content from fixtures or reports.
+4. Run the checks below and paste the exact commands and results into the pull
+   request.
+5. If a coding agent is preparing the change from outside the maintainer's
+   environment, give it the
+   [external contributor agent protocol](docs/external-contributor-agent.md)
+   and keep publication behind human approval.
+
+Unsure where to begin? A report that disproves a default, or a test that
+captures a real failure, is more useful than a broad rewrite.
+
 ## Running the checks
 
 ```bash
@@ -183,8 +205,13 @@ makes the agent rigid everywhere else. Explain the reason for the rule instead.
 - Fill in the template. The checklist is the review.
 - Commit messages in the imperative, with the reason in the body when it is
   not obvious.
-- By contributing you agree that your contribution is licensed under the
-  [ISC License](LICENSE).
+- Every pull request states, in its description, that you agree to the
+  [Contributor License Agreement](CLA.md): "I have read CLA.md and I agree
+  to it for this and my future contributions." Without that line it is not
+  merged. The project is under the [FSL-1.1-ALv2](LICENSE); the CLA lets the
+  maintainer keep licensing your contribution with the rest of the project.
+- Publishing a fork under the project's name is not allowed; see
+  [TRADEMARKS.md](TRADEMARKS.md).
 
 ## Where things are
 

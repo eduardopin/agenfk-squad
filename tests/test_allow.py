@@ -137,6 +137,19 @@ def test_a_session_started_in_root_home_or_above_home_gets_nothing():
         assert ask(h, "Write", p, cwd=cwd) == "", (cwd, p)
 
 
+def test_a_drive_root_counts_as_root_on_windows_too():
+    import importlib.util
+    import ntpath
+    import posixpath
+    spec = importlib.util.spec_from_file_location("squad_allow", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for path, flavour, root in (("/", posixpath, True), ("/tmp", posixpath, False),
+                                ("D:\\", ntpath, True), ("C:\\", ntpath, True), ("D:\\a", ntpath, False),
+                                ("\\\\srv\\share\\", ntpath, True), ("\\\\srv\\share\\x", ntpath, False)):
+        assert mod.fs_root(path, flavour) is root, (path, root)
+
+
 def test_the_git_toplevel_does_not_widen_the_project():
     h = tmp()
     p = project(h)

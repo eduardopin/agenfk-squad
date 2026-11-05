@@ -78,6 +78,12 @@ def has_pair(comps, first, second):
     return any(a == first and b == second for a, b in zip(comps, comps[1:]))
 
 
+def fs_root(path, flavour=os.path):
+    """True for a filesystem root: "/" on POSIX, "D:\\" or "\\\\server\\share\\" on Windows, where
+    realpath("/") is the drive root and never equals os.sep."""
+    return flavour.dirname(path) == path
+
+
 def under(path, root):
     return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
@@ -153,7 +159,7 @@ def decide(tool, path, cwd, homes):
     ext = os.path.splitext(literal)[1].lower(), os.path.splitext(real)[1].lower()
     names = os.path.basename(literal), os.path.basename(real)
     lroot, rroot = os.path.abspath(cwd), os.path.realpath(cwd)
-    if rroot == os.sep or any(under(h, rroot) or under(h, lroot) for h in homes):
+    if fs_root(rroot) or fs_root(lroot) or any(under(h, rroot) or under(h, lroot) for h in homes):
         project = False
     else:
         project = inside(literal, lroot) and inside(real, rroot)

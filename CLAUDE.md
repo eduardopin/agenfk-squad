@@ -33,6 +33,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
    (session → worktree → branch → card), the table of fronts and the path of each
    worktree. One `developer`/`frontend` per card, in the same message, each
    in its own worktree. Ceiling ~6 fronts. Same file in two fronts = run them in series.
+   Parallel is the default: the watcher orders FAN OUT for a goal with 2+ open cards and nothing running.
 4. **Whoever writes does not approve.** REVIEW, ADVERSARIAL and VERIFY go to the
    `verifier` in a clean context: pass the card and the branch, not the
    implementer's narrative. FIX_FIRST/REJECT goes back to whoever implemented, at most 2
@@ -139,6 +140,13 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
     pass it through, so record only what the owner's rules and the card
     support. Briefs point agents to `squad-decisions index`. See
     `docs/decisions.md`.
+13. **A defined delivery runs to the end.** A milestone is not a stopping point:
+    when a reply would end with "the next step is card X", do card X. Open the
+    delivery with `[squad] GOAL: docs/architect/plan.json - 51d1c739-d0d2-400a-8037-f46b00d1668b` (what is delivered, then the card ids; a line whose text starts with `<` is read as a quoted template and opens no goal) and stop only by
+    ending a reply with `[squad] DONE: PR #64 merged, cards DONE`, `[squad] BLOCKED: merge approval on PR #64 is the owner's` or `[squad] END: no card is left that I can take` (your own text
+    after the colon, never a `<placeholder>`). The watcher
+    refuses any other stop while the delivery is open (docs/watcher.md, "Carrying
+    a delivery to the end").
 
 ## Response modes
 

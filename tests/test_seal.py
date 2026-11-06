@@ -3,13 +3,15 @@
 seal on, squad-watch lets a merge through only for a sealed SHA.
 
 Self-checking: the exit code is the verdict. Runs in a throwaway HOME and never
-touches ~/.claude.
+touches ~/.claude. Every throwaway directory, and the TMPDIR of every child, lives
+under one directory of the run, removed at the end; the last case proves it.
 
     python3 tests/test_seal.py
 """
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -351,7 +353,16 @@ def test_install_names_post_tool_use_failure_and_the_changed_variables():
 
 
 if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok ", name)
+    # One temporary directory per run: every mkdtemp above, and the TMPDIR of every child, lands in
+    # it. Without it each run left a HOME per case in /tmp.
+    RUN_TMP = tempfile.mkdtemp(prefix="seal-run-")
+    tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+    try:
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+                print("ok ", name)
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
+    print("ok  nothing is left in the temporary directory after the run")

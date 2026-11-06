@@ -3,14 +3,18 @@
 
 Self-checking: the exit code is the verdict. Runs in a throwaway profile and
 never touches ~/.claude. Everything that can be checked from either platform
-is checked on both; the rest says which platform it needs.
+is checked on both; the rest says which platform it needs. The throwaway profile
+and every directory below live under one temporary directory of the run, removed
+at the end; the last case proves it is gone.
 
     python3 tests/test_watch_windows.py
 """
+import atexit
 import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -23,6 +27,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "hooks", "squad-watch.py")
 SCRIPTS = os.path.join(ROOT, "skills", "session-context", "scripts")
 WINDOWS = os.name == "nt"
+
+# One temporary directory per run: the profile below, every directory of the cases and the TMPDIR of
+# every child land in it, and it is removed at exit; the last case proves it is gone. Without it each
+# run left a watchwin-* profile in /tmp.
+RUN_TMP = tempfile.mkdtemp(prefix="watchwin-run-")
+tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+atexit.register(shutil.rmtree, RUN_TMP, True)
 
 # the module computes ~/.claude at import: point it at a throwaway profile first
 # (Windows reads USERPROFILE, not HOME)
@@ -326,7 +337,12 @@ def test_the_kill_of_a_slow_agenfk_fits_in_the_gate_budget_on_windows():
     assert denied and "ONE CARD PER CALL" in denied[0], (denied, asked)     # c-3, left unasked, is not let through
 
 if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok ", name)
+    try:
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+                print("ok ", name)
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
+    print("ok  nothing is left in the temporary directory after the run")

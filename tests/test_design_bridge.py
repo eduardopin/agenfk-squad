@@ -12,6 +12,7 @@ must stop BEFORE calling codex.
 Needs node, bash, jq, file and sha256sum on PATH. Without one of them it prints
 a single SKIP line naming what is missing and exits 0.
 """
+import atexit
 import json
 import os
 import re
@@ -36,6 +37,12 @@ TEST_FLOOR = 26
 
 FAILURES = []
 TOOLS = ("node", "bash", "jq", "file", "sha256sum")
+# One temporary directory per run: every mkdtemp below, and the TMPDIR of every child (node,
+# gpt-image.sh), lands in it, and it is removed at exit; the last check proves it is gone.
+# Without it each run left its sandboxes in /tmp.
+RUN_TMP = tempfile.mkdtemp(prefix="design-bridge-run-")
+tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+atexit.register(shutil.rmtree, RUN_TMP, True)
 
 
 def check(name, cond, detail=""):
@@ -212,6 +219,9 @@ check("codex fails: exits 4 and points to the log", code == 4 and "codex.log" in
 env["FAKE_CODEX"] = "empty"
 code, _, err = gpt(env, "stub", "x")
 check("codex saves no image: exits 5", code == 5 and "no image saved" in err, err)
+
+shutil.rmtree(RUN_TMP, ignore_errors=True)
+check("nothing is left in the temporary directory after the run", not os.path.exists(RUN_TMP), RUN_TMP)
 
 print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall green")
 sys.exit(1 if FAILURES else 0)

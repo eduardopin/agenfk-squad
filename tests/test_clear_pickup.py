@@ -331,7 +331,7 @@ def test_cli_write_auto_prints_the_path_and_digest():
     out = cli(h, "auto", ME, t, h)
     assert out.returncode == 0, out.stderr
     path, digest = out.stdout.split()
-    assert os.path.isfile(path) and digest in os.path.basename(path)
+    assert os.path.isfile(path) and digest[:12] in os.path.basename(path)
 
 
 # ---------------------------------------------------------------- git

@@ -30,7 +30,9 @@ jobs:
         with:
           node-version: "22"
       # Every tests/test_*.py, found by glob: a new test file runs here without
-      # editing this workflow. All files run; the step fails if any one fails.
+      # editing this workflow. All files run; the step fails if any one fails, or
+      # leaves anything in its own TMPDIR (the leak check of scripts/check_temp_leftovers.py,
+      # done inside this loop so it costs no second pass of the suite).
       # No bytecode, not even from the scripts a test spawns: a .pyc carries
       # the runner's /home path and would trip the private-paths check below.
       - name: Python test files (every tests/test_*.py)
@@ -46,15 +48,29 @@ jobs:
             exit 1
           fi
           failed=()
+          crashed=()
           for t in "${files[@]}"; do
             echo "::group::$t"
-            python -B "$t" || failed+=("$t")
+            # Each file gets its own empty TMPDIR (Python reads TMPDIR before TEMP and TMP;
+            # all three are set for the child processes a test starts). Anything still in it
+            # when the file exits is a leak, and the file fails: same loop, no second pass.
+            tmp=$(mktemp -d)
+            TMPDIR="$tmp" TEMP="$tmp" TMP="$tmp" python -B "$t" || crashed+=("$t")
             echo "::endgroup::"
+            left=$(ls -A "$tmp")
+            if [ -n "$left" ]; then
+              n=$(printf '%s\n' "$left" | wc -l)
+              names=$(printf '%s\n' "$left" | head -n 5 | paste -sd, - | sed 's/,/, /g')
+              echo "::error file=$t::$t left $n entries in TMPDIR ($names)"
+              failed+=("$t")
+            fi
+            rm -rf "$tmp"
+          done
+          for t in "${crashed[@]}"; do
+            echo "::error file=$t::$t failed"
+            case " ${failed[*]-} " in *" $t "*) ;; *) failed+=("$t") ;; esac
           done
           echo "ran ${#files[@]} test files, ${#failed[@]} failed"
-          for t in "${failed[@]}"; do
-            echo "::error file=$t::$t failed"
-          done
           [ "${#failed[@]}" -eq 0 ]
       # Node is the same on every Python leg: run the helper tests once.
       - name: ci-cost changed-ranges tests (floor 23)
@@ -104,8 +120,23 @@ jobs:
           failed=""
           for t in tests/test_*.py; do
             echo "::group::$t"
-            python -B "$t" || { echo "::error::$t failed"; failed="$failed $t"; }
+            # Each file gets its own empty TMPDIR; anything left in it when the file exits fails the file.
+            # Native Windows Python reads TMPDIR first, then TEMP and TMP: all three get the same
+            # Windows-form path (cygpath -m), since Git Bash's /tmp/... is not a path to a native process.
+            tmp=$(mktemp -d)
+            wtmp=$(cygpath -m "$tmp" 2>/dev/null || echo "$tmp")
+            ok=1
+            TMPDIR="$wtmp" TEMP="$wtmp" TMP="$wtmp" python -B "$t" || { echo "::error::$t failed"; ok=0; }
             echo "::endgroup::"
+            left=$(ls -A "$tmp")
+            if [ -n "$left" ]; then
+              n=$(printf '%s\n' "$left" | wc -l)
+              names=$(printf '%s\n' "$left" | head -n 5 | paste -sd, - | sed 's/,/, /g')
+              echo "::error file=$t::$t left $n entries in TMPDIR ($names)"
+              ok=0
+            fi
+            rm -rf "$tmp"
+            [ "$ok" -eq 1 ] || failed="$failed $t"
           done
           if [ -n "$failed" ]; then echo "::error::failed:$failed"; exit 1; fi
       - name: No private paths in the tree

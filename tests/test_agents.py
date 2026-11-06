@@ -218,11 +218,12 @@ def test_supporting_agents_run_on_sonnet():
 
 
 def test_the_readme_model_column_matches_the_frontmatter():
-    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
-    for name in SONNET:
-        row = re.search(r"^\| `" + name + r"` \|.*\| (\w+) \|$", readme, re.M)
-        assert row, name
-        assert row.group(1).lower() == frontmatter_model(name), (name, row.group(1))
+    for doc in ("README.md", os.path.join("docs", "agents.md")):
+        text = open(os.path.join(ROOT, doc), encoding="utf-8").read()
+        for name in SONNET:
+            row = re.search(r"^\| \[?`" + name + r"`.*\| (\w+) \|$", text, re.M)
+            assert row, (doc, name)
+            assert row.group(1).lower() == frontmatter_model(name), (doc, name, row.group(1))
 
 
 if __name__ == "__main__":

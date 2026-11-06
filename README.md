@@ -146,14 +146,14 @@ agent that owns it and the evidence `agenfk verify` has to carry.
 
 | Agent | Role | Writes? | Model |
 |---|---|---|---|
-| `product` | Says where the project really is, cuts the goal to the smallest usable increment, breaks it into cards | No (creates cards in TODO) | inherit |
-| `github` | Maps who is in which worktree and branch, plans parallel fronts over disjoint files, proposes the merge train | Worktree claims only | inherit |
-| `developer` | Turns exactly one card into code, on its own branch and worktree | Yes | inherit |
+| `product` | Says where the project really is, cuts the goal to the smallest usable increment, breaks it into cards | No (creates cards in TODO) | Sonnet |
+| `github` | Maps who is in which worktree and branch, plans parallel fronts over disjoint files, proposes the merge train | Worktree claims only | Sonnet |
+| `developer` | Turns exactly one card into code, on its own branch and worktree | Yes | Sonnet |
 | `frontend` | Interface, components, design systems, motion, visual pieces, with a measured quality floor | Yes | inherit |
 | `tester` | Writes the card's tests and proves by mutation that each one can fail | Test files only | Sonnet |
 | `verifier` | Independent review in a clean context: REVIEW, ADVERSARIAL, MUTATE, VERIFY. Returns `SHIP`, `FIX_FIRST` or `REJECT` | No | Sonnet |
 | `infra` | Terraform, CI/CD, Dockerfiles. Stops at `plan` | Yes, never `apply` | inherit |
-| `finops` | Prices a cloud design line by line; measures token spend per card and model, and CI minutes per job | No | inherit |
+| `finops` | Prices a cloud design line by line; measures token spend per card and model, and CI minutes per job | No | Sonnet |
 | `finance` | Unit economics, pricing, margin, break-even | No | inherit |
 | `gtm` | Positioning, competitors, landing copy, outreach scripts | No (drafts only) | inherit |
 | `context` | Measures context, burn and rereading per session; decides continue, compact, hand off or cut | Handoffs and card comments only | Sonnet |

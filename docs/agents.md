@@ -18,14 +18,14 @@ is advice; an agent with no `Edit` and no `Write` cannot edit files. Read the
 
 | Agent | Flow step | Tools | Writes? | Model |
 |---|---|---|---|---|
-| [`product`](#product) | TODO | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (creates cards through `agenfk`) | inherit |
-| [`github`](#github) | before IMPLEMENT, at VERIFY | Read, Grep, Glob, Bash, Write | Worktree claims only | inherit |
-| [`developer`](#developer) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes | inherit |
+| [`product`](#product) | TODO | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (creates cards through `agenfk`) | Sonnet |
+| [`github`](#github) | before IMPLEMENT, at VERIFY | Read, Grep, Glob, Bash, Write | Worktree claims only | Sonnet |
+| [`developer`](#developer) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes | Sonnet |
 | [`frontend`](#frontend) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch | Yes | inherit |
 | [`infra`](#infra) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes, stops at `plan` | inherit |
 | [`tester`](#tester) | TEST | Read, Grep, Glob, Edit, Write, Bash | Test files only | Sonnet |
 | [`verifier`](#verifier) | REVIEW, ADVERSARIAL, VERIFY | Read, Grep, Glob, Bash | No | Sonnet |
-| [`finops`](#finops) | before a stack or cloud decision | Read, Grep, Glob, Bash, WebFetch, WebSearch | No | inherit |
+| [`finops`](#finops) | before a stack or cloud decision | Read, Grep, Glob, Bash, WebFetch, WebSearch | No | Sonnet |
 | [`finance`](#finance) | on request | Read, Grep, Glob, Bash, WebFetch, WebSearch | No | inherit |
 | [`gtm`](#gtm) | on request | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (drafts only) | inherit |
 | [`context`](#context) | any time | Read, Grep, Glob, Bash, Write | Handoffs and card comments only | Sonnet |

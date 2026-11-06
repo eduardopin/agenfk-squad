@@ -10,6 +10,7 @@ agenfk-squad/
 │   ├── session-context/      the session report and the handoff arithmetic (scripts/session_context.py)
 │   ├── clear-pickup/         handoff (write) and pickup (read) across a context clear
 │   ├── parallel-git/         branches, worktrees, PR stacks, merge train
+│   ├── graph-context/        build and query the graphify code graph
 │   ├── design-reference/     the design method and quality floor used by `frontend`
 │   └── vendor/               third-party skills, Apache-2.0, unmodified
 ├── hooks/
@@ -17,6 +18,8 @@ agenfk-squad/
 │   ├── squad-watch.py        the watcher: seven hook events
 │   ├── squad-decisions.py    SessionStart: prints the index of the project's decisions (`squad-decisions`)
 │   ├── squad-switch.py       detached: clears the pane and calls the pickup
+│   ├── squad-graph.py        PreToolUse on Bash|Grep|Read|Glob: hands the call to `graphify hook-guard`
+│   ├── graphify.pin          the graphify release install.sh installs
 │   └── squad-turn.py         the merge queue CLI (`squad-turn`)
 ├── flows/squad-delivery.json the AgenFK flow whose steps match the agents
 ├── tests/test_watch.py       the suite
@@ -89,6 +92,7 @@ stdin. The watcher is one script that looks at `hook_event_name` and branches.
 | `UserPromptSubmit` | The owner sends a prompt | `squad-watch.py` | No. Delivers pending notes (a sub-session ended badly, `SLOT FREE`, `MERGE TURN`) |
 | `SessionStart` | A session starts | `squad-decisions.py` | No. Prints the index of the repository's active decisions; nothing when there are none, and it never fails the session |
 | `PreToolUse` | Before any tool call | `squad-watch.py` | Yes. Returns `permissionDecision: deny` with the reason, including `REVIEW REQUIRED` when a card is advanced past a review step with no reviewer dispatched on it |
+| `PreToolUse` | Before a Bash, Grep, Read or Glob call | `squad-graph.py` | No. When the project has a graphify graph, adds graphify's nudge toward `graphify query`, and the stale and slow notices |
 | `PostToolUse` | After any tool call | `squad-watch.py` | No. Adds context: warnings, `PROACTIVE HANDOFF` |
 | `PostToolUseFailure` | A tool call fails | `squad-watch.py` | No. Gives back the merge turn a failed merge held |
 | `SubagentStop` | A sub-session ends | `squad-watch.py` | No. Records metrics, leaves a note for the parent |

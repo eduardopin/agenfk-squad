@@ -9,7 +9,9 @@ The skill ships a Node CLI (scripts/jqa.mjs, no required dependency). The Node
 tests in tests/journey_qa/ run through this file when node >= 20 is on PATH
 (setup-node puts it there on every CI leg, Linux and Windows) and are skipped
 with a reason otherwise.
-No browser, no network, no model.
+No browser, no network, no model. Everything the Node tests write to their
+temporary directory lands in one directory of the run (TMPDIR, TEMP and TMP
+point there), removed at the end; the last check proves nothing is left.
 """
 import glob
 import json
@@ -18,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -200,7 +203,19 @@ class NodeSide(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    result = unittest.main(exit=False, verbosity=1).result
-    if result.wasSuccessful():
+    # One temporary directory per run: os.tmpdir() of the Node tests reads TMPDIR (TEMP, TMP on
+    # Windows). Without it each run left about 65 jqa-* directories in /tmp.
+    RUN_TMP = tempfile.mkdtemp(prefix="jqa-run-")
+    tempfile.tempdir = RUN_TMP
+    for var in ("TMPDIR", "TEMP", "TMP"):
+        os.environ[var] = RUN_TMP
+    try:
+        result = unittest.main(exit=False, verbosity=1).result
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    clean = not os.path.exists(RUN_TMP)
+    print(("ok   " if clean else "FAIL ") + "nothing is left in the temporary directory after the run"
+          + ("" if clean else f": {RUN_TMP}"))
+    if result.wasSuccessful() and clean:
         print("ok")
-    sys.exit(0 if result.wasSuccessful() else 1)
+    sys.exit(0 if result.wasSuccessful() and clean else 1)

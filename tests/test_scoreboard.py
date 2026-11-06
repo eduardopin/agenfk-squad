@@ -72,10 +72,10 @@ def project(metrics, checklists=None):
     root = tempfile.mkdtemp(prefix="project-", dir=BASE)
     PROJECTS.append(root)
     os.makedirs(os.path.join(root, "scoreboard"))
-    with open(os.path.join(root, "scoreboard", "metrics.toml"), "w") as f:
+    with open(os.path.join(root, "scoreboard", "metrics.toml"), "w", encoding="utf-8") as f:
         f.write(metrics)
     for name, text in (checklists or {}).items():
-        with open(os.path.join(root, "scoreboard", name), "w") as f:
+        with open(os.path.join(root, "scoreboard", name), "w", encoding="utf-8") as f:
             f.write(text)
     return root
 
@@ -87,7 +87,7 @@ def scoreboard(root, *args):
 
 
 def read(root, *parts):
-    with open(os.path.join(root, *parts)) as f:
+    with open(os.path.join(root, *parts), encoding="utf-8") as f:
         return f.read()
 
 
@@ -140,7 +140,7 @@ def t_measure_render_and_check():
 def t_doc_edited_by_hand():
     root = project(LINT)
     scoreboard(root, "measure")
-    with open(os.path.join(root, "docs", "scoreboard.md"), "a") as f:
+    with open(os.path.join(root, "docs", "scoreboard.md"), "a", encoding="utf-8") as f:
         f.write("\ntouch-up\n")
     rc, out = scoreboard(root, "check")
     case("a doc edited by hand fails check", rc == 1 and "out of date" in out, out)
@@ -217,33 +217,33 @@ def t_ratchet_against_the_base():
     original = read(root, "scoreboard", "metrics.toml")
     rc, out = scoreboard(root, "check", "--base", "main")
     case("limits equal to the base pass", rc == 0, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("floor = 1800", "floor = 1700"))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")
     case("a floor lowered since the base fails", rc == 1 and "floor dropped" in out, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("ceiling = 5", "ceiling = 9"))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")
     case("a ceiling raised since the base fails", rc == 1 and "ceiling rose" in out, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(metric("tests", "echo 1850", 1800))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")
     case("a metric removed since the base fails", rc == 1 and "removed" in out, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("floor = 1800", "floor = 1850"))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")
     case("a floor tightened since the base passes", rc == 0, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("floor = 1800", "ceiling = 1800"))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")
     case("switching floor to ceiling since the base fails", rc == 1
          and "switched floor to ceiling" in out, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("echo 1850", "echo 999999"))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")
@@ -251,12 +251,12 @@ def t_ratchet_against_the_base():
          and "changed how it measures (command)" in out, out)
     rc, out = scoreboard(root, "check", "--base", "main", "--accept-measurement", "tests")
     case("--accept-measurement lets the approved swap through", rc == 0, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("echo 1850", "echo 999999").replace("floor = 1800", "floor = 1"))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main", "--accept-measurement", "tests")
     case("--accept-measurement does not let a lowered floor through", rc == 1 and "floor dropped" in out, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("floor = 1800", "floor = 1800\nregex = '(\\d+)'"))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")
@@ -266,7 +266,7 @@ def t_ratchet_against_the_base():
     case("--accept-measurement lets the approved regex through", rc == 0, out)
     rc, out = scoreboard(root, "check", "--base", "main", "--accept-measurement", "tests", "tset")
     case("--accept-measurement with an unknown id warns", rc == 0 and "warning" in out and "tset" in out, out)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(original.replace("floor = 1800", 'floor = 1800\nignore_exit = true'))
     scoreboard(root, "render")
     rc, out = scoreboard(root, "check", "--base", "main")

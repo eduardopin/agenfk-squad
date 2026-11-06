@@ -35,7 +35,7 @@ def write_session(home, name="-proj", sid="01a136ef-1111-2222-3333-444455556666"
                      "content": [{"type": "toolCall", "id": "c1", "name": "read",
                                   "arguments": {"path": "/work/proj/a.py"}}]}},
     ]
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         for r in recs:
             fh.write(json.dumps(r) + "\n")
     return path, sid
@@ -108,7 +108,7 @@ def test_scan_pi_still_reads_modelId():
             d = os.path.join(home, ".pi", "agent", "sessions", "-p")
             os.makedirs(d)
             path = os.path.join(d, "s_abc123.jsonl")
-            with open(path, "w") as fh:
+            with open(path, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps({"type": "model_change", "modelId": "qwen38-flashnext"}) + "\n")
                 fh.write(json.dumps({"type": "message", "message": {"role": "assistant",
                                                                     "usage": {"input": 10}}}))

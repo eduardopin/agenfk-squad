@@ -123,7 +123,7 @@ A denied dispatch is never just a "no": the message says where the work continue
   no orchestrator slot, reviewer     carry on with whatever does not depend on the
                                      verdict; the watcher announces SLOT FREE when
                                      there is a slot
-  7th reviewer on the same card      the owner's decision, with what keeps failing
+  7th reviewer on the same card      the owner chooses how to fix it (never whether to ship the defect)
 
 Review gate (main session only): `agenfk verify <id>` (or the MCP validate_progress)
 on a review step with no reviewer dispatch recorded for that card since it entered
@@ -813,7 +813,9 @@ def pre_dispatch(p):
         if n >= (MAX_REV * 3 if key and key.endswith(":no-card") else MAX_REV):
             why = (f"the reviewer has already been dispatched {n}x for this card ({key}). One more round is not "
                    "review, it is a loop. Comment on the card what keeps failing (`agenfk comment`), stop and "
-                   "take the choice to the owner: fix it another way, split the card or accept the risk")
+                   "take the choice of HOW to fix it to the owner: fix it another way or split the card. Never "
+                   "propose merging with the defect or accepting the failures (no PR passes or merges with a "
+                   "defect)")
     if why:
         st["blocked"] = st.get("blocked", 0) + 1
         st["denied_ts"] = time.time()     # fan_out() keeps quiet for DENIED_QUIET: the brake just said no
@@ -2126,7 +2128,7 @@ def post_tool(p):
             if rev[key] == 3 and not key.endswith(":no-card"):
                 out.append(f"[squad-watch] 3rd reviewer round for {key}. The rule is at most 2 "
                            f"correction rounds; dispatch number {MAX_REV + 1} is denied. If the same "
-                           "failure came back, the decision is the owner's.")
+                           "failure came back, the choice of how to fix it is the owner's.")
         if st["subs"] == int(MAX_SUBS * 0.6):
             out.append(f"[squad-watch] {st['subs']} sub-sessions dispatched in this session (ceiling "
                        f"{MAX_SUBS}). Prepare the handoff: the rest goes to a new session.")

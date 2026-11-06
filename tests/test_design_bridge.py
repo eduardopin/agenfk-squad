@@ -12,6 +12,7 @@ must stop BEFORE calling codex.
 Needs node, bash, jq, file and sha256sum on PATH. Without one of them it prints
 a single SKIP line naming what is missing and exits 0.
 """
+import atexit
 import json
 import os
 import re
@@ -36,6 +37,12 @@ TEST_FLOOR = 26
 
 FAILURES = []
 TOOLS = ("node", "bash", "jq", "file", "sha256sum")
+# One temporary directory per run: every mkdtemp below, and the TMPDIR of every child (node,
+# gpt-image.sh), lands in it, and it is removed at exit; the last check proves it is gone.
+# Without it each run left its sandboxes in /tmp.
+RUN_TMP = tempfile.mkdtemp(prefix="design-bridge-run-")
+tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+atexit.register(shutil.rmtree, RUN_TMP, True)
 
 
 def check(name, cond, detail=""):
@@ -70,7 +77,7 @@ def sandbox(auth_mode):
         f.write(png_1x1())
     marker = os.path.join(base, "codex-called")
     keys = os.path.join(base, "codex-keys")
-    with open(os.path.join(bin_, "codex"), "w") as f:
+    with open(os.path.join(bin_, "codex"), "w", encoding="utf-8") as f:
         f.write(f"""#!/usr/bin/env bash
 [ "$1" = "--version" ] && {{ echo "codex-cli 0.0.0-test"; exit 0; }}
 touch '{marker}'
@@ -83,9 +90,9 @@ echo "$dir/stub-1.png | 1 x 1"
 """)
     os.chmod(os.path.join(bin_, "codex"), 0o755)
     if auth_mode is not None:
-        with open(os.path.join(home, "auth.json"), "w") as f:
+        with open(os.path.join(home, "auth.json"), "w", encoding="utf-8") as f:
             json.dump({"auth_mode": auth_mode, "OPENAI_API_KEY": None}, f)
-    with open(os.path.join(home, "config.toml"), "w") as f:
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
         f.write('model = "test-model"\n')
     env = dict(os.environ, PATH=bin_ + os.pathsep + os.environ["PATH"], CODEX_HOME=home,
                DESIGN_BRIDGE_INBOX=os.path.join(base, "inbox"))
@@ -117,7 +124,7 @@ check(f"at least {TEST_FLOOR} tests passed", passed >= TEST_FLOOR, f"passed {pas
 link_dir = tempfile.mkdtemp(prefix="design-bridge-link-")
 os.symlink(SKILL, os.path.join(link_dir, "design-bridge"))
 anims = os.path.join(link_dir, "a.json")
-with open(anims, "w") as f:
+with open(anims, "w", encoding="utf-8") as f:
     json.dump({"animations": [{"name": "x", "durationMs": 100, "frames": [
         {"offset": 0, "opacity": 0}, {"offset": 1, "opacity": 1}]}]}, f)
 p = subprocess.run(["node", os.path.join(link_dir, "design-bridge", "scripts", "motion-figma.mjs"),
@@ -212,6 +219,9 @@ check("codex fails: exits 4 and points to the log", code == 4 and "codex.log" in
 env["FAKE_CODEX"] = "empty"
 code, _, err = gpt(env, "stub", "x")
 check("codex saves no image: exits 5", code == 5 and "no image saved" in err, err)
+
+shutil.rmtree(RUN_TMP, ignore_errors=True)
+check("nothing is left in the temporary directory after the run", not os.path.exists(RUN_TMP), RUN_TMP)
 
 print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall green")
 sys.exit(1 if FAILURES else 0)

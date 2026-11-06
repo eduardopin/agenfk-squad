@@ -19,14 +19,14 @@ SPEC.loader.exec_module(MODULE)
 
 class ProfileTests(unittest.TestCase):
     def setUp(self):
-        self.profile = json.loads((ROOT / "examples/local-validation/backend.json").read_text())
+        self.profile = json.loads((ROOT / "examples/local-validation/backend.json").read_text(encoding="utf-8"))
 
     def test_valid_backend(self):
         self.assertEqual(MODULE.validate(self.profile), self.profile)
 
     def test_web_mobile_recording_dependency(self):
         for stack in ("web", "mobile"):
-            p = json.loads((ROOT / f"examples/local-validation/{stack}.json").read_text())
+            p = json.loads((ROOT / f"examples/local-validation/{stack}.json").read_text(encoding="utf-8"))
             MODULE.validate(p)
             for field, value in (("needs", ["unit"]), ("fixtures", [])):
                 bad = copy.deepcopy(p)
@@ -97,7 +97,7 @@ class ProfileTests(unittest.TestCase):
     def test_cli_does_not_execute_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             profile = Path(directory) / "profile.json"
-            profile.write_text(json.dumps(self.profile))
+            profile.write_text(json.dumps(self.profile), encoding="utf-8")
             command = [sys.executable, str(ROOT / "scripts/local_validation_profile.py"), str(profile)]
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout)
@@ -108,7 +108,7 @@ class ProfileTests(unittest.TestCase):
             bad_outcome["steps"][0]["outcomes"].append("SKIP")
             for raw in ('{', '{"version":1,"version":1}', '{"version":NaN}',
                         '{"version":Infinity}', json.dumps(bad_field), json.dumps(bad_outcome)):
-                profile.write_text(raw)
+                profile.write_text(raw, encoding="utf-8")
                 result = subprocess.run(command, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(json.loads(result.stdout)["result"], "INVALID_PROFILE")

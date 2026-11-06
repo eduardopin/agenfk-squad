@@ -11,6 +11,7 @@ import atexit
 import datetime
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -82,7 +83,7 @@ def session(h, sid, ctx, share, burn=60):
         reread = n * ctx * 0.1
         new = reread * (1 - share) / share
         recs = [{"cache_read_input_tokens": ctx, "output_tokens": int(new / n / 5)} for _ in range(n)]
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         for i, usage in enumerate(recs):
             fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": f"r{i}",
                                  "message": {"usage": usage}}) + "\n")
@@ -109,7 +110,7 @@ def kind(text):
 
 
 def state(h, sid):
-    with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json")) as fh:
+    with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json"), encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -118,9 +119,9 @@ def write_handoff(h, transcript, name="h1.md"):
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, name)
     body = "# handoff\nNext step: X\n"
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(body)
-    with open(transcript, "a") as fh:
+    with open(transcript, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "assistant", "isSidechain": False, "message": {"content": [
             {"type": "tool_use", "name": "Write", "input": {"file_path": path, "content": body}}]}}) + "\n")
     return path
@@ -187,7 +188,7 @@ def test_default_window_is_1m_even_if_the_cockpit_recorded_200k():
     sid = "bbbbbbbb-0001"
     cache = os.path.join(h, ".claude", "cache", "session-tokens")
     os.makedirs(cache)
-    with open(os.path.join(cache, f"{sid}.json"), "w") as fh:
+    with open(os.path.join(cache, f"{sid}.json"), "w", encoding="utf-8") as fh:
         json.dump({"window": 200_000}, fh)
     assert said(run(h, "PostToolUse", sid, session(h, sid, 170_000, 0.9))) == "nothing"
 
@@ -197,7 +198,7 @@ def test_alert_from_the_old_rule_is_cancelled_in_writing():
     sid = "cccccccc-0001"
     folder = os.path.join(h, ".claude", "squad", "watch")
     os.makedirs(folder)
-    with open(os.path.join(folder, f"{sid}.main.json"), "w") as fh:
+    with open(os.path.join(folder, f"{sid}.main.json"), "w", encoding="utf-8") as fh:
         json.dump({"ctx_level": 2, "alert_ts": time.time() - 600, "nudges": 1}, fh)
     tr = session(h, sid, 160_000, 0.9)
     assert kind(said(run(h, "PostToolUse", sid, tr))) == "ALERT CANCELLED"
@@ -253,10 +254,10 @@ def fake_herdr(h, sid, clear_switches=True):
     pane-session-status sets the agent's status (idle by default); pane-session-fail
     holds N empty answers (herdr not answering)."""
     cur, sent = os.path.join(h, "pane-session"), os.path.join(h, "pane-prompts")
-    with open(cur, "w") as fh:
+    with open(cur, "w", encoding="utf-8") as fh:
         fh.write(sid)
     path = os.path.join(h, "herdr")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import json, sys
 a = sys.argv[1:]
@@ -283,7 +284,7 @@ elif a[:2] == ["agent", "send-keys"]:
 """)
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
     if os.name == "nt":                  # a shebang does not run on Windows: a .cmd that calls the script does
-        with open(path + ".cmd", "w") as fh:
+        with open(path + ".cmd", "w", encoding="utf-8") as fh:
             fh.write(f'@"{sys.executable}" "{path}" %*\r\n')
         path += ".cmd"
     return path, sent
@@ -304,17 +305,17 @@ def test_ordered_handoff_switches_session_and_calls_the_pickup():
         if os.path.exists(log):
             break
         time.sleep(0.5)
-    with open(log) as fh:
+    with open(log, encoding="utf-8") as fh:
         line = fh.read()
     assert "abcdef12 -> ffffffff pickup sent" in line, line
-    with open(sent) as fh:
+    with open(sent, encoding="utf-8") as fh:
         prompts = fh.read().splitlines()
     assert prompts[0] == "/clear" and prompts[1].startswith("/clear-pickup pickup "), prompts
-    with open(prompts[1].split()[-1]) as fh, open(handoff) as orig:
+    with open(prompts[1].split()[-1], encoding="utf-8") as fh, open(handoff, encoding="utf-8") as orig:
         assert fh.read() == orig.read()                  # the new session reads this session's handoff
     assert state(h, sid)["switched"] is True
     assert abs(state(h, sid)["switched_ts"] - time.time()) < 120   # squad-wake measures a stuck switch from here
-    with open(os.path.join(h, ".claude", "squad", "switches", "ffffffff-9999.pickup")) as fh:
+    with open(os.path.join(h, ".claude", "squad", "switches", "ffffffff-9999.pickup"), encoding="utf-8") as fh:
         assert fh.read() == prompts[1].split()[-1]       # squad-wake resends it if it does not land
 
 
@@ -330,7 +331,7 @@ def test_dispatch_denied_at_the_ceiling_arms_the_switch():
     assert st["ctx_level"] == 2 and st["ordered"] is True
     path = os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json")
     st["checked"] = 0                                    # forces a new measurement of the transcript
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(st, fh)
     run(h, "PostToolUse", sid, tr)
     assert state(h, sid)["ctx_level"] == 2               # the next measurement does not disarm
@@ -350,7 +351,7 @@ def orchestrators(h, n):
         if name.startswith("other"):
             os.remove(os.path.join(folder, name))
     for i in range(n):
-        with open(os.path.join(folder, f"other{i}.sub{i}.json"), "w") as fh:
+        with open(os.path.join(folder, f"other{i}.sub{i}.json"), "w", encoding="utf-8") as fh:
             fh.write("{}")
 
 
@@ -373,10 +374,10 @@ def test_no_slot_heavy_session_becomes_handoff_with_plan_and_switch():
     assert st["ctx_level"] == 2 and st["ordered"] is True
     briefs = os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-dispatches.md")
     assert briefs in out, out                            # the denied plan is kept in full
-    with open(briefs) as fh:
+    with open(briefs, encoding="utf-8") as fh:
         assert fh.read().count("card ABC-1") == 1
     assert "pickup on its own" in dispatch(h, sid, tr, env={"HERDR_PANE_ID": "w1:p1"})
-    with open(briefs) as fh:
+    with open(briefs, encoding="utf-8") as fh:
         assert fh.read().count("card ABC-1") == 1        # the same brief does not go in twice
     assert "already been ordered" in dispatch(h, sid, tr)   # insisting does not change the answer
     # stopping without the handoff sends the order back; with the handoff written, no more complaints
@@ -414,9 +415,9 @@ def orchestrators_in(h, n, repo):
     folder = os.path.join(h, ".claude", "squad", "watch")
     os.makedirs(folder, exist_ok=True)
     for i in range(n):
-        with open(os.path.join(folder, f"other{i}.sub{i}.json"), "w") as fh:
+        with open(os.path.join(folder, f"other{i}.sub{i}.json"), "w", encoding="utf-8") as fh:
             fh.write("{}")
-        with open(os.path.join(folder, f"other{i}.main.json"), "w") as fh:
+        with open(os.path.join(folder, f"other{i}.main.json"), "w", encoding="utf-8") as fh:
             json.dump({"repo": os.path.realpath(os.path.join(repo, ".git"))}, fh)
 
 
@@ -461,7 +462,7 @@ def test_rearm_clears_the_switch_time():
     for initial in ({"switched": True, "switched_ts": 1.0}, {"switched": False, "switched_ts": 1.0},
                     {"switched_ts": 1.0}, {}):
         os.makedirs(folder, exist_ok=True)
-        with open(os.path.join(folder, f"{sid}.main.json"), "w") as fh:
+        with open(os.path.join(folder, f"{sid}.main.json"), "w", encoding="utf-8") as fh:
             json.dump(dict(initial, ctx_level=2), fh)
         run(h, "Stop", sid, tr, {"squad_rearm": True})
         st = state(h, sid)
@@ -480,6 +481,21 @@ def test_no_slot_reviewer_waits_for_the_slot_without_handoff():
     assert not st.get("ordered") and st["wait_slot"] is True
 
 
+def test_the_reviewer_cap_takes_the_fix_to_the_owner_never_shipping_the_defect():
+    h = home()
+    sid = "12345678-0035"
+    tr = session(h, sid, 100_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    env = {"SQUAD_MAX_REVIEWS": "2"}
+    call = {"tool_name": "Agent", "tool_input": {"subagent_type": "verifier", "prompt": "card ABC-1"}}
+    for _ in range(2):                                   # two reviewer rounds go through and are counted
+        assert "DISPATCH DENIED" not in dispatch(h, sid, tr, "verifier", env)
+        run(h, "PostToolUse", sid, tr, call, env)
+    out = dispatch(h, sid, tr, "verifier", env)          # the third is the cap
+    assert "DISPATCH DENIED" in out and "already been dispatched" in out, out
+    assert "split the card" in out and "Never propose merging with the defect" in out, out
+    assert "accept the risk" not in out, out
+
 def test_notice_ahead_of_the_brake_only_for_whoever_orchestrates():
     h = home()
     sid = "12345678-0006"
@@ -493,7 +509,7 @@ def test_notice_ahead_of_the_brake_only_for_whoever_orchestrates():
     def remeasure():
         st = state(h, sid)
         st.update(checked=0, subs=2, calls=[])
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(st, fh)
         return said(run(h, "PostToolUse", sid, tr))
     out = remeasure()
@@ -544,11 +560,11 @@ def test_session_that_does_not_write_the_handoff_the_watcher_takes_over_and_swit
         if os.path.exists(log):
             break
         time.sleep(0.5)
-    with open(log) as fh:
+    with open(log, encoding="utf-8") as fh:
         assert "abcdef12 -> ffffffff pickup sent" in fh.read()
-    with open(sent) as fh:
+    with open(sent, encoding="utf-8") as fh:
         prompts = fh.read().splitlines()
-    with open(prompts[1].split()[-1]) as fh:
+    with open(prompts[1].split()[-1], encoding="utf-8") as fh:
         body = fh.read()
     assert "written by squad-watch" in body and "deliver card ABC-1" in body, body
     assert "stopped without writing its own" in body and "compacted" not in body, body
@@ -563,31 +579,31 @@ SWITCH_LOG = (".claude", "squad", "switches.log")
 def wait_for(path, text, secs=40):
     for _ in range(int(secs / 0.25)):
         if os.path.exists(path):
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 body = fh.read()
             if text in body:
                 return body
         time.sleep(0.25)
-    with open(path) if os.path.exists(path) else open(os.devnull) as fh:
+    with open(path, encoding="utf-8") if os.path.exists(path) else open(os.devnull, encoding="utf-8") as fh:
         raise AssertionError(f"{text!r} did not show up in {path}: {fh.read()!r}")
 
 
 def lines(path):
     if not os.path.exists(path):
         return []
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         return fh.read().splitlines()
 
 
 def notify(transcript, task="b1"):
     """A background task's result reaching the session."""
-    with open(transcript, "a") as fh:
+    with open(transcript, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "user", "message": {"role": "user", "content":
                              f"<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>"}}) + "\n")
 
 
 def pane_status(h, status):
-    with open(os.path.join(h, "pane-session-status"), "w") as fh:
+    with open(os.path.join(h, "pane-session-status"), "w", encoding="utf-8") as fh:
         fh.write(status)
 
 
@@ -615,7 +631,7 @@ def test_background_task_does_not_block_the_switch():
     assert "deadline of 0 min passed" in body and "with a note on background tasks" in body, body
     prompts = lines(sent)
     assert prompts[0] == "/clear" and prompts[1].startswith("/clear-pickup pickup "), prompts
-    with open(prompts[1].split()[-1]) as fh, open(handoff) as orig:
+    with open(prompts[1].split()[-1], encoding="utf-8") as fh, open(handoff, encoding="utf-8") as orig:
         copy, original = fh.read(), orig.read()
     assert copy.startswith(original) and "Watcher's note at the switch" in copy and "Wait for quiet" in copy, copy
     assert state(h, sid)["switched"] is True
@@ -640,7 +656,7 @@ def test_task_that_returns_asks_for_the_handoff_rewritten_and_switches_once():
     wait_for(os.path.join(h, *SWITCH_LOG), "pickup sent")
     time.sleep(10)                                         # the schedule expires and sees the switch done
     assert lines(sent).count("/clear") == 1, lines(sent)
-    with open(lines(sent)[1].split()[-1]) as fh:
+    with open(lines(sent)[1].split()[-1], encoding="utf-8") as fh:
         assert "Watcher's note" not in fh.read()
 
 
@@ -713,7 +729,7 @@ def test_wait_survives_a_transient_herdr_failure():
     h = home()
     sid = "abcdef12-0008"
     herdr, sent = fake_herdr(h, sid)
-    with open(os.path.join(h, "pane-session-fail"), "w") as fh:
+    with open(os.path.join(h, "pane-session-fail"), "w", encoding="utf-8") as fh:
         fh.write("3")
     env = {"HERDR_PANE_ID": "w1:p1", "HERDR_BIN_PATH": herdr, "SQUAD_SWITCH_WAIT": "2"}
     tr = session(h, sid, 750_000, 0.9)
@@ -732,7 +748,7 @@ def test_wait_exits_when_herdr_never_answers_again():
     r = subprocess.run([sys.executable, SWITCH, "wait", "w1:p1", "abcdef12-0009", "/x/t.jsonl", "/x", "1"],
                        env=e, capture_output=True, text=True, timeout=60)
     assert r.returncode == 1 and time.time() - t0 < 60
-    with open(os.path.join(h, *SWITCH_LOG)) as fh:
+    with open(os.path.join(h, *SWITCH_LOG), encoding="utf-8") as fh:
         assert "herdr silent" in fh.read()
 
 
@@ -753,7 +769,7 @@ def test_the_claim_refuses_a_second_switch_of_the_same_session():
                               capture_output=True, text=True, timeout=90).returncode
     assert switch() == 0
     assert os.path.exists(os.path.join(h, ".claude", "squad", "switches", f"{sid}.claim"))
-    with open(os.path.join(h, "pane-session"), "w") as fh:
+    with open(os.path.join(h, "pane-session"), "w", encoding="utf-8") as fh:
         fh.write(sid)                                      # the same session in the pane again
     assert switch() == 1
     log = lines(os.path.join(h, *SWITCH_LOG))
@@ -789,11 +805,11 @@ def dirty_repo(h):
     subprocess.run(["git", "init", "-q", "-b", "feat/compact", repo], check=True)
     for key, value in (("user.name", "t"), ("user.email", "t@t"), ("commit.gpgsign", "false")):
         git(repo, "config", key, value)
-    with open(os.path.join(repo, "a.txt"), "w") as fh:
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("base\n")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "first commit of the card")
-    with open(os.path.join(repo, "half-done.py"), "w") as fh:
+    with open(os.path.join(repo, "half-done.py"), "w", encoding="utf-8") as fh:
         fh.write("x = 1\n")
     return repo
 
@@ -810,12 +826,12 @@ def test_compaction_writes_the_handoff_before_the_conversation_is_summarized():
         run(h, "UserPromptSubmit", sid, tr, {"prompt": "deliver card ABC-2", "cwd": repo})
         briefs = os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-dispatches.md")
         os.makedirs(os.path.dirname(briefs), exist_ok=True)
-        with open(briefs, "w") as fh:
+        with open(briefs, "w", encoding="utf-8") as fh:
             fh.write("## brief\n")
         r = run_proc(h, "PreCompact", sid, tr, {"trigger": trigger, "custom_instructions": instructions,
                                                 "cwd": repo})
         assert r.returncode == 0 and r.stdout.strip() == "", r      # never blocks the compaction
-        with open(compact_handoff(h, sid)) as fh:
+        with open(compact_handoff(h, sid), encoding="utf-8") as fh:
             body = fh.read()
         assert "written by squad-watch" in body and f"compacted ({trigger})" in body, body
         assert "stopped without writing" not in body, body           # the header says why it was written
@@ -860,11 +876,11 @@ def test_compaction_handler_error_fails_open_and_is_logged():
     h = home()
     sid = "c0c0c0c0-0004"
     os.makedirs(os.path.join(h, ".claude", "squad", "watch"))
-    with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json"), "w") as fh:
+    with open(os.path.join(h, ".claude", "squad", "watch", f"{sid}.main.json"), "w", encoding="utf-8") as fh:
         json.dump({"ctx": "not a number"}, fh)            # a corrupt state makes the handoff raise
     r = run_proc(h, "PreCompact", sid, os.path.join(h, "t.jsonl"), {"trigger": "auto", "custom_instructions": None})
     assert r.returncode == 0 and r.stdout.strip() == "" and r.stderr.strip() == "", r
-    with open(os.path.join(h, ".claude", "squad", "watch-errors.log")) as fh:
+    with open(os.path.join(h, ".claude", "squad", "watch-errors.log"), encoding="utf-8") as fh:
         assert "TypeError" in fh.read()
 
 
@@ -884,7 +900,7 @@ def test_stop_schedules_the_compaction_and_precompact_labels_the_one_it_ordered(
     h = home()
     sid = "c0c0c0c0-0006"
     tr = os.path.join(h, f"{sid}.jsonl")
-    with open(tr, "w") as fh:
+    with open(tr, "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
             "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
                       "cache_creation": {"ephemeral_5m_input_tokens": 5000}}}}) + "\n")
@@ -981,13 +997,13 @@ def test_the_compact_text_fits_one_line_of_760_characters():
     h = home(short=True)
     sid = "c0c0c0c0-0010-4aaa-8aaa-aaaaaaaaaaaa"
     tr = os.path.join(h, f"{sid}.jsonl")
-    with open(tr, "w") as fh:
+    with open(tr, "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
             "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
                       "cache_creation": {"ephemeral_1h_input_tokens": 5000}}}}) + "\n")
     briefs = os.path.join(h, ".claude", "squad", "handoffs", f"{sid}-dispatches.md")
     os.makedirs(os.path.dirname(briefs), exist_ok=True)
-    open(briefs, "w").close()
+    open(briefs, "w", encoding="utf-8").close()
     env = {"HERDR_PANE_ID": "w1:p1"}
     run(h, "UserPromptSubmit", sid, tr, {"prompt": ("deliver card ABC-2 \U0001F600 ação já\n" * 30)}, env)
     run(h, "Stop", sid, tr, env=env)
@@ -1013,7 +1029,7 @@ def test_the_watchers_own_compact_pasted_is_not_the_owner_and_marks_the_failure(
     h = home()
     sid = "c0c0c0c0-0011"
     tr = os.path.join(h, f"{sid}.jsonl")
-    with open(tr, "w") as fh:
+    with open(tr, "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-last", "message": {
             "usage": {"cache_read_input_tokens": 295_000, "cache_creation_input_tokens": 5000,
                       "cache_creation": {"ephemeral_1h_input_tokens": 5000}}}}) + "\n")
@@ -1049,10 +1065,10 @@ def repo_with_gh(h):
     os.makedirs(repo)
     subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True)
     state_file = os.path.join(h, "gh-state")
-    with open(state_file, "w") as fh:
+    with open(state_file, "w", encoding="utf-8") as fh:
         fh.write("OPEN")
     gh = os.path.join(h, "gh")
-    with open(gh, "w") as fh:
+    with open(gh, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import sys
 print("77" if "number" in sys.argv else open({state_file!r}).read())
@@ -1060,7 +1076,7 @@ print("77" if "number" in sys.argv else open({state_file!r}).read())
     os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
     if os.name == "nt":                  # a shebang does not run on Windows: a .cmd that calls the script does
         launcher = gh + ".cmd"
-        with open(launcher, "w") as fh:
+        with open(launcher, "w", encoding="utf-8") as fh:
             fh.write(f'@"{sys.executable}" "{gh}" %*\r\n')
         gh = launcher
     return repo, {"SQUAD_GH": gh}, state_file
@@ -1074,7 +1090,7 @@ def bash(h, event, sid, repo, cmd, env):
 def queue(h):
     folder = os.path.join(h, ".claude", "squad", "turn")
     name = next(n for n in os.listdir(folder) if n.endswith(".json"))
-    with open(os.path.join(folder, name)) as fh:
+    with open(os.path.join(folder, name), encoding="utf-8") as fh:
         return json.load(fh), os.path.join(folder, name)
 
 
@@ -1111,7 +1127,7 @@ def test_merge_queue_stalled_turn_passes_on_and_can_be_requested_and_released():
     assert bash(h, "PreToolUse", c, repo, "git push origin HEAD:main", env) == "nothing"   # an intent blocks nobody
     d, path = queue(h)
     d["holder"]["since"] -= 1000                      # C's merge call never came back
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(d, fh)
     assert bash(h, "PreToolUse", a, repo, "gh pr merge", env) == "nothing"        # the stalled turn passes on
     d, _ = queue(h)
@@ -1186,14 +1202,14 @@ def origin_repo(h):
     for k, v in (("user.name", "t"), ("user.email", "t@t"), ("commit.gpgsign", "false")):
         git(repo, "config", k, v)
     for f in ("a.txt", "b.txt", "c.txt"):
-        with open(os.path.join(repo, f), "w") as fh:
+        with open(os.path.join(repo, f), "w", encoding="utf-8") as fh:
             fh.write("base\n")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "base")
     git(repo, "push", "-q", "origin", "HEAD:main")
     prs = os.path.join(h, "prs.json")
     gh = os.path.join(h, "gh")
-    with open(gh, "w") as fh:
+    with open(gh, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import json, sys
 prs = json.load(open({prs!r}))
@@ -1204,7 +1220,7 @@ print(json.dumps(pr) if "-q" not in sys.argv else pr.get(sys.argv[-1][1:], ""))
     os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
     if os.name == "nt":                  # a shebang does not run on Windows: a .cmd that calls the script does
         launcher = gh + ".cmd"
-        with open(launcher, "w") as fh:
+        with open(launcher, "w", encoding="utf-8") as fh:
             fh.write(f'@"{sys.executable}" "{gh}" %*\r\n')
         gh = launcher
     return repo, {"SQUAD_GH": gh}, prs
@@ -1212,7 +1228,7 @@ print(json.dumps(pr) if "-q" not in sys.argv else pr.get(sys.argv[-1][1:], ""))
 
 def branch(repo, name, path, text):
     git(repo, "checkout", "-q", "-b", name, "origin/main")
-    with open(os.path.join(repo, path), "w") as fh:
+    with open(os.path.join(repo, path), "w", encoding="utf-8") as fh:
         fh.write(text)
     git(repo, "commit", "-qam", name)
     sha = git(repo, "rev-parse", "HEAD")
@@ -1221,7 +1237,7 @@ def branch(repo, name, path, text):
 
 
 def set_prs(prs, **kw):
-    with open(prs, "w") as fh:
+    with open(prs, "w", encoding="utf-8") as fh:
         json.dump({n: {"number": int(n), "baseRefName": "main", "headRefName": b, "headRefOid": s}
                    for n, (b, s) in kw.items()}, fh)
 
@@ -1254,12 +1270,12 @@ def test_merge_turn_held_too_long_expires():
     assert bash(h, "PreToolUse", a, repo, f"{GM} 10", env) == "nothing"
     d, path = queue(h)
     d["holder"]["since"] -= 100
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(d, fh)
     assert "is merging" in bash(h, "PreToolUse", b, repo, f"{GM} 11", env)       # 100 s: still A's
     d, path = queue(h)
     d["holder"]["since"] -= 21
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(d, fh)
     assert bash(h, "PreToolUse", b, repo, f"{GM} 11", env) == "nothing"          # 121 s: expired
     d, _ = queue(h)
@@ -1271,7 +1287,7 @@ def test_merge_conflict_with_main_is_denied_with_the_files():
     h = home()
     repo, env, prs = origin_repo(h)
     head = branch(repo, "feat-c", "a.txt", "C\n")
-    with open(os.path.join(repo, "b.txt"), "w") as fh:                         # a second, clean file on the PR
+    with open(os.path.join(repo, "b.txt"), "w", encoding="utf-8") as fh:                         # a second, clean file on the PR
         fh.write("C\n")
     git(repo, "checkout", "-q", "feat-c")
     git(repo, "commit", "-qam", "b")
@@ -1281,7 +1297,7 @@ def test_merge_conflict_with_main_is_denied_with_the_files():
     subprocess.run(["git", "clone", "-q", os.path.join(h, "origin.git"), other], check=True, capture_output=True)
     for k, v in (("user.name", "t"), ("user.email", "t@t")):
         git(other, "config", k, v)
-    with open(os.path.join(other, "a.txt"), "w") as fh:
+    with open(os.path.join(other, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("MAIN\n")
     git(other, "commit", "-qam", "main moves")
     git(other, "push", "-q", "origin", "HEAD:main")
@@ -1339,7 +1355,7 @@ def test_trunk_from_gh_when_origin_head_is_missing_and_from_squad_trunk():
     git(repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
     sealed = {**env, "SQUAD_SEAL": "1"}
     assert bash(h, "PreToolUse", "abab2222-0001", repo, "git push origin HEAD:beta", sealed) == "nothing"
-    with open(prs, "w") as fh:
+    with open(prs, "w", encoding="utf-8") as fh:
         json.dump({"": {"defaultBranchRef.name": "beta"}}, fh)       # what `gh repo view` answers
     assert "MERGE SEAL" in bash(h, "PreToolUse", "abab2222-0001", repo, "git push origin HEAD:beta", sealed)
     git(repo, "config", "squad.trunk", "release, stable")
@@ -1364,7 +1380,7 @@ def test_push_with_no_refspec_to_a_trunk_upstream_is_a_push_to_the_trunk():
 def test_turn_status_compares_against_the_remote_default_branch():
     h = home()
     repo, env, _ = beta_origin(h)
-    with open(os.path.join(repo, "a.txt"), "w") as fh:
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("feat\n")
     git(repo, "commit", "-qam", "feat")
     out = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "squad-turn.py"), "status"], cwd=repo,
@@ -1376,7 +1392,7 @@ def seal_head(h, repo):
     """Records a SHIP seal of the repository's HEAD with squad-seal."""
     sha = git(repo, "rev-parse", "HEAD")
     ev = os.path.join(h, f"{sha}.md")
-    with open(ev, "w") as fh:
+    with open(ev, "w", encoding="utf-8") as fh:
         fh.write("SHIP\n")
     e = {k: v for k, v in os.environ.items() if not k.startswith(("SQUAD_", "HERDR_"))}
     r = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "squad-seal.py"), "record", "--card", "c-1",
@@ -1429,7 +1445,7 @@ def test_merge_and_push_are_checked_where_the_command_runs():
     seal_head(h, repo)
     wt = os.path.join(h, "wt-x")
     git(repo, "worktree", "add", "-q", "-b", "other", wt, "origin/beta")
-    with open(os.path.join(wt, "a.txt"), "w") as fh:
+    with open(os.path.join(wt, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("not reviewed\n")
     git(wt, "commit", "-qam", "unsealed")
     assert bash(h, "PreToolUse", sid, repo, "git push origin HEAD:beta", env) == "nothing"   # sealed here
@@ -1463,7 +1479,7 @@ def test_a_cd_that_may_not_run_leaves_the_directory_unknown():
     seal_head(h, repo)
     wt = os.path.join(h, "wt-y")
     git(repo, "worktree", "add", "-q", "-b", "other", wt, "origin/beta")
-    with open(os.path.join(wt, "a.txt"), "w") as fh:
+    with open(os.path.join(wt, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("not reviewed\n")
     git(wt, "commit", "-qam", "unsealed")
     assert bash(h, "PreToolUse", sid, wt, f"cd {sh(repo)}; git push origin HEAD:beta", env) == "nothing"   # sealed there
@@ -1544,12 +1560,12 @@ def fake_agenfk(h, steps, mode="json"):
     answers after <s> seconds. The real agenfk is kept off PATH. Returns (env, env without the stub)."""
     folder = os.path.join(h, "bin")
     os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(h, "agenfk-steps.json"), "w") as fh:
+    with open(os.path.join(h, "agenfk-steps.json"), "w", encoding="utf-8") as fh:
         json.dump(steps, fh)
-    with open(os.path.join(h, "agenfk-mode"), "w") as fh:
+    with open(os.path.join(h, "agenfk-mode"), "w", encoding="utf-8") as fh:
         fh.write(mode)
     path = os.path.join(folder, "agenfk")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"""#!{sys.executable}
 import json, os, subprocess, sys, time
 H = {h!r}
@@ -1592,7 +1608,7 @@ else:
 """)
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
     if os.name == "nt":
-        with open(path + ".cmd", "w") as fh:
+        with open(path + ".cmd", "w", encoding="utf-8") as fh:
             fh.write(f'@"{sys.executable}" "{path}" %*\r\n')
     system = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
                              if d and not any(os.path.exists(os.path.join(d, "agenfk" + x))
@@ -1604,30 +1620,30 @@ def move(h, card, step, ago=0.0):
     """The card moves into `step` now (or `ago` seconds ago), as `agenfk verify` would record it."""
     time.sleep(0.02)                      # a dispatch just before it is strictly older, at milliseconds
     path = os.path.join(h, "agenfk-steps.json")
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         steps = json.load(fh)
     steps[card] = step
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(steps, fh)
     path = os.path.join(h, "agenfk-entered.json")
     entered = {}
     if os.path.exists(path):
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             entered = json.load(fh)
     at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=ago)
     entered[card] = at.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(entered, fh)
 
 
 def stub_mode(h, mode):
-    with open(os.path.join(h, "agenfk-mode"), "w") as fh:
+    with open(os.path.join(h, "agenfk-mode"), "w", encoding="utf-8") as fh:
         fh.write(mode)
 
 
 def stub_calls(h):
     try:
-        with open(os.path.join(h, "agenfk-calls")) as fh:
+        with open(os.path.join(h, "agenfk-calls"), encoding="utf-8") as fh:
             return fh.read().splitlines()
     except OSError:
         return []
@@ -1650,7 +1666,7 @@ def gate_log(h):
     path = os.path.join(h, ".claude", "squad", "review-gate.jsonl")
     if not os.path.exists(path):
         return []
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         return [json.loads(line) for line in fh if line.strip()]
 
 
@@ -1685,7 +1701,7 @@ def test_review_step_is_not_advanced_without_a_reviewer_from_any_session():
     # agenfk is still asked once a dispatch is recorded: the record alone does not say which step it was for
     assert len(stub_calls(h)) == calls + 2, stub_calls(h)
     recorded = os.path.join(h, ".claude", "squad", "reviews", f"{CARD_A}.json")
-    with open(recorded) as fh:
+    with open(recorded, encoding="utf-8") as fh:
         assert json.load(fh)["dispatches"][0]["session"] == "abcdef12-0102"
 
 
@@ -1765,7 +1781,7 @@ def test_review_gate_fails_open_and_says_why():
     assert gate_log(h)[-2]["decision"] == "allow", gate_log(h)[-2]
     last = gate_log(h)[-1]
     assert (last["card"], last["decision"]) == (CARD_B, "deny") and "one card per call" in last["why"], last
-    with open(os.path.join(h, "agenfk-kid")) as fh:
+    with open(os.path.join(h, "agenfk-kid"), encoding="utf-8") as fh:
         kid = int(fh.read())
 
     def alive():
@@ -1826,7 +1842,7 @@ def test_review_memory_expires_and_the_owner_lets_one_card_through_once():
     sid = "abcdef12-0141"
     folder = os.path.join(h, ".claude", "squad", "reviews")
     os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, f"{CARD_A}.json"), "w") as fh:     # a review from 15 days ago
+    with open(os.path.join(folder, f"{CARD_A}.json"), "w", encoding="utf-8") as fh:     # a review from 15 days ago
         json.dump({"card": CARD_A, "dispatches": [{"ts": time.time() - 15 * 86400, "session": "old"}]}, fh)
     assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)           # default memory: 14 days
     assert verify(h, sid, CARD_A, dict(env, SQUAD_REVIEW_MEMORY_DAYS="30")) == "nothing"
@@ -1838,7 +1854,7 @@ def test_review_memory_expires_and_the_owner_lets_one_card_through_once():
     out = verify(h, "abcdef12-0142", CARD_B, owner)                   # once: not again, not from another session
     assert "REVIEW REQUIRED" in out and "already used once" in out, out
     # a broken record neither crashes the watcher nor blocks the next reviewer from counting
-    with open(os.path.join(folder, f"{CARD_A}.json"), "w") as fh:
+    with open(os.path.join(folder, f"{CARD_A}.json"), "w", encoding="utf-8") as fh:
         json.dump({"card": CARD_A, "dispatches": 5}, fh)
     assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
     reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)
@@ -1891,7 +1907,7 @@ def test_records_from_before_the_step_check_neither_lock_out_nor_unlock_every_st
     folder = os.path.join(h, ".claude", "squad", "reviews")
     os.makedirs(folder, exist_ok=True)
     old = os.path.join(folder, f"{CARD_A}.json")
-    with open(old, "w") as fh:            # a dispatch an hour ago, in the format #59 wrote
+    with open(old, "w", encoding="utf-8") as fh:            # a dispatch an hour ago, in the format #59 wrote
         json.dump({"card": CARD_A, "dispatches": [{"ts": time.time() - 3600, "session": "s59",
                                                     "kind": "verifier"}]}, fh)
     move(h, CARD_A, "REVIEW", ago=7200)   # the card has been on REVIEW for two hours: the dispatch was for it
@@ -1900,7 +1916,7 @@ def test_records_from_before_the_step_check_neither_lock_out_nor_unlock_every_st
     assert "REVIEW REQUIRED" in verify(h, sid, CARD_A, env)
     reviewer(h, sid, f"Review card {CARD_A}, branch feat/a", env)   # not locked out: a new dispatch unlocks it
     assert verify(h, sid, CARD_A, env) == "nothing"
-    with open(old) as fh:
+    with open(old, encoding="utf-8") as fh:
         assert [d["session"] for d in json.load(fh)["dispatches"]] == ["s59", sid]   # the same file, appended
     # fail-open is unchanged: with agenfk missing or without a history, a recorded dispatch still counts
     move(h, CARD_A, "HEAVY_REVIEW")
@@ -1940,7 +1956,7 @@ def test_stale_state_is_cleaned_with_a_folder_in_it():
     def stale_file():                     # names on both sides of "reviews": NTFS lists by name, and a session id
         n = len(stale)                    # (hex) would always come before the folder there
         path = os.path.join(folder, f"{'0000' if n % 2 else 'zzzz'}{n:04d}-dead.a{n}.json")
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write("{}")
         os.utime(path, (old, old))
         stale.append(path)
@@ -2288,9 +2304,14 @@ def test_a_record_does_not_let_a_later_card_of_the_call_through_unchecked():
         out = verify(h, sid, CARD_A, env, " && ".join(f"agenfk verify {c}" for c in before + [CARD_A]),
                      {"cwd": ROOT})
         assert time.time() - t0 < 9.5
-        assert "ONE CARD PER CALL" in out and CARD_A in out and why in out, (mode, out)
+        assert "ONE CARD PER CALL" in out and why in out, (mode, out)
+        # which later card is left unchecked depends on the runner: with 2.4 s per answer, a slow Windows
+        # runner (7 s minus 2 for the kill) runs out on the second card instead of CARD_A. What must hold
+        # is that the call is denied on a card after the first, never let through.
+        m = re.search(r"and card (\S+) was left unchecked", out)
+        assert m and m.group(1) in before[1:] + [CARD_A], (mode, out)
         last = gate_log(h)[-1]
-        assert (last["card"], last["decision"]) == (CARD_A, "deny") and "one card per call" in last["why"], last
+        assert (last["card"], last["decision"]) == (m.group(1), "deny") and "one card per call" in last["why"], last
     stub_mode(h, "slow")
     assert verify(h, sid, CARD_A, env, extra={"cwd": ROOT}) == "nothing"   # the first card still fails open
     # no time left for a later card (`wait` under 0.5 s): unchecked, record or not. Called directly: through

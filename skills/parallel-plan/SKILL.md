@@ -22,22 +22,29 @@ Use the complete card export, not only active tasks: parents and completed
 prerequisites must be present. Each card can carry these lines outside fences:
 
 ```text
-Depends on: schema-card (consumes its contract)
+Depends on: schema-card (consumes its contract), a1b2c3d4
 Touches: src/billing/, docs/*.md, state:payments
 Size: 2
 ```
 
 Comma-separated fields also work as JSON `depends_on`, `touches`, `size`.
-The input is a list, `{"items": [...]}` or `{"cards": [...]}`. Each card needs
-a unique string `id`; `parentId` is a full id. Dependency prefixes must resolve
-uniquely. Fields and description constraints are combined, never discarded.
+The input is a list, `{"items": [...]}` or `{"cards": [...]}`; every shape
+reads the description too. Each card needs a unique string `id`; `parentId` is
+a full id. A line may start with a list marker (`-`, `*`, `+`, `>`, `1.`) or
+be in bold. Every id on a `Depends on` line counts, separated by commas,
+spaces, `;` or `and`; a word that is not an id fails rather than being
+dropped. `none` means no dependency, and `Touches: none` means no Touches.
+Dependency prefixes must resolve uniquely and be at least 6 characters, so a
+short word in prose is never read as an id. Fields and description
+constraints are combined, never discarded.
 A completed parent with an unfinished child is inconsistent input, not a way
 to mark every child done. Fix the board/export before computing a forecast.
 Size is a positive integer, a planning weight, not measured hours.
 
-Parent dependencies and touches constrain **every leaf** below them. Depending
-on a container means depending on all its leaves. Cycles, ambiguous/unknown
-ids, missing parents and invalid paths are errors, not guessed edges.
+Parent dependencies and touches constrain **every leaf** below them; a task's
+own Touches add to its story's, never replace them. Depending on a container
+means depending on all its leaves. Cycles, ambiguous/unknown ids, missing
+parents and invalid paths are errors, not guessed edges.
 Empty containers are leaves: do not dispatch an empty EPIC as code work.
 
 Only DONE/CLOSED satisfy a prerequisite. BLOCKED, PAUSED, CANCELLED, ARCHIVED,
@@ -50,14 +57,25 @@ with the owner instead of silently mapping a cancelled item to DONE.
 ```sh
 agenfk list --project <id> --json > /tmp/cards.json
 python3 -I -B skills/parallel-plan/scripts/waves.py /tmp/cards.json --max-width 6
+python3 -I -B skills/parallel-plan/scripts/waves.py /tmp/cards.json --parent <epic-id> --done a1b2c3d4
 ```
 
-JSON output: `waves`, `ready`, `blocked`, `unknown_touches`, `done`,
-`critical_path`, `critical_length`. Exit 0 means a forecast was computed (it
-may contain blocked cards); exit 2 means invalid input. No recursive graph
-walk, including long chains. Ties sort by full id, independent of export order.
-The critical length is a dependency-only weighted lower bound; file conflicts
-and reviewer availability can make delivery take longer.
+| Option | Effect |
+|---|---|
+| `--parent <id>` | only the leaves under this epic or story; one waiting on an open card outside it is blocked |
+| `--done a,b` | treat these cards as done: merged, not yet closed on the board |
+| `--max-width N` | at most N cards per wave, 1 to 6 (default 6, the squad's front ceiling) |
+
+JSON output: `waves`, `ready`, `blocked`, `waiting_on` (per blocked card, the
+prerequisites holding it; empty means its own or a parent's status),
+`conflicts` (pairs kept apart by a shared resource), `unknown_touches`,
+`done`, `critical_path`, `critical_length`. Exit 0 means a forecast was
+computed (it may contain blocked cards); exit 2 means invalid input, a
+`--parent` with nothing under it, or a cycle, named as `a -> b -> a`.
+No recursive graph walk, including long chains. Ties sort by full id,
+independent of export order. The critical length is a dependency-only
+weighted lower bound; file conflicts and reviewer availability can make
+delivery take longer.
 
 ## 3. Check collisions and dispatch boundaries
 
@@ -69,7 +87,9 @@ Globs are conservative and can produce false conflicts; narrow Touches only
 after inspecting the real file set. Relative paths only, no parent traversal.
 No Touches = a singleton wave, **not** evidence that it can run beside others.
 Include registries, lockfiles, generated files and shared contracts, not just
-primary source files. Resolve uncertainty before dispatching.
+primary source files. When a `conflicts` entry is a file every card appends to
+(a changelog, registry or lockfile), one card owns it and the others hand
+their text back. Resolve uncertainty before dispatching.
 
 `ready` is only the first wave; later waves assume earlier ones completed.
 Check which ready cards are already running before assigning a session.

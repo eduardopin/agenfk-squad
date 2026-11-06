@@ -421,14 +421,14 @@ def build_stack(target):
     shutil.copytree(STACK, target, dirs_exist_ok=True)
     for a, name in EXAMPLES.items():
         text = read(os.path.join(RESOURCE, a)).replace("{{resource}}", name)
-        with open(os.path.join(target, a.replace(".tf.example", ".tf")), "w") as fh:
+        with open(os.path.join(target, a.replace(".tf.example", ".tf")), "w", encoding="utf-8") as fh:
             fh.write(text)
     for root, _, files in os.walk(target):
         for a in files:
             if a.endswith(".tf") or a.endswith(".hcl"):
                 path = os.path.join(root, a)
                 text = re.sub(r"\{\{\w+\}\}", "example", read(path))
-                with open(path, "w") as fh:
+                with open(path, "w", encoding="utf-8") as fh:
                     fh.write(text)
 
 
@@ -437,7 +437,7 @@ def pin_provider(target, version):
     wanted = _declared("aws")
     assert _within(_version(version), wanted), \
         f"pinned aws provider {version} is outside versions.tf ({wanted})"
-    with open(os.path.join(target, "pin_override.tf"), "w") as fh:
+    with open(os.path.join(target, "pin_override.tf"), "w", encoding="utf-8") as fh:
         fh.write('terraform {\n  required_providers {\n    aws = {\n'
                  '      source  = "hashicorp/aws"\n'
                  f'      version = "= {version}"\n    }}\n  }}\n}}\n')

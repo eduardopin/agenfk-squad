@@ -27,13 +27,13 @@ def config_with(*scripts):
     config = tempfile.mkdtemp(dir=TMP)
     os.makedirs(os.path.join(config, "hooks"))
     for s in scripts:
-        open(os.path.join(config, "hooks", s), "w").close()
+        open(os.path.join(config, "hooks", s), "w", encoding="utf-8").close()
     return config
 
 
 def manifest(hooks, matchers=None):
     path = os.path.join(tempfile.mkdtemp(dir=TMP), "manifest.json")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump({"matchers": matchers if matchers is not None else {"PreToolUse": "*"},
                    "hooks": hooks}, fh)
     return path
@@ -165,7 +165,7 @@ def test_a_manifest_without_hook_matchers_installs_what_it_did_before():
 
 
 def test_the_real_manifest_names_only_events_its_hooks_use_in_hook_matchers():
-    with open(ss.MANIFEST) as fh:
+    with open(ss.MANIFEST, encoding="utf-8") as fh:
         real = json.load(fh)
     for h in real["hooks"]:
         extra = set(h.get("matchers", {})) - set(h["events"])
@@ -234,7 +234,7 @@ def test_a_malformed_hook_matcher_is_refused_before_anything_is_written():
              ("Bash", ["PreToolUse"], {"PreTooluse": "Bash"}, {"PreToolUse": 5}, {"PreToolUse": ["Bash"]})]
     cases.append(manifest([WATCH], matchers={"PreToolUse": 5}))          # the top-level value too
     for m in cases:
-        with open(m) as fh:
+        with open(m, encoding="utf-8") as fh:
             bad = fh.read()
         try:
             ss.load_manifest(m)
@@ -352,12 +352,12 @@ def test_uninstall_leaves_a_file_with_nothing_of_the_squads_alone():
     config = config_with("squad-watch.py")
     path = os.path.join(config, "settings.json")
     text = '{"hooks":   {"PreToolUse": [], "Notification": []}}\n'      # odd spacing: a rewrite would show
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         assert ss.main(["uninstall", "--config", config, "--manifest", manifest([WATCH])]) == 0
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         assert fh.read() == text
     assert not [f for f in os.listdir(config) if ".bak-" in f], os.listdir(config)
     assert "nothing to change" in out.getvalue(), out.getvalue()
@@ -486,7 +486,7 @@ def test_uninstall_needs_only_the_script_names_from_the_manifest():
         assert ss.main(["install", "--config", config, "--manifest", manifest([WATCH, GRAPH])]) == 0
         assert ss.main(["install", "--config", config, "--manifest", m]) == 2
         assert ss.main(["uninstall", "--config", config, "--manifest", m]) == 0, m
-        with open(os.path.join(config, "settings.json")) as fh:
+        with open(os.path.join(config, "settings.json"), encoding="utf-8") as fh:
             assert json.load(fh) == {}, m
 
 

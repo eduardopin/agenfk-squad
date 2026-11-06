@@ -44,8 +44,11 @@ Before dispatching in parallel, write the table:
 
 - Two fronts that need the **same file** become one front, or run in series
   (the second is born from the first one's branch). `CHANGELOG.md`,
-  `session-notes.md`, `HANDOFF.md`, lockfiles and migrations count: **one**
-  front writes to them; the others hand back the text.
+  `session-notes.md`, `HANDOFF.md`, lockfiles, `.terraform.lock.hcl`, a
+  shared `variables.tf` and migrations count: **one** front writes to them;
+  the others hand back the text.
+- Terraform: two fronts on the same root and state are one front, whatever
+  the files, because their plans interfere.
 - Real dependency: B touches the same files as A, or consumes the contract A
   changes. The rest is convention and can move together.
 - **Ceiling: ~6 simultaneous fronts.** Above that, queue — the limit is the
@@ -81,7 +84,7 @@ session and is less than 24h old, **do not write** — report the collision.
 - Small commit, message in the project's convention, push the branch with
   `agenfk branch push <item-id>`.
 - Never commit on the trunk; never `--force` on a branch another session may
-  have; never `--no-verify`.
+  have (`--force-with-lease` only on the owner's word); never `--no-verify`.
 - Rebase the branch onto the trunk only by the owner of the front, and only
   while the branch has no open PR with a review in progress.
 - Dependabot and automatic bumps: treat them as a front of their own, never as
@@ -123,6 +126,8 @@ gh pr edit <n(k+1)> --base <trunk>
 
 Deliver the train as a **proposal**: the order, what needs a rebase after each
 squash, what each merge unblocks. Every line with `merge` belongs to the owner.
+Where CI applies on merge, a merge is also an apply:
+say which stack each merge applies.
 
 ## 6. Closing the front and cleaning up
 

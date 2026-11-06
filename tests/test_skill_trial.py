@@ -59,7 +59,7 @@ class Tmp(unittest.TestCase):
     def gh(self, *args, rules=None):
         env = {**os.environ, 'GH_STUB_LOG': str(self.tmp / 'gh.log')}
         if rules is not None:
-            (self.tmp / 'gh.json').write_text(json.dumps(rules))
+            (self.tmp / 'gh.json').write_text(json.dumps(rules), encoding="utf-8")
             env['GH_STUB_RESPONSES'] = str(self.tmp / 'gh.json')
         return run([GH, *args], env=env, timeout=30)
 
@@ -69,7 +69,7 @@ class StubTests(Tmp):
         r = self.gh('pr', 'list', '--json', 'number', rules=[{'match': 'pr list', 'stdout': [{'number': 7}]}])
         self.assertEqual(r.returncode, 0)
         self.assertEqual(json.loads(r.stdout), [{'number': 7}])
-        self.assertIn('pr list --json number', (self.tmp / 'gh.log').read_text())
+        self.assertIn('pr list --json number', (self.tmp / 'gh.log').read_text(encoding="utf-8"))
 
     def test_stub_fails_anything_unmatched(self):
         r = self.gh('api', 'repos/x/y/pulls', '-X', 'POST', rules=[])
@@ -77,7 +77,7 @@ class StubTests(Tmp):
         self.assertIn('not available', r.stderr)
 
     def test_stub_answers_a_match_from_the_scenario_gh_json(self):
-        r = self.gh('repo', 'view', '--json', 'name', rules=json.loads((SCENARIO / 'gh.json').read_text()))
+        r = self.gh('repo', 'view', '--json', 'name', rules=json.loads((SCENARIO / 'gh.json').read_text(encoding="utf-8")))
         self.assertEqual(r.returncode, 0)
         self.assertEqual(json.loads(r.stdout)['defaultBranchRef']['name'], 'main')
 
@@ -86,13 +86,13 @@ class ReportTests(Tmp):
     def trial(self, i, rc, result, why='reason', cost=0.5, **extra):
         t = self.tmp / f'trial-{i}'
         t.mkdir()
-        (t / 'check.rc').write_text(f'{rc}\n')
-        (t / 'check.out').write_text(why + '\n')
-        (t / 'seconds').write_text('12\n')
+        (t / 'check.rc').write_text(f'{rc}\n', encoding="utf-8")
+        (t / 'check.out').write_text(why + '\n', encoding="utf-8")
+        (t / 'seconds').write_text('12\n', encoding="utf-8")
         event = {'type': 'result', 'total_cost_usd': cost, 'num_turns': 4, 'result': result, **extra}
         if cost is None:
             del event['total_cost_usd']
-        (t / 'stream.jsonl').write_text(json.dumps(event) + '\n')
+        (t / 'stream.jsonl').write_text(json.dumps(event) + '\n', encoding="utf-8")
 
     def test_report_exits_1_when_a_trial_failed(self):
         self.trial(1, 0, 'Done.')
@@ -158,8 +158,8 @@ class ReportTests(Tmp):
         self.trial(1, 0, 'Done.')
         t = self.tmp / 'trial-2'
         t.mkdir()
-        (t / 'check.rc').write_text('3\n')
-        (t / 'check.out').write_text('setup failed\n')
+        (t / 'check.rc').write_text('3\n', encoding="utf-8")
+        (t / 'check.out').write_text('setup failed\n', encoding="utf-8")
         r = run(['python3', REPORT, self.tmp], timeout=30)
         self.assertEqual(r.returncode, 3)
         self.assertIn('| trial-2 | SETUP |', r.stdout)
@@ -170,14 +170,14 @@ class ReportTests(Tmp):
         ev = {'type': 'assistant', 'message': {'content': [
             {'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'gh  pr\ncreate'}},
             {'type': 'tool_use', 'name': 'Read', 'input': {'file_path': 'x'}}]}}
-        (self.tmp / 's.jsonl').write_text('not json\n' + json.dumps(ev) + '\n')
+        (self.tmp / 's.jsonl').write_text('not json\n' + json.dumps(ev) + '\n', encoding="utf-8")
         r = run(['python3', COMMANDS, self.tmp / 's.jsonl'], timeout=30)
         self.assertEqual(r.stdout.strip(), 'gh pr create')
 
 
 class SkillDirLineTests(Tmp):
     def line(self):
-        m = re.search(r'^SKILL_DIR=.*$', (SKILL / 'SKILL.md').read_text(), re.M)
+        m = re.search(r'^SKILL_DIR=.*$', (SKILL / 'SKILL.md').read_text(encoding="utf-8"), re.M)
         self.assertTrue(m)
         return m.group(0)
 
@@ -202,7 +202,7 @@ class SkillDirLineTests(Tmp):
 
 class SkillShapeTests(unittest.TestCase):
     def test_frontmatter_name_equals_directory(self):
-        head = (SKILL / 'SKILL.md').read_text().split('---')[1]
+        head = (SKILL / 'SKILL.md').read_text(encoding="utf-8").split('---')[1]
         name = re.search(r'^name:\s*(\S+)', head, re.M).group(1)
         self.assertEqual(name, SKILL.name)
         self.assertEqual(name, 'skill-trial')
@@ -210,7 +210,7 @@ class SkillShapeTests(unittest.TestCase):
     def test_no_private_strings_in_the_skill_or_this_test(self):
         hits = []
         for p in [*SKILL.rglob('*'), Path(__file__)]:
-            if p.is_file() and PRIVATE.search(p.read_text(errors='replace')):
+            if p.is_file() and PRIVATE.search(p.read_text(errors='replace', encoding="utf-8")):
                 hits.append(str(p.relative_to(ROOT)))
         self.assertEqual(hits, [])
 
@@ -223,17 +223,17 @@ class SkillShapeTests(unittest.TestCase):
         r = run([sys.executable, '-B', '-c', code, Path(__file__).resolve()], timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), 'skipped: the skill-trial skill is not yet verified on Windows')
-        guide = (ROOT / 'docs' / 'installation.md').read_text()
+        guide = (ROOT / 'docs' / 'installation.md').read_text(encoding="utf-8")
         bullet = guide.split('**Not yet verified on Windows:**')[1].split('\n- ')[0]
         self.assertIn('skills/skill-trial', bullet)
 
     def test_skill_md_states_platform_parallelism_timeout_and_owner_ok_from_the_script(self):
-        doc = (SKILL / 'SKILL.md').read_text()
+        doc = (SKILL / 'SKILL.md').read_text(encoding="utf-8")
         body = doc.split('---', 2)[2]
         first = body.split('\n## ')[0]  # the part read before the Run section
         self.assertIn('bubblewrap', first)
         self.assertIn('Linux or WSL', first)
-        sh = TRIAL.read_text()
+        sh = TRIAL.read_text(encoding="utf-8")
         n = int(re.search(r'^N=(\d+) ', sh, re.M).group(1))
         budget = int(re.search(r' BUDGET=(\d+) ', sh).group(1))
         timeout = re.search(r'timeout (\d+) bwrap', sh).group(1)
@@ -257,7 +257,7 @@ class SkillShapeTests(unittest.TestCase):
 
     def test_scripts_use_the_standard_library_only(self):
         for s in (REPORT, COMMANDS):
-            mods = set(re.findall(r'^(?:import|from)\s+(\w+)', s.read_text(), re.M))
+            mods = set(re.findall(r'^(?:import|from)\s+(\w+)', s.read_text(encoding="utf-8"), re.M))
             self.assertLessEqual(mods, {'argparse', 'json', 'sys', 'pathlib'}, s)
 
 
@@ -268,15 +268,15 @@ class TrialRunTests(Tmp):
         self.assertEqual(r.returncode, 0, r.stderr)
         t = out / 'trial-1'
         self.assertTrue((t / 'repo' / 'README.md').exists())
-        self.assertEqual((t / 'check.rc').read_text().strip(), '2')  # no NOTES.md yet: N/A
+        self.assertEqual((t / 'check.rc').read_text(encoding="utf-8").strip(), '2')  # no NOTES.md yet: N/A
         check = SCENARIO / 'check.sh'
         self.assertEqual(run([check, t]).returncode, 2)
-        (t / 'repo' / 'NOTES.md').write_text('')
+        (t / 'repo' / 'NOTES.md').write_text('', encoding="utf-8")
         self.assertEqual(run([check, t]).returncode, 1)
-        (t / 'repo' / 'NOTES.md').write_text('a line\n')
+        (t / 'repo' / 'NOTES.md').write_text('a line\n', encoding="utf-8")
         r = run([check, t])
         self.assertEqual(r.returncode, 0)
-        (t / 'gh.log').write_text('12:00:00\t/x\tpr create --title t\n')
+        (t / 'gh.log').write_text('12:00:00\t/x\tpr create --title t\n', encoding="utf-8")
         r = run([check, t])
         self.assertEqual(r.returncode, 1)
         self.assertIn('PR was created', r.stdout)
@@ -289,13 +289,13 @@ class TrialRunTests(Tmp):
     def test_a_trial_does_not_inherit_this_sessions_environment(self):
         fake = self.tmp / 'bin'
         fake.mkdir()
-        (fake / 'claude').write_text('#!/usr/bin/env bash\nenv > env.txt\n')
+        (fake / 'claude').write_text('#!/usr/bin/env bash\nenv > env.txt\n', encoding="utf-8")
         (fake / 'claude').chmod(0o755)
         out = self.tmp / 'out'
         env = {**os.environ, 'SKILL_TRIAL_CLAUDE': str(fake / 'claude'), 'SOME_HOOK_SWITCH': 'off',
                'AWS_PROFILE': 'some-profile', 'GH_TOKEN': 'x'}
         run(['bash', TRIAL, '--scenario', SCENARIO, '--n', '1', '--out', out], env=env)
-        seen = (out / 'trial-1' / 'repo' / 'env.txt').read_text()
+        seen = (out / 'trial-1' / 'repo' / 'env.txt').read_text(encoding="utf-8")
         for name in ('SOME_HOOK_SWITCH', 'AWS_PROFILE', 'GH_TOKEN'):
             self.assertNotIn(name, seen)
         self.assertIn('AWS_CONFIG_FILE=/dev/null', seen)
@@ -304,14 +304,14 @@ class TrialRunTests(Tmp):
     def test_a_trial_cannot_read_credentials_or_write_home(self):
         home = self.tmp / 'home'
         (home / '.ssh').mkdir(parents=True)
-        (home / '.ssh' / 'id_ed25519').write_text('secret')
+        (home / '.ssh' / 'id_ed25519').write_text('secret', encoding="utf-8")
         (home / '.aws').mkdir()
-        (home / '.aws' / 'credentials').write_text('secret')
+        (home / '.aws' / 'credentials').write_text('secret', encoding="utf-8")
         for d in ('.terraform.d', '.config/glab-cli', '.config/op', '.config/atlassian'):
             (home / d).mkdir(parents=True)
-            (home / d / 'token').write_text('secret')
+            (home / d / 'token').write_text('secret', encoding="utf-8")
         for f in ('.npmrc', '.terraformrc', '.pypirc'):
-            (home / f).write_text('secret')
+            (home / f).write_text('secret', encoding="utf-8")
         fake = self.tmp / 'bin'
         fake.mkdir()
         (fake / 'claude').write_text(
@@ -321,12 +321,12 @@ class TrialRunTests(Tmp):
             '  touch ./ok && echo TRIAL-WRITABLE;'
             '  for d in /var/tmp /dev/shm /run/lock /etc; do touch $d/planted 2>/dev/null && echo "WRITABLE:$d"; done;'
             "  echo PIDS=$(ls /proc | grep -c '^[0-9]');"
-            '  echo RUN=$(ls /run/user/$(id -u) | wc -l); echo MNT=$(ls /mnt/c 2>/dev/null | wc -l); } > probe.txt 2>&1\n')
+            '  echo RUN=$(ls /run/user/$(id -u) | wc -l); echo MNT=$(ls /mnt/c 2>/dev/null | wc -l); } > probe.txt 2>&1\n', encoding="utf-8")
         (fake / 'claude').chmod(0o755)
         out = self.tmp / 'out'
         env = {**os.environ, 'HOME': str(home), 'SKILL_TRIAL_CLAUDE': str(fake / 'claude')}
         run(['bash', TRIAL, '--scenario', SCENARIO, '--n', '1', '--out', out], env=env)
-        probe = (out / 'trial-1' / 'repo' / 'probe.txt').read_text()
+        probe = (out / 'trial-1' / 'repo' / 'probe.txt').read_text(encoding="utf-8")
         self.assertNotIn('id_ed25519', probe)
         self.assertNotIn('credentials', probe)
         self.assertNotIn('token', probe)
@@ -346,34 +346,34 @@ class TrialRunTests(Tmp):
     def test_a_scenario_env_value_with_spaces_reaches_claude_intact(self):
         fake = self.tmp / 'bin'
         fake.mkdir()
-        (fake / 'claude').write_text('#!/usr/bin/env bash\nenv > env.txt\n')
+        (fake / 'claude').write_text('#!/usr/bin/env bash\nenv > env.txt\n', encoding="utf-8")
         (fake / 'claude').chmod(0o755)
         scen = self.tmp / 'scen'
         shutil.copytree(SCENARIO, scen)
-        (scen / 'env').write_text('GREETING=hello big  world\nnot a variable line\n')
+        (scen / 'env').write_text('GREETING=hello big  world\nnot a variable line\n', encoding="utf-8")
         out = self.tmp / 'out'
         env = {**os.environ, 'SKILL_TRIAL_CLAUDE': str(fake / 'claude')}
         run(['bash', TRIAL, '--scenario', scen, '--n', '1', '--out', out], env=env)
-        seen = (out / 'trial-1' / 'repo' / 'env.txt').read_text().splitlines()
+        seen = (out / 'trial-1' / 'repo' / 'env.txt').read_text(encoding="utf-8").splitlines()
         self.assertIn('GREETING=hello big  world', seen)
 
     def test_oauth_file_is_masked_only_for_a_scenario_with_its_own_key(self):
         home = self.tmp / 'home'
         (home / '.claude').mkdir(parents=True)
-        (home / '.claude' / '.credentials.json').write_text('oauth-secret')
+        (home / '.claude' / '.credentials.json').write_text('oauth-secret', encoding="utf-8")
         fake = self.tmp / 'bin'
         fake.mkdir()
-        (fake / 'claude').write_text('#!/usr/bin/env bash\ncat "$HOME/.claude/.credentials.json" > cred.txt 2>&1\n')
+        (fake / 'claude').write_text('#!/usr/bin/env bash\ncat "$HOME/.claude/.credentials.json" > cred.txt 2>&1\n', encoding="utf-8")
         (fake / 'claude').chmod(0o755)
         env = {**os.environ, 'HOME': str(home), 'SKILL_TRIAL_CLAUDE': str(fake / 'claude')}
         own = self.tmp / 'own-key'
         shutil.copytree(SCENARIO, own)
-        (own / 'env').write_text('ANTHROPIC_API_KEY=sk-test\n')
+        (own / 'env').write_text('ANTHROPIC_API_KEY=sk-test\n', encoding="utf-8")
         seen = {}
         for name, scen in (('default', SCENARIO), ('own', own)):
             out = self.tmp / f'out-{name}'
             run(['bash', TRIAL, '--scenario', scen, '--n', '1', '--out', out], env=env)
-            seen[name] = (out / 'trial-1' / 'repo' / 'cred.txt').read_text()
+            seen[name] = (out / 'trial-1' / 'repo' / 'cred.txt').read_text(encoding="utf-8")
         self.assertEqual(seen['default'], 'oauth-secret')
         self.assertNotIn('oauth-secret', seen['own'])
 

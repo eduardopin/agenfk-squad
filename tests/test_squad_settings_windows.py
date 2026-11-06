@@ -99,7 +99,7 @@ def test_a_windows_hook_command_is_recognised_as_the_squads():
         config = os.path.join(tmp, ".claude")
         os.makedirs(os.path.join(config, "hooks"))
         script = os.path.join(config, "hooks", "squad-watch.py")
-        open(script, "w").close()
+        open(script, "w", encoding="utf-8").close()
         fwd, back = script.replace("\\", "/"), script
         ok = lambda c: ss.squad_script(c, config, windows=True)       # noqa: E731
         assert ok(f'python "{fwd}"') == "squad-watch.py"
@@ -126,7 +126,7 @@ def config_with_hooks(tmp):
     config = os.path.join(tmp, ".claude")
     os.makedirs(os.path.join(config, "hooks"))
     for name in ("squad-router.py", "squad-watch.py"):
-        with open(os.path.join(config, "hooks", name), "w") as fh:
+        with open(os.path.join(config, "hooks", name), "w", encoding="utf-8") as fh:
             fh.write('print("ran " + __file__.replace("\\\\", "/").rsplit("/", 1)[-1])\n')
     return config
 

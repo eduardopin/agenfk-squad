@@ -40,10 +40,55 @@ def home():
     return h
 
 
+def _alive_in(homes):
+    """pids of live processes whose HOME is one of `homes`: the detached squad-switch children
+    (and the fake herdr they call) that squad-wake / squad-watch started and nobody waits for."""
+    marks = [f"HOME={h}" for h in homes]
+    found = []
+    if os.path.isdir("/proc/self"):
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit() or int(pid) == os.getpid():
+                continue
+            try:
+                with open(f"/proc/{pid}/environ", "rb") as fh:
+                    env = fh.read().decode("utf-8", "replace").split("\0")
+            except OSError:               # gone, a zombie (empty environ), or not ours
+                continue
+            if any(m in env for m in marks):
+                found.append(int(pid))
+        return found
+    try:                                  # no /proc (macOS): ps appends the environment with `e`
+        out = subprocess.run(["ps", "eww", "-A", "-o", "pid=,command="], capture_output=True, text=True).stdout
+    except OSError:
+        return found
+    for line in out.splitlines():
+        pid, _, rest = line.strip().partition(" ")
+        if pid.isdigit() and int(pid) != os.getpid() and any(f" {m}" in rest or rest.endswith(m) for m in marks):
+            found.append(int(pid))
+    return found
+
+
+def _settle(secs=120):
+    """Wait for the detached children of the throwaway HOMEs to exit, so none writes
+    HOME/.claude/squad/switches.log (makedirs and all) after the HOME is removed."""
+    end = time.time() + secs
+    while _alive_in(_HOMES) and time.time() < end:
+        time.sleep(0.2)
+    for pid in _alive_in(_HOMES):         # a child stuck past the limit must not outlive the test either
+        print(f"warning: killing pid {pid}, still running in a throwaway HOME after {secs}s", file=sys.stderr)
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+    while _alive_in(_HOMES) and time.time() < end + 5:
+        time.sleep(0.1)
+
+
 @atexit.register
 def _remove_homes():
     # every test creates a throwaway HOME; without this /tmp (tmpfs) runs out of inodes
     # when several sessions run the suite all day long
+    _settle()
     for h in _HOMES:
         shutil.rmtree(h, ignore_errors=True)
 

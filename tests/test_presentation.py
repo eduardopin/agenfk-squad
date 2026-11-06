@@ -345,6 +345,7 @@ printf '%s\n' "$@" >> "$log"
 # What the real Chrome does: scratch in the temp directory it was started with,
 # outside its profile (a socket dir; on Windows a <uuid>.tmp file).
 t=$(cygpath -u "${TMPDIR:-/tmp}")
+@SOCKCHECK@
 mkdir "$t/.com.google.Chrome.$$" && : > "$t/$$.tmp" && echo "scratch" >> "$log"
 for a in "$@"; do
   case "$a" in
@@ -379,7 +380,8 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
             return path
         log = os.path.join(tmp, "chrome.log")
         fake_chrome = FAKE_CHROME.replace("@LOG@", log.replace("\\", "/")) \
-            .replace("@MEASURED@", " ".join(f"{s}=0" for s in ids)).replace("@IDS@", " ".join(ids))
+            .replace("@MEASURED@", " ".join(f"{s}=0" for s in ids)).replace("@IDS@", " ".join(ids)) \
+            .replace("@SOCKCHECK@", "")
         nowhere = {var: os.path.join(tmp, "nowhere") for var in WINDOWS_CHROME_DIRS}
 
         def run(env, *chrome_arg):
@@ -447,6 +449,62 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
             assert all(u.startswith("file:///") and not re.match(r"file:///[A-Za-z]:", u) for u in urls), urls
             assert files["--print-to-pdf="] == [pdf], files
             assert all(f.startswith(tmp + "/") for f in files["--screenshot="]), files
+    finally:
+        shutil.rmtree(tmp)
+
+
+# Chrome's unix socket (<TMPDIR>/.com.google.Chrome.XXXXXX/SingletonSocket) must fit in sun_path:
+# the real Chrome aborts over this length, measured as 66 characters of TMPDIR on Linux.
+SOCKET_CHECK = r'''p="$t/.com.google.Chrome.XXXXXX/SingletonSocket"
+[ ${#p} -le 108 ] || { echo "[1:1:FATAL:process_singleton_posix.cc:313] Socket path too long: $p." >&2; exit 1; }'''
+
+
+def test_a_long_tmpdir_still_exports_and_a_chrome_failure_says_why():
+    """A TMPDIR long enough that Chrome's socket fits under it but not under a directory
+    nested inside it must not break the export (the first scratch fix did), and the
+    run must leave nothing in it. When Chrome dies, its fatal line reaches the user.
+    POSIX only: Chrome for Windows uses named pipes, with no length limit."""
+    if WINDOWS:
+        raise Skip("Chrome for Windows has no socket path limit")
+    ids = slides(read(TEMPLATE))
+    tmp = tempfile.mkdtemp(prefix="lt-")
+    try:
+        long_tmp = tmp
+        if len(long_tmp) < 62:  # pad the path to 62 characters
+            long_tmp = os.path.join(tmp, "p" * (62 - len(tmp) - 1))
+            os.makedirs(long_tmp)
+        assert 62 <= len(long_tmp) <= 66, f"cannot build a 62..66 character TMPDIR from {tmp}"
+
+        def write(path, text):
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            os.chmod(path, 0o755)
+            return path
+        log = os.path.join(tmp, "chrome.log")
+        fakes = os.path.join(tmp, "fakes")
+        os.makedirs(fakes)
+        write(os.path.join(fakes, "cygpath"), FAKE_CYGPATH)
+        fake = write(os.path.join(fakes, "chrome"), FAKE_CHROME.replace("@LOG@", log)
+                     .replace("@MEASURED@", " ".join(f"{s}=0" for s in ids)).replace("@IDS@", " ".join(ids))
+                     .replace("@SOCKCHECK@", SOCKET_CHECK))
+        env = {"PATH": fakes + os.pathsep + os.environ["PATH"],
+               "TMPDIR": long_tmp, "TEMP": long_tmp, "TMP": long_tmp}
+        before = os.listdir(long_tmp)
+        out = os.path.join(tmp, "out")
+        r = export(TEMPLATE, "--pdf", os.path.join(out, "deck.pdf"), "--png-dir", os.path.join(out, "png"),
+                   "--chrome", fake, env=env)
+        assert r.returncode == 0, said(r)
+        assert read(log).splitlines().count("scratch") == len(ids) + 2, "the fake Chrome did not run its checks"
+        assert sorted(os.listdir(long_tmp)) == sorted(before), \
+            f"the export left {set(os.listdir(long_tmp)) - set(before)} in its TMPDIR"
+
+        # Chrome dies: the reason is not swallowed.
+        dying = write(os.path.join(fakes, "dying"),
+                      "#!/usr/bin/env bash\necho '[1:1:FATAL:x.cc:1] Socket path too long: /x' >&2\nexit 1\n")
+        r = export(TEMPLATE, "--measure", "--chrome", dying, env=env)
+        assert r.returncode == 1 and "Chrome returned no measurement" in r.stderr, said(r)
+        assert "FATAL:x.cc:1] Socket path too long" in r.stderr and "hint:" in r.stderr, said(r)
+        assert sorted(os.listdir(long_tmp)) == sorted(before), os.listdir(long_tmp)
     finally:
         shutil.rmtree(tmp)
 

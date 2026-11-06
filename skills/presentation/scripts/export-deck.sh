@@ -115,24 +115,48 @@ WINDIRS
 }
 CHROME_BIN=$(resolve_chrome) || exit 2
 
-# The name is short on purpose: Chrome puts a unix socket under this directory
-# (<WORK>/.com.google.Chrome.XXXXXX/SingletonSocket) and a socket path over about
-# 100 characters makes it abort, which long macOS temp paths would reach.
 WORK="$(mktemp -d "${TMPDIR:-/tmp}"/dk.XXXXXX)"
+# Chrome's own temp directory, see chrome() below. Empty until needed.
+CHROME_TMP=""
 # Cleanup must never change the exit code: on Windows Chrome can still hold the profile.
-trap 'rm -rf "$WORK" 2>/dev/null || true' EXIT
+trap 'rm -rf "$WORK" ${CHROME_TMP:+"$CHROME_TMP"} 2>/dev/null || true' EXIT
 DECK_ABS="$(cd "$(dirname "$DECK")" && pwd)/$(basename "$DECK")"
 
 # Throwaway profile: never touches the user's Chrome profile. Chrome also writes
 # outside the profile, into the temp directory: the singleton socket dir
 # (.com.google.Chrome.XXXXXX, which it removes on exit but leaves behind when the
 # machine is busy and it shuts down in a hurry) and, on Windows, <uuid>.tmp. So
-# Chrome's temp directory is $WORK, removed with it: the run leaves nothing in
-# the caller's.
+# Chrome gets a temp directory of its own, removed on exit: the run leaves
+# nothing in the caller's.
+# On Linux and macOS the socket path (<dir>/.com.google.Chrome.XXXXXX/SingletonSocket)
+# must stay under about 107 characters or Chrome aborts, and a long caller's TMPDIR
+# (the base used it as Chrome's directory) must not break an export that worked, so
+# when $WORK is a longer path than /tmp/dk.XXXXXX Chrome gets a directory there
+# instead. Windows uses named pipes: no limit, so $WORK serves.
+CHROME_DIR="$WORK"
+if [ "$GIT_BASH" -eq 0 ] && [ "${#WORK}" -gt 14 ] && [ -d /tmp ] && [ -w /tmp ]; then
+  if CHROME_TMP=$(mktemp -d /tmp/dk.XXXXXX 2>/dev/null) && [ -d "$CHROME_TMP" ]; then
+    CHROME_DIR="$CHROME_TMP"
+  else
+    CHROME_TMP=""
+  fi
+fi
+CHROME_ERR="$WORK/chrome.err"
 chrome() {
-  local t; t="$(native_path "$WORK")"
+  local t; t="$(native_path "$CHROME_DIR")"
   TMPDIR="$t" TEMP="$t" TMP="$t" "$CHROME_BIN" --headless --disable-gpu --no-first-run --no-default-browser-check \
-    --user-data-dir="$(native_path "$WORK/profile")" "$@" 2>/dev/null
+    --user-data-dir="$(native_path "$WORK/profile")" "$@" 2>>"$CHROME_ERR"
+}
+# chrome_why: what Chrome said when it died, without its usual noise (fontconfig
+# and the like): only the fatal and error lines, and a hint for a known cause.
+chrome_why() {
+  local why
+  why=$( (tr -d '\r' < "$CHROME_ERR" | grep -E 'FATAL|ERROR' | tail -n 3) 2>/dev/null || true)
+  [ -n "$why" ] || return 0
+  printf 'Chrome said:\n%s\n' "$why" >&2
+  case "$why" in *"Socket path too long"*)
+    echo "hint: the temp directory path is too long for Chrome's socket; set TMPDIR to a shorter one" >&2 ;;
+  esac
 }
 
 # render_variant <classes> <out>: a copy of the deck with classes on <html> and
@@ -187,7 +211,7 @@ JS
     "$(basename "$f")" "$w" "$h" > "$frame"
   out=$(chrome --window-size="$((w + 200)),$((h + 400))" --virtual-time-budget=10000 --dump-dom "$(file_url "$frame")" || true)
   line=$(printf '%s' "$out" | grep -o 'MEASURE [^<]* END' | head -1 || true)
-  [ -n "$line" ] || { echo "measure $label: Chrome returned no measurement" >&2; return 1; }
+  [ -n "$line" ] || { echo "measure $label: Chrome returned no measurement" >&2; chrome_why; return 1; }
   counted=$(printf '%s\n' "$line" | tr ' ' '\n' | grep -c '=' || true)
   [ "$counted" -eq "$N_SLIDES" ] || { echo "measure $label: $counted slides measured for $N_SLIDES in the deck" >&2; return 1; }
   case "$line" in "MEASURE ${w}x${h} "*) ;; *) echo "measure $label: wrong viewport (${line%% s*}), expected ${w}x${h}" >&2; return 1 ;; esac
@@ -216,7 +240,7 @@ if [ -n "$PDF" ]; then
   rm -f "$PDF"
   chrome --no-pdf-header-footer --window-size=1280,720 --virtual-time-budget=15000 \
     --print-to-pdf="$(native_path "$PDF")" "$(file_url "$WORK/print.html")" || true
-  [ -s "$PDF" ] || { echo "Chrome did not produce $PDF" >&2; exit 1; }
+  [ -s "$PDF" ] || { echo "Chrome did not produce $PDF" >&2; chrome_why; exit 1; }
   # /Type /Page (leaf) and /Type /Pages (tree); count only the leaves.
   PAGES=$( (grep -a -o '/Type */Pages*' "$PDF" || true) | (grep -c 'Page$' || true) )
   if [ "$PAGES" -ne "$N_SLIDES" ]; then
@@ -243,7 +267,7 @@ if [ -n "$PNG_DIR" ]; then
     rm -f "$out"
     chrome --hide-scrollbars --window-size=1280,720 --force-device-scale-factor=2 ${BG[@]+"${BG[@]}"} \
       --virtual-time-budget=12000 --screenshot="$(native_path "$out")" "$(file_url "$f")" || true
-    [ -s "$out" ] || { echo "Chrome did not produce $out" >&2; exit 1; }
+    [ -s "$out" ] || { echo "Chrome did not produce $out" >&2; chrome_why; exit 1; }
     echo "png: $out"
     i=$((i+1))
   done

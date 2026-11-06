@@ -42,13 +42,13 @@ class Session:
         _HOMES.append(self.h)
         self.sid = "abcdef01-2345-6789-abcd-ef0123456789"
         self.transcript = os.path.join(self.h, f"{self.sid}.jsonl")
-        open(self.transcript, "w").close()
+        open(self.transcript, "w", encoding="utf-8").close()
         self.env = dict(env or {})
         cards = os.path.join(self.h, "cards.json")
-        with open(cards, "w") as fh:
+        with open(cards, "w", encoding="utf-8") as fh:
             json.dump(statuses or {}, fh)
         fake = os.path.join(self.h, "agenfk.py")
-        with open(fake, "w") as fh:
+        with open(fake, "w", encoding="utf-8") as fh:
             fh.write(
                 "import json, sys\n"
                 f"cards = json.load(open({cards!r}))\n"
@@ -72,7 +72,7 @@ class Session:
         return r.stdout.strip()
 
     def append(self, rec):
-        with open(self.transcript, "a") as fh:
+        with open(self.transcript, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec) + "\n")
 
     def owner(self, text):
@@ -100,7 +100,7 @@ class Session:
     def state(self):
         path = os.path.join(self.h, ".claude", "squad", "watch", f"{self.sid}.main.json")
         try:
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 return json.load(fh)
         except OSError:
             return {}
@@ -110,7 +110,7 @@ class Session:
         st = self.state()
         st.update(kw)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(st, fh)
 
 
@@ -482,7 +482,7 @@ def test_done_check_stays_inside_the_hook_timeout():
     cards = [f"{i:08x}-2222-3333-4444-555555555555" for i in range(8)]
     s = Session(statuses={c: "DONE" for c in cards})
     slow = os.path.join(s.h, "slow.py")
-    with open(slow, "w") as fh:
+    with open(slow, "w", encoding="utf-8") as fh:
         fh.write("import time, json, sys\ntime.sleep(2)\nprint(json.dumps({'status': 'IN_PROGRESS'}))\n")
     s.env["SQUAD_AGENFK"] = f"{sys.executable} {slow}"
     s.owner("[squad] GOAL: close " + " ".join(cards))

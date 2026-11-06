@@ -110,7 +110,7 @@ class WaveTests(unittest.TestCase):
     def test_help_and_no_execution(self):
         p = subprocess.run([sys.executable, '-I', '-B', str(SCRIPT), '--help'], capture_output=True)
         self.assertEqual(p.returncode, 0)
-        self.assertNotIn('import subprocess', SCRIPT.read_text())
+        self.assertNotIn('import subprocess', SCRIPT.read_text(encoding="utf-8"))
 
 
 if __name__ == '__main__':

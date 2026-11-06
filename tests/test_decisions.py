@@ -292,7 +292,7 @@ def test_a_full_stdout_still_exits_0():
                          capture_output=True, text=True, encoding="utf-8", env=env(h))
     assert out.returncode == 0 and out.stderr == "", out
     if os.path.exists("/dev/full"):                   # the real device too, where the OS has one
-        with open("/dev/full", "w") as dev:
+        with open("/dev/full", "w", encoding="utf-8") as dev:
             out = subprocess.run([sys.executable, HOOK], cwd=r, input=b"{}", stdout=dev,
                                  stderr=subprocess.PIPE, env=env(h))
         assert out.returncode == 0 and out.stderr == b"", out

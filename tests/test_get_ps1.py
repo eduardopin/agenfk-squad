@@ -28,7 +28,7 @@ WANTED = [(h["script"], e) for h in MANIFEST["hooks"] for e in h["events"]]
 
 TMP = tempfile.mkdtemp(prefix="getps-")
 GITCONFIG = os.path.join(TMP, "gitconfig")        # no global git config of the machine's user
-open(GITCONFIG, "w").close()
+open(GITCONFIG, "w", encoding="utf-8").close()
 GIT_ENV = {"GIT_CONFIG_GLOBAL": GITCONFIG, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
@@ -54,7 +54,7 @@ def build_source():
     refs = {}
 
     def commit(msg, tag=None):
-        with open(os.path.join(src, "RELEASE"), "w") as fh:
+        with open(os.path.join(src, "RELEASE"), "w", encoding="utf-8") as fh:
             fh.write(msg + "\n")
         git(src, "add", "-A")
         git(src, "commit", "-q", "-m", msg)
@@ -213,7 +213,7 @@ def test_uninstall_removes_hooks_and_links_but_keeps_the_clone_until_purge():
 def test_squad_home_that_is_not_a_clone_is_refused():
     h = home()
     os.makedirs(os.path.join(h, "dotfiles"))
-    with open(os.path.join(h, "dotfiles", "keep.txt"), "w") as fh:
+    with open(os.path.join(h, "dotfiles", "keep.txt"), "w", encoding="utf-8") as fh:
         fh.write("mine")
     r = run(h, "-Uninstall", "-Purge", env={"SQUAD_HOME": os.path.join(h, "dotfiles")})
     assert r.returncode != 0 and "does not look like an agenfk-squad clone" in r.out, r.out
@@ -223,7 +223,7 @@ def test_squad_home_that_is_not_a_clone_is_refused():
 def test_settings_that_cannot_be_parsed_are_left_untouched_and_nothing_is_installed():
     h = home()
     os.makedirs(config(h))
-    with open(settings_path(h), "w") as fh:
+    with open(settings_path(h), "w", encoding="utf-8") as fh:
         fh.write("{ not json")
     r = run(h)
     assert r.returncode != 0 and "nothing was installed" in r.out, r.out
@@ -267,7 +267,7 @@ def test_local_changes_in_the_clone_are_refused_and_kept():
 def test_python_older_than_3_10_stops_with_the_fix_and_changes_nothing():
     h = home()
     fake = os.path.join(h, "oldpython.cmd")
-    with open(fake, "w") as fh:
+    with open(fake, "w", encoding="utf-8") as fh:
         fh.write('@echo off\r\necho 3.9\r\nexit /b 1\r\n')
     r = run(h, env={"SQUAD_PYTHON": fake})
     assert r.returncode != 0 and "MISSING python 3.10 or newer" in r.out, r.out
@@ -340,7 +340,7 @@ def test_a_clone_that_cannot_be_checked_out_stops_the_install():
     git(clone(h), "update-index", "--assume-unchanged", "RELEASE")
     os.remove(bad)
     os.makedirs(bad)                                 # RELEASE is now a directory, and the old tree has a file
-    with open(os.path.join(bad, "keep.txt"), "w") as fh:
+    with open(os.path.join(bad, "keep.txt"), "w", encoding="utf-8") as fh:
         fh.write("x")
     r = run(h, "-Ref", "v0.2.0")
     assert r.returncode != 0, r.out

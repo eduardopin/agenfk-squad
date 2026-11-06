@@ -68,7 +68,7 @@ DRIVER = '''(async () => {
 def run_driver(tmp):
     ext = EXT.replace("\\", "\\\\")
     driver = os.path.join(tmp, "driver.mjs")
-    with open(driver, "w") as fh:
+    with open(driver, "w", encoding="utf-8") as fh:
         fh.write(DRIVER.replace("__EXT__", "file://" + ext))
     env = dict(os.environ, HOME=tmp, USERPROFILE=tmp, RECEIVED=os.path.join(tmp, "received.jsonl"),
                SQUAD_WATCH_OMP_BRIDGE=os.path.join(tmp, "fake_bridge.py"),
@@ -79,14 +79,14 @@ def run_driver(tmp):
     r = subprocess.run(["node", driver], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     received = []
-    with open(env["RECEIVED"]) as fh:
+    with open(env["RECEIVED"], encoding="utf-8") as fh:
         received = [json.loads(line) for line in fh if line.strip()]
     return json.loads(r.stdout), received
 
 
 def test_the_extension_routes_events_and_applies_verdicts():
     with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "fake_bridge.py"), "w") as fh:
+        with open(os.path.join(tmp, "fake_bridge.py"), "w", encoding="utf-8") as fh:
             fh.write(FAKE_BRIDGE)
         out, received = run_driver(tmp)
 
@@ -119,11 +119,11 @@ def test_the_extension_routes_events_and_applies_verdicts():
 
 def test_a_missing_session_file_decides_nothing():
     with tempfile.TemporaryDirectory() as tmp:
-        with open(os.path.join(tmp, "fake_bridge.py"), "w") as fh:
+        with open(os.path.join(tmp, "fake_bridge.py"), "w", encoding="utf-8") as fh:
             fh.write(FAKE_BRIDGE)
         ext = EXT.replace("\\", "\\\\")
         driver = os.path.join(tmp, "driver2.mjs")
-        with open(driver, "w") as fh:
+        with open(driver, "w", encoding="utf-8") as fh:
             fh.write('''(async () => {
   const mod = await import("file://__EXT__");
   const ran = [];
@@ -144,7 +144,7 @@ def test_the_bridge_runs_under_an_interpreter_the_platform_has():
     with tempfile.TemporaryDirectory() as tmp:
         ext = EXT.replace("\\", "\\\\")
         driver = os.path.join(tmp, "driver3.mjs")
-        with open(driver, "w") as fh:
+        with open(driver, "w", encoding="utf-8") as fh:
             fh.write('''(async () => {
   const mod = await import("file://__EXT__");
   console.log(JSON.stringify([

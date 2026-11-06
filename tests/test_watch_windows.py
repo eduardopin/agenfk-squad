@@ -56,7 +56,7 @@ def test_the_lock_keeps_a_second_process_out_until_released():
                 print(True)
         """)
         env = dict(os.environ, HOME=tmp, USERPROFILE=tmp)
-        with open(path, "w") as held:
+        with open(path, "w", encoding="utf-8") as held:
             sw.lock_file(held)
             r = subprocess.run([sys.executable, "-c", child, "0.3"], capture_output=True, text=True, env=env, timeout=30)
             assert r.stdout.strip() == "False", (r.stdout, r.stderr)
@@ -137,7 +137,7 @@ def write_transcript_with_handoff(tmp, body_on_disk, content):
     transcript = os.path.join(tmp, "s.jsonl")
     rec = {"type": "assistant", "isSidechain": False, "message": {"content": [
         {"type": "tool_use", "name": "Write", "input": {"file_path": path, "content": content}}]}}
-    with open(transcript, "w") as fh:
+    with open(transcript, "w", encoding="utf-8") as fh:
         fh.write(json.dumps(rec) + "\n")
     return path, transcript
 

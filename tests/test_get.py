@@ -21,7 +21,7 @@ if os.name == "nt":
     print("skipped: get.sh is for Linux, WSL and macOS; Windows has get.ps1 (tests/test_get_ps1.py)")
     sys.exit(0)
 GET = os.path.join(ROOT, "get.sh")
-with open(os.path.join(ROOT, "hooks", "manifest.json")) as _fh:
+with open(os.path.join(ROOT, "hooks", "manifest.json"), encoding="utf-8") as _fh:
     MANIFEST = json.load(_fh)
 WANTED = [(h["script"], e) for h in MANIFEST["hooks"] for e in h["events"]]
 # A hook's own matcher wins over the top-level one for that event.
@@ -30,7 +30,7 @@ MATCHER = {(h["script"], e): h.get("matchers", {}).get(e, MANIFEST["matchers"].g
 
 TMP = tempfile.mkdtemp(prefix="get-")
 GITCONFIG = os.path.join(TMP, "gitconfig")       # no global git config of the machine's user
-open(GITCONFIG, "w").close()
+open(GITCONFIG, "w", encoding="utf-8").close()
 GIT_ENV = {"GIT_CONFIG_GLOBAL": GITCONFIG, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
@@ -58,7 +58,7 @@ def build_source():
     refs = {}
 
     def commit(msg, tag=None):
-        with open(os.path.join(src, "RELEASE"), "w") as fh:
+        with open(os.path.join(src, "RELEASE"), "w", encoding="utf-8") as fh:
             fh.write(msg + "\n")
         git(src, "add", "-A")
         git(src, "commit", "-q", "-m", msg)
@@ -120,7 +120,7 @@ def sandbox_path(fake=None):
         path = os.path.join(bin_dir, name)
         if os.path.lexists(path):
             os.unlink(path)
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write("#!/bin/sh\n" + body + "\n")
         os.chmod(path, 0o755)
     return os.pathsep.join([bin_dir] + PATH)
@@ -146,7 +146,7 @@ def settings_path(h):
 
 
 def read_settings(h):
-    with open(settings_path(h)) as fh:
+    with open(settings_path(h), encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -157,7 +157,7 @@ def raw(path):
 
 def write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
 
 
@@ -442,7 +442,7 @@ def test_local_changes_in_the_clone_are_refused_and_kept():
         r = run(h, "--beta")
         assert r.returncode != 0 and "local changes" in r.out, r.out
         assert head(h) == REFS["v0.10.0"], "no checkout"
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             assert fh.read() == "my local edit\n"
         assert raw(settings_path(h)) == settings
         r = run(h, "--uninstall", "--purge")
@@ -474,7 +474,7 @@ def test_a_real_file_in_the_way_is_reported_but_the_hooks_are_still_registered()
     write(os.path.join(config(h), "CLAUDE.md"), "my rules\n")
     r = run(h)
     assert r.returncode == 1 and "SKIPPED" in r.out, r.out
-    with open(os.path.join(config(h), "CLAUDE.md")) as fh:
+    with open(os.path.join(config(h), "CLAUDE.md"), encoding="utf-8") as fh:
         assert fh.read() == "my rules\n"
     assert_registered(h)
 

@@ -34,7 +34,7 @@ import review_comments  # noqa: E402
 
 # A fake `gh`: prints the file named in FAKE_GH_OUT, or fails as if not logged in.
 FAKE_BIN = tempfile.mkdtemp(prefix="pr-fakebin-")
-with open(os.path.join(FAKE_BIN, "gh"), "w") as fh:
+with open(os.path.join(FAKE_BIN, "gh"), "w", encoding="utf-8") as fh:
     fh.write('#!/bin/sh\n[ -n "$FAKE_GH_OUT" ] && exec cat "$FAKE_GH_OUT"\necho "gh: not logged in" >&2\nexit 1\n')
 os.chmod(os.path.join(FAKE_BIN, "gh"), 0o755)
 os.environ["PATH"] = FAKE_BIN + os.pathsep + os.environ.get("PATH", "")
@@ -330,7 +330,7 @@ def test_infra_pr_with_mutation_in_tests_is_denied():
     body_file, files_file = os.path.join(d, "body.md"), os.path.join(d, "files")
     with open(body_file, "w", encoding="utf-8") as fh:
         fh.write(with_mutation)
-    with open(files_file, "w") as fh:
+    with open(files_file, "w", encoding="utf-8") as fh:
         fh.write("stacks/export/main.tf\n")
     p = subprocess.run([sys.executable, "-I", "-B", CHECK, body_file, "--lang", "pt", "--files", files_file,
                         "--title", "Move a exportação para um job em segundo plano"],
@@ -350,7 +350,7 @@ def test_auto_language_reads_claude_md_then_prs_then_commits_else_en():
 
     r = repo(commits=["Corrige o login quando a senha tem acento", "Move a exportação para um job"])
     out = os.path.join(tempfile.mkdtemp(), "titles")
-    with open(out, "w") as fh:
+    with open(out, "w", encoding="utf-8") as fh:
         fh.write("Move dealer exports to a background job\nAdd a retry to the export\nFix the login for the admin\n")
     os.environ["FAKE_GH_OUT"] = out
     try:
@@ -479,9 +479,9 @@ def test_inventory_in_a_temporary_git_repo():
     """Pins that the inventory lists created and deleted resources and functions, in JSON and in markdown."""
     r = repo({"main.tf": 'resource "aws_s3_bucket" "old" {\n}\n', "app.py": "def old():\n    pass\n"})
     git(r, "checkout", "-q", "-b", "feat")
-    with open(os.path.join(r, "main.tf"), "w") as fh:
+    with open(os.path.join(r, "main.tf"), "w", encoding="utf-8") as fh:
         fh.write('resource "aws_s3_bucket" "new" {\n}\n')
-    with open(os.path.join(r, "app.py"), "w") as fh:
+    with open(os.path.join(r, "app.py"), "w", encoding="utf-8") as fh:
         fh.write("def new():\n    pass\n")
     git(r, "commit", "-q", "-am", "Swap the bucket and the function")
     p = subprocess.run([sys.executable, "-I", "-B", INVENTORY, "--repo", r, "--base", "main", "--format", "json"],
@@ -796,7 +796,7 @@ def test_hook_body_the_gate_cannot_read_is_denied_with_the_reason():
 def test_hook_body_file_that_is_big_or_not_utf8_is_denied():
     """Pins the body file limits: 1 MB and UTF-8."""
     r = _repo_with_bodies()
-    with open(os.path.join(r, "big.md"), "w") as fh:
+    with open(os.path.join(r, "big.md"), "w", encoding="utf-8") as fh:
         fh.write("x" * 1_000_001)
     with open(os.path.join(r, "latin.md"), "wb") as fh:
         fh.write(b"acentua\xe7\xe3o")
@@ -930,17 +930,17 @@ def _hostile_repo():
     sent = tempfile.mkdtemp(prefix="pr-sentinel-")
     for name in ("fsmonitor", "external", "textconv"):
         path = os.path.join(sent, name + ".sh")
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write(f'#!/bin/sh\ntouch "{sent}/{name}"\ncat "$2" 2>/dev/null\n')
         os.chmod(path, 0o755)
-    with open(os.path.join(r, ".gitattributes"), "w") as fh:
+    with open(os.path.join(r, ".gitattributes"), "w", encoding="utf-8") as fh:
         fh.write("*.dat diff=evil\n")
     git(r, "add", "-A")
     git(r, "commit", "-q", "-m", "Attributes")
     git(r, "checkout", "-q", "-b", "feat")
-    with open(os.path.join(r, "app.py"), "w") as fh:
+    with open(os.path.join(r, "app.py"), "w", encoding="utf-8") as fh:
         fh.write("b\n")
-    with open(os.path.join(r, "x.dat"), "w") as fh:
+    with open(os.path.join(r, "x.dat"), "w", encoding="utf-8") as fh:
         fh.write("2\n")
     git(r, "commit", "-q", "-am", "Change")
     git(r, "config", "core.fsmonitor", os.path.join(sent, "fsmonitor.sh"))
@@ -992,18 +992,18 @@ def test_every_git_call_of_the_gate_drops_fsmonitor_and_diff_has_no_external_dri
     real = shutil.which("git")
     spy = tempfile.mkdtemp(prefix="pr-spy-")
     log = os.path.join(spy, "argv")
-    with open(os.path.join(spy, "git"), "w") as fh:
+    with open(os.path.join(spy, "git"), "w", encoding="utf-8") as fh:
         fh.write(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{log}"\nexec "{real}" "$@"\n')
     os.chmod(os.path.join(spy, "git"), 0o755)
     env = {**os.environ, **GIT_ENV, "PATH": spy + os.pathsep + os.environ["PATH"]}
     r = repo({"CLAUDE.md": "Títulos de PR em português.\n", "good-body.md": GOOD_PT, "a.py": "1\n"})
     git(r, "checkout", "-q", "-b", "feat")
-    with open(os.path.join(r, "a.py"), "w") as fh:
+    with open(os.path.join(r, "a.py"), "w", encoding="utf-8") as fh:
         fh.write("2\n")
     git(r, "commit", "-q", "-am", "Change")
 
     def calls():
-        with open(log) as fh:
+        with open(log, encoding="utf-8") as fh:
             return [l.strip() for l in fh if l.strip()]
 
     subprocess.run([sys.executable, "-I", "-B", HOOK],

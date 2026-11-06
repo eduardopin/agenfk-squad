@@ -71,10 +71,10 @@ def fake_herdr(h, sid):
     default); `agent prompt` logs the text to pane-prompts, or fails while prompt-fail exists.
     What Claude Code does with a /compact is set by compact_mode()."""
     cur, sent = os.path.join(h, "pane-session"), os.path.join(h, "pane-prompts")
-    with open(cur, "w") as fh:
+    with open(cur, "w", encoding="utf-8") as fh:
         fh.write(sid)
     path = os.path.join(h, "herdr")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import json, os, sys
 a = sys.argv[1:]
@@ -129,7 +129,7 @@ def module(path, name):
 
 
 def write(path, text):
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
 
 
@@ -137,7 +137,7 @@ def transcript(h, sid, ctx, ttl_5m=False, last="r-last"):
     """A main session whose last response wrote 5k to the cache, on the 1 h or the 5 min TTL."""
     path = os.path.join(h, f"{sid}.jsonl")
     key = "ephemeral_5m_input_tokens" if ttl_5m else "ephemeral_1h_input_tokens"
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": last,
                              "message": {"usage": {"cache_read_input_tokens": ctx - 5000,
                                                    "cache_creation_input_tokens": 5000,
@@ -148,19 +148,19 @@ def transcript(h, sid, ctx, ttl_5m=False, last="r-last"):
 def wait_for(path, text, secs=40):
     for _ in range(int(secs / 0.25)):
         if os.path.exists(path):
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 body = fh.read()
             if text in body:
                 return body
         time.sleep(0.25)
-    with open(path) if os.path.exists(path) else open(os.devnull) as fh:
+    with open(path, encoding="utf-8") if os.path.exists(path) else open(os.devnull, encoding="utf-8") as fh:
         raise AssertionError(f"{text!r} did not show up in {path}: {fh.read()!r}")
 
 
 def lines(path):
     if not os.path.exists(path):
         return []
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         return fh.read().splitlines()
 
 
@@ -180,7 +180,7 @@ def job(h, sid, tr, text="/compact keep the plan", req="r-last", due=0.0, st=Non
         write(squad(h, "watch", f"{sid}.main.json"), json.dumps(st or {}))
     os.makedirs(squad(h, "compact"), exist_ok=True)
     path = squad(h, "compact", f"{sid}.json")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump({"due": due, "req": req, "pane": "w1:p1", "session": sid, "transcript": tr,
                    "ctx": 300_000, "ttl": 3600, "text": text}, fh)
     return path
@@ -210,7 +210,7 @@ def test_compacts_before_the_cache_goes_cold_with_what_to_keep():
     for must in ("owner's current request", "branch, worktree", "DONE with evidence", "background tasks",
                  "UNKNOWN", "check git status and the card", "deliver cards ABC-01c in parallel"):
         assert must in prompts[0], (must, prompts[0])
-    with open(squad(h, "compact", f"{sid}.sent")) as fh:
+    with open(squad(h, "compact", f"{sid}.sent"), encoding="utf-8") as fh:
         assert json.load(fh)["req"] == "r-last"
     for _ in range(40):                                 # the job is removed once sent
         if not os.path.exists(squad(h, "compact", f"{sid}.json")):
@@ -234,12 +234,12 @@ def test_the_ordered_compaction_is_labelled_and_never_compacted_twice():
     # the /compact line reaches the session as a prompt: it is not the owner speaking
     run(h, "UserPromptSubmit", sid, tr, {"prompt": "pause the merge for today"}, env)
     run(h, "UserPromptSubmit", sid, tr, {"prompt": text + " pause it, call it a day"}, env)
-    with open(squad(h, "watch", f"{sid}.main.json")) as fh:
+    with open(squad(h, "watch", f"{sid}.main.json"), encoding="utf-8") as fh:
         st = json.load(fh)
     assert st["last_prompt"] == "pause the merge for today", st["last_prompt"]
     out = run(h, "PreCompact", sid, tr, {"trigger": "manual", "custom_instructions": text[len("/compact "):]}, env)
     assert out == "", out
-    with open(squad(h, "handoffs", f"{sid}-compact.md")) as fh:
+    with open(squad(h, "handoffs", f"{sid}-compact.md"), encoding="utf-8") as fh:
         body = fh.read()
     assert "The watcher ordered this compaction (squad-compact, manual)" in body, body
     assert "300k of context" in body and "stopped without writing" not in body, body
@@ -272,7 +272,7 @@ def test_gives_up_when_anything_changed():
         assert os.path.exists(squad(h, "compact", f"{sid}.json")), case
         state = squad(h, "watch", f"{sid}.main.json")
         if case == "moved":
-            with open(tr, "a") as fh:
+            with open(tr, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps({"type": "assistant", "requestId": "r-new",
                                      "message": {"usage": {"cache_read_input_tokens": 300_000}}}) + "\n")
         elif case == "other":
@@ -281,12 +281,12 @@ def test_gives_up_when_anything_changed():
             os.makedirs(squad(h, "switches"), exist_ok=True)
             write(squad(h, "switches", f"{sid}.claim"), "")
         elif case in ("handoff", "wait"):
-            with open(state) as fh:
+            with open(state, encoding="utf-8") as fh:
                 st = json.load(fh)
             st.update({"ctx_level": 2} if case == "handoff" else {"switch_wait": time.time() + 600})
             write(state, json.dumps(st))
         elif case in ("switched", "texted"):
-            with open(state) as fh:
+            with open(state, encoding="utf-8") as fh:
                 st = json.load(fh)
             st.update({"switched": True} if case == "switched" else {"compact_as_text": time.time()})
             write(state, json.dumps(st))
@@ -309,7 +309,7 @@ def test_nothing_is_scheduled_when_compacting_does_not_pay_or_is_not_ours():
     # the TTL comes from the transcript: 5 min, due 3 min after the Stop
     sid = "c2c2c2c2-0001"
     run(h, "Stop", sid, transcript(h, sid, 300_000, ttl_5m=True), env=env)
-    with open(os.path.join(jobs, f"{sid}.json")) as fh:
+    with open(os.path.join(jobs, f"{sid}.json"), encoding="utf-8") as fh:
         scheduled = json.load(fh)
     assert scheduled["ttl"] == 300 and 170 < scheduled["due"] - time.time() <= 180, scheduled
     assert scheduled["req"] == "r-last" and scheduled["session"] == sid, scheduled
@@ -317,7 +317,7 @@ def test_nothing_is_scheduled_when_compacting_does_not_pay_or_is_not_ours():
     write(os.path.join(jobs, f"{sid}.json"), json.dumps(scheduled))
     sid = "c2c2c2c2-0002"                              # 1 h cache
     run(h, "Stop", sid, transcript(h, sid, 300_000), env=env)
-    with open(os.path.join(jobs, f"{sid}.json")) as fh:
+    with open(os.path.join(jobs, f"{sid}.json"), encoding="utf-8") as fh:
         scheduled = json.load(fh)
     assert scheduled["ttl"] == 3600 and 3470 < scheduled["due"] - time.time() <= 3480, scheduled
     scheduled["req"] = "rescheduled"
@@ -365,7 +365,7 @@ def test_a_job_it_cannot_trust_is_never_sent():
     assert compact(h, herdr, path, "r-older") == 2       # launched for another request
     proc = subprocess.Popen([sys.executable, COMPACT, path, "r-last"], env=clean_env(h, {"HERDR_BIN_PATH": herdr}))
     time.sleep(1)                                        # it read the job and is waiting for the due time
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         d = json.load(fh)
     d["req"] = "r-newer"
     write(path, json.dumps(d))
@@ -436,7 +436,7 @@ def test_a_compact_that_arrives_as_a_message_is_a_failure_and_not_the_owner():
     log = squad(h, "compactions.log")
     body = wait_for(log, "arrived as a message")
     assert "compacted: manual" not in body, body
-    with open(squad(h, "watch", f"{sid}.main.json")) as fh:
+    with open(squad(h, "watch", f"{sid}.main.json"), encoding="utf-8") as fh:
         st = json.load(fh)
     assert st["last_prompt"] == "deliver card ABC-03" and st["asked_stop"] is False, st
     assert st.get("compact_as_text"), st
@@ -456,7 +456,7 @@ def test_without_a_manual_boundary_after_sending_it_is_not_compacted():
     sid = "c0c0c0c0-0013"
     herdr, sent = fake_herdr(h, sid)
     tr = transcript(h, sid, 300_000)
-    with open(tr, "a") as fh:                       # a manual boundary from before, then the last request
+    with open(tr, "a", encoding="utf-8") as fh:                       # a manual boundary from before, then the last request
         fh.write(json.dumps({"type": "system", "subtype": "compact_boundary",
                              "compactMetadata": {"trigger": "manual"}}) + "\n")
         fh.write(json.dumps({"type": "assistant", "isSidechain": False, "requestId": "r-later",

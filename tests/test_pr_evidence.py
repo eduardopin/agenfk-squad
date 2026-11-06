@@ -76,9 +76,9 @@ class ReviewTests(unittest.TestCase):
     def test_template_headings_are_required_and_answered(self):
         with tempfile.TemporaryDirectory() as d:
             t = Path(d) / 'template.md'; b = Path(d) / 'body.md'
-            t.write_text('## Summary\n<!-- instructions -->\n## Evidence\n')
+            t.write_text('## Summary\n<!-- instructions -->\n## Evidence\n', encoding="utf-8")
             def run(body):
-                b.write_text(body)
+                b.write_text(body, encoding="utf-8")
                 return subprocess.run([sys.executable, '-I', '-B', str(SCRIPT), 'template',
                     '--template', str(t), '--body', str(b)], capture_output=True, text=True)
             self.assertEqual(run('## Summary\nA change.\n## Evidence\nA command.\n').returncode, 0)
@@ -87,14 +87,14 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(run('## Summary\nA change.\n<!--\n## Evidence\nHidden answer.').returncode, 1)
             self.assertEqual(run('## Summary\n```html\n<!-- literal comment\n```\n## Evidence\nA real answer.').returncode, 0)
             self.assertEqual(run('## Summary\nA change.\n~~~md\n## Evidence\nA fake answer.\n~~~').returncode, 1)
-            t.write_text('## Summary\n```md\n## Example only\n```\n')
+            t.write_text('## Summary\n```md\n## Example only\n```\n', encoding="utf-8")
             self.assertEqual(run('## Summary\nA real answer.\n').returncode, 0)
 
     def test_nested_sections_and_code_answers_are_not_empty(self):
         with tempfile.TemporaryDirectory() as d:
             t = Path(d) / 'template.md'; b = Path(d) / 'body.md'
-            t.write_text('## Evidence\n### Command\n')
-            b.write_text('## Evidence\n### Command\n```sh\npython3 tests/test_x.py\n```\n')
+            t.write_text('## Evidence\n### Command\n', encoding="utf-8")
+            b.write_text('## Evidence\n### Command\n```sh\npython3 tests/test_x.py\n```\n', encoding="utf-8")
             p = subprocess.run([sys.executable, '-I', '-B', str(SCRIPT), 'template',
                 '--template', str(t), '--body', str(b)], capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -102,7 +102,7 @@ class ReviewTests(unittest.TestCase):
     def test_help_and_no_write_dependencies(self):
         p = subprocess.run([sys.executable, '-I', '-B', str(SCRIPT), '--help'], capture_output=True)
         self.assertEqual(p.returncode, 0)
-        source = SCRIPT.read_text()
+        source = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn('import subprocess', source)
         self.assertNotIn('import urllib', source)
 

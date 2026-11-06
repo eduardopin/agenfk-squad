@@ -144,19 +144,19 @@ class Env:
             self.graph(os.path.join(self.root, "graphify-out"))
         if fake:
             path = os.path.join(self.bin, "graphify")
-            with open(path, "w") as fh:
+            with open(path, "w", encoding="utf-8") as fh:
                 fh.write("#!" + sys.executable + "\n" + FAKE)
             os.chmod(path, 0o755)
         self.mode(mode)
 
     def mode(self, mode):
-        with open(os.path.join(self.bin, "config.json"), "w") as fh:
+        with open(os.path.join(self.bin, "config.json"), "w", encoding="utf-8") as fh:
             json.dump({"mode": mode, "log": self.log, "out": {"search": SEARCH_NUDGE, "read": READ_NUDGE}}, fh)
 
     def graph(self, out_dir, mtime=None):
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, "graph.json")
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write('{"nodes": [], "links": []}')
         if mtime is not None:
             os.utime(path, (mtime, mtime))
@@ -165,7 +165,7 @@ class Env:
     def calls(self):
         if not os.path.exists(self.log):
             return []
-        with open(self.log) as fh:
+        with open(self.log, encoding="utf-8") as fh:
             return [json.loads(line) for line in fh if line.strip()]
 
     def environ(self, env=None, project_dir=True):
@@ -202,13 +202,13 @@ class Env:
         if worktree:
             gitdir = os.path.join(self.base, "main-repo", ".git", "worktrees", "project")
             os.makedirs(gitdir)
-            with open(os.path.join(self.root, ".git"), "w") as fh:
+            with open(os.path.join(self.root, ".git"), "w", encoding="utf-8") as fh:
                 fh.write("gitdir: " + gitdir + "\n")
         else:
             gitdir = os.path.join(self.root, ".git")
             os.makedirs(gitdir)
         index = os.path.join(gitdir, "index")
-        open(index, "w").close()
+        open(index, "w", encoding="utf-8").close()
         os.utime(index, (mtime, mtime))
 
 
@@ -398,7 +398,7 @@ def plant(e, where):
     """A graphify in `where` that leaves a marker in the env's base and prints a nudge."""
     os.makedirs(where, exist_ok=True)
     path = os.path.join(where, "graphify")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write("#!" + sys.executable + "\nimport sys\nopen(%r, 'a').write('ran\\n')\nsys.stdout.write(%r)\n"
                  % (os.path.join(e.base, "planted-ran"), SEARCH_NUDGE))
     os.chmod(path, 0o755)
@@ -580,7 +580,7 @@ def test_a_state_file_of_the_wrong_shape_is_repaired_not_obeyed():
     e = Env()
     state = os.path.join(e.home, ".claude", "squad", "graph", "bad.json")
     os.makedirs(os.path.dirname(state))
-    with open(state, "w") as fh:
+    with open(state, "w", encoding="utf-8") as fh:
         json.dump({"ms": None, "said": 5, "read": "x", "search": True}, fh)
     assert e.run("Bash", sid="bad").stdout == SEARCH_NUDGE
     rep = e.report("bad")
@@ -592,10 +592,10 @@ def manifest_env():
     e, now = stale_env()
     src = os.path.join(e.root, "src", "app.py")
     os.makedirs(os.path.dirname(src))
-    with open(src, "w") as fh:
+    with open(src, "w", encoding="utf-8") as fh:
         fh.write("x = 1\n")
     os.utime(src, (now - 900, now - 900))
-    with open(os.path.join(e.root, "graphify-out", "manifest.json"), "w") as fh:
+    with open(os.path.join(e.root, "graphify-out", "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump({"src/app.py": {"mtime": now - 900, "ast_hash": "h"}}, fh)
     e.git_index(now)
     return e, now, src
@@ -611,7 +611,7 @@ def test_a_commit_that_changed_no_built_file_says_nothing_until_a_file_moves():
     os.remove(manifest)
     assert e.run("Bash", sid="c").stdout == SEARCH_NUDGE
     # The manifest comes back, so the moved file, not a missing manifest, decides.
-    with open(manifest, "w") as fh:
+    with open(manifest, "w", encoding="utf-8") as fh:
         json.dump({"src/app.py": {"mtime": now - 900, "ast_hash": "h"}}, fh)
     os.utime(src, (now, now))                              # an edit after the build
     os.utime(os.path.join(e.root, ".git", "index"), (now + 5, now + 5))
@@ -661,7 +661,7 @@ def test_a_session_id_cannot_write_outside_the_home():
 # ---------------------------------------------------------------- manifest and skill
 
 def test_manifest_registers_the_wrapper_on_pretooluse_only_with_its_own_matcher():
-    with open(os.path.join(ROOT, "hooks", "manifest.json")) as fh:
+    with open(os.path.join(ROOT, "hooks", "manifest.json"), encoding="utf-8") as fh:
         hooks = [h for h in json.load(fh)["hooks"] if h["script"] == "squad-graph.py"]
     assert len(hooks) == 1, hooks
     h = hooks[0]
@@ -671,7 +671,7 @@ def test_manifest_registers_the_wrapper_on_pretooluse_only_with_its_own_matcher(
 
 
 def test_graph_context_skill_has_frontmatter_and_the_procedure():
-    with open(SKILL) as fh:
+    with open(SKILL, encoding="utf-8") as fh:
         text = fh.read()
     assert text.startswith("---\nname: graph-context\n"), text[:80]
     head = text.split("\n---\n", 1)[0]

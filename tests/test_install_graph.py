@@ -54,7 +54,7 @@ PATH = path_without({"uv", "graphify", "omp", "agenfk", "claude"})
 
 
 def read_pin(path):
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         lines = [ln.strip() for ln in fh if ln.strip() and not ln.strip().startswith("#")]
     assert len(lines) == 1, f"{path} must hold exactly one version line, found {lines}"
     return lines[0]
@@ -69,7 +69,7 @@ def repo_copy():
 def recorder(bin_dir, name, log, rc=0):
     """A fake tool that writes its arguments, one per line, then a --- line."""
     path = os.path.join(bin_dir, name)
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done >> '{log}'\n"
                  f"echo --- >> '{log}'\nexit {rc}\n")
     os.chmod(path, 0o755)
@@ -78,7 +78,7 @@ def recorder(bin_dir, name, log, rc=0):
 def calls(log):
     if not os.path.exists(log):
         return []
-    with open(log) as fh:
+    with open(log, encoding="utf-8") as fh:
         return [c.strip("\n").split("\n") for c in fh.read().split("---\n") if c.strip()]
 
 
@@ -139,11 +139,11 @@ def test_install_runs_uv_tool_install_with_the_pin():
 
 def test_the_pin_is_read_from_the_pin_file_not_from_install_sh():
     repo = repo_copy()
-    with open(os.path.join(repo, "hooks", "graphify.pin"), "w") as fh:
+    with open(os.path.join(repo, "hooks", "graphify.pin"), "w", encoding="utf-8") as fh:
         fh.write("# bumped by pull request\n0.0.1\n")
     r = install(repo=repo)
     assert any("graphifyy[terraform]==0.0.1" in a for a in r.uv), r.uv
-    with open(os.path.join(ROOT, "install.sh")) as fh:
+    with open(os.path.join(ROOT, "install.sh"), encoding="utf-8") as fh:
         assert read_pin(PIN) not in fh.read(), "the version is written into install.sh; it belongs in hooks/graphify.pin"
 
 
@@ -176,7 +176,7 @@ def test_a_pin_file_without_a_version_warns_and_the_install_still_finishes():
         if text is None:
             os.remove(pin)
         else:
-            with open(pin, "w") as fh:
+            with open(pin, "w", encoding="utf-8") as fh:
                 fh.write(text)
         r = install(repo=repo)
         assert r.returncode == 0, r.out
@@ -187,7 +187,7 @@ def test_a_pin_file_without_a_version_warns_and_the_install_still_finishes():
 
 def test_a_trailing_comment_after_the_version_is_ignored():
     repo = repo_copy()
-    with open(os.path.join(repo, "hooks", "graphify.pin"), "w") as fh:
+    with open(os.path.join(repo, "hooks", "graphify.pin"), "w", encoding="utf-8") as fh:
         fh.write("0.0.2   # reviewed 2026-10-21\r\n")
     r = install(repo=repo)
     assert any("graphifyy[terraform]==0.0.2" in a and "#" not in a for a in r.uv), r.uv

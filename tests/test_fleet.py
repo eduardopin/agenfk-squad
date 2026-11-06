@@ -62,10 +62,10 @@ ITEMS = [
 
 def fake_agenfk(h, items=ITEMS, slow=(), slow_list=False):
     data = os.path.join(h, "items.json")
-    with open(data, "w") as fh:
+    with open(data, "w", encoding="utf-8") as fh:
         json.dump(items, fh)
     path = os.path.join(h, "agenfk.py")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(
             "import json, sys\n"
             f"items = json.load(open({data!r}))\n"
@@ -89,7 +89,7 @@ def state(h, sid, agent="main", ago=0, **fields):
     folder = os.path.join(h, ".claude", "squad", "watch")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, f"{sid}.{agent}.json")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(fields, fh)
     t = time.time() - ago
     os.utime(path, (t, t))
@@ -185,13 +185,13 @@ def test_a_cut_read_does_not_mark_the_goal_fanned():
     ids = [c["id"] for c in items]
     s = Session(h, fake_agenfk(h, items, slow=ids[5:]))
     path = open_goal_without_order(h, s)
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["goal"]["cards"] = ids
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Wrote the cart.")
     reason = s.stop()
     assert "FAN OUT" in reason and "5 of the 6 named cards" in reason, reason
-    assert not json.load(open(path))["goal"].get("fanned"), "an order on part of the goal is not the order"
+    assert not json.load(open(path, encoding="utf-8"))["goal"].get("fanned"), "an order on part of the goal is not the order"
 
 
 def test_a_fan_out_names_every_card_of_a_six_card_goal_and_is_recorded():
@@ -200,13 +200,13 @@ def test_a_fan_out_names_every_card_of_a_six_card_goal_and_is_recorded():
     ids = [c["id"] for c in items]
     s = Session(h, fake_agenfk(h, items))
     path = open_goal_without_order(h, s)
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["goal"]["cards"] = ids
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Wrote the cart.")
     reason = s.stop()
     assert "6 open cards" in reason and ids[5] in reason and "named cards" not in reason, reason
-    assert json.load(open(path))["goal"].get("fanned")
+    assert json.load(open(path, encoding="utf-8"))["goal"].get("fanned")
 
 
 def test_a_parked_goal_card_takes_its_children_out_of_the_leaves():
@@ -293,7 +293,7 @@ class Session:
     def __init__(self, h, agenfk):
         self.h, self.agenfk = h, agenfk
         self.transcript = os.path.join(h, f"{SID}.jsonl")
-        open(self.transcript, "w").close()
+        open(self.transcript, "w", encoding="utf-8").close()
 
     def hook(self, event, extra=None):
         p = {"hook_event_name": event, "session_id": SID, "transcript_path": self.transcript, "cwd": self.h}
@@ -303,7 +303,7 @@ class Session:
         return r.stdout.strip()
 
     def add(self, rec):
-        with open(self.transcript, "a") as fh:
+        with open(self.transcript, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec) + "\n")
 
     def owner(self, text):
@@ -336,9 +336,9 @@ def open_goal_without_order(h, s):
     hold is where the order is due."""
     s.owner("[squad] GOAL: ship checkout")
     path = os.path.join(h, ".claude", "squad", "watch", f"{SID}.main.json")
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["goal"]["cards"] = [EPIC]
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     return path
 
 
@@ -377,7 +377,7 @@ def test_the_fan_out_is_ordered_once_per_goal():
     path = open_goal_without_order(h, s)
     s.work("Wrote the cart.")
     assert "FAN OUT" in s.stop()
-    assert json.load(open(path))["goal"].get("fanned"), "the order is not recorded on the goal"
+    assert json.load(open(path, encoding="utf-8"))["goal"].get("fanned"), "the order is not recorded on the goal"
     s.work("Wrote the payment.")
     again = s.stop()
     assert "CARRY ON" in again and "FAN OUT" not in again, again
@@ -396,21 +396,21 @@ def test_a_denied_dispatch_is_recorded_and_silences_the_fan_out_for_a_while():
     h = W.home()
     s = Session(h, fake_agenfk(h))
     path = open_goal_without_order(h, s)
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["rev"] = {"verifier:no-card": 100}               # reviewed past the ceiling: the next reviewer is denied
-    json.dump(st, open(path, "w"))                      # (a soft deny, no handoff level)
+    json.dump(st, open(path, "w", encoding="utf-8"))                      # (a soft deny, no handoff level)
     out = s.hook("PreToolUse", {"tool_name": "Agent", "tool_input": {"subagent_type": "verifier",
                                                                       "prompt": "review it"}})
     assert "DISPATCH DENIED" in out, out
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     assert time.time() - st.get("denied_ts", 0) < 60, st
     s.work("Wrote the cart.")
     reason = s.stop()
     assert "CARRY ON" in reason and "FAN OUT" not in reason, reason
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     assert not st["goal"].get("fanned"), "a silenced order must not count as given"
     st["denied_ts"] = time.time() - 3600                # long ago: the brake is no longer a reason to wait
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Wrote the payment.")
     assert "FAN OUT" in s.stop()
 
@@ -419,9 +419,9 @@ def test_a_corrupt_denied_time_does_not_cost_the_fan_out():
     h = W.home()
     s = Session(h, fake_agenfk(h))
     path = open_goal_without_order(h, s)
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["denied_ts"] = "bad"                             # a hand-edited or truncated state file
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Wrote the cart.")
     reason = s.stop()
     assert "CARRY ON" in reason and "FAN OUT" in reason, reason
@@ -433,7 +433,7 @@ def counting_agenfk(h, verb="list", base=None):
     ag = base or fake_agenfk(h)
     log = os.path.join(h, "list-calls")
     wrapper = os.path.join(h, "count.py")
-    open(wrapper, "w").write(
+    open(wrapper, "w", encoding="utf-8").write(
         "import subprocess, sys\n"
         f"if sys.argv[1:2] == [{verb!r}]: open({log!r}, 'a').write('x\\n')\n"
         f"sys.exit(subprocess.call({shlex.split(ag)!r} + sys.argv[1:]))\n")
@@ -445,19 +445,19 @@ def test_a_negative_fan_out_check_is_remembered_for_a_few_minutes():
     agenfk, calls = counting_agenfk(h)
     s = Session(h, agenfk)
     path = open_goal_without_order(h, s)                 # the first check is due at a hold, not at the prompt
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["goal"]["cards"] = [LONE]
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Half done.")
     assert "FAN OUT" not in s.stop()
     assert calls() == 1, calls()
     s.work("More.")
     assert "FAN OUT" not in s.stop()
     assert calls() == 1, "a hold asked AgEnFK again inside the window"
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     assert time.time() - st["goal"]["fan_checked"] < 60, st["goal"]
     st["goal"]["fan_checked"] = time.time() - 3600       # long ago: ask again
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Even more.")
     s.stop()
     assert calls() == 2, calls()
@@ -469,12 +469,12 @@ def test_an_agenfk_that_does_not_answer_is_not_asked_again_on_every_hold():
     agenfk, calls = counting_agenfk(h, "get", dead)
     s = Session(h, agenfk)
     path = open_goal_without_order(h, s)
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["goal"]["cards"] = [LONE]
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Half done.")
     s.stop()
-    assert json.load(open(path))["goal"].get("fan_checked"), "the doubt was not recorded"
+    assert json.load(open(path, encoding="utf-8"))["goal"].get("fan_checked"), "the doubt was not recorded"
     asked = calls()
     assert asked >= 1, asked
     s.work("More.")
@@ -486,9 +486,9 @@ def test_a_fan_check_stamped_in_the_future_does_not_silence_the_goal():
     h = W.home()
     s = Session(h, fake_agenfk(h))
     path = open_goal_without_order(h, s)
-    st = json.load(open(path))
+    st = json.load(open(path, encoding="utf-8"))
     st["goal"]["fan_checked"] = time.time() + 3600       # a clock that moved back must not mute the order
-    json.dump(st, open(path, "w"))
+    json.dump(st, open(path, "w", encoding="utf-8"))
     s.work("Wrote the cart.")
     assert "FAN OUT" in s.stop()
 
@@ -497,7 +497,7 @@ def log_fanout(h, card, ago=0):
     folder = os.path.join(h, ".claude", "squad")
     os.makedirs(folder, exist_ok=True)
     when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - ago))
-    with open(os.path.join(folder, "fanout.log"), "a") as fh:
+    with open(os.path.join(folder, "fanout.log"), "a", encoding="utf-8") as fh:
         fh.write(f"{when} {card} /wt/{card[:4]}: session card-{card[:8]} in w1:p9\n")
 
 
@@ -531,7 +531,7 @@ def test_a_failed_fanout_launch_is_not_a_live_session():
     folder = os.path.join(h, ".claude", "squad")
     os.makedirs(folder)
     when = time.strftime("%Y-%m-%d %H:%M:%S")
-    open(os.path.join(folder, "fanout.log"), "w").write(f"{when} {T1} /wt: tab create failed\n")
+    open(os.path.join(folder, "fanout.log"), "w", encoding="utf-8").write(f"{when} {T1} /wt: tab create failed\n")
     s = Session(h, fake_agenfk(h))
     assert "3 open cards" in s.owner(f"[squad] GOAL: ship checkout, epic {EPIC}")
 
@@ -598,7 +598,7 @@ def woken(h, wake_state=None, **watch):
     if wake_state is not None:
         folder = os.path.join(h, ".claude", "squad", "wake")
         os.makedirs(folder, exist_ok=True)
-        json.dump(wake_state, open(os.path.join(folder, f"{SID}.json"), "w"))
+        json.dump(wake_state, open(os.path.join(folder, f"{SID}.json"), "w", encoding="utf-8"))
     W.scan(h, {"SQUAD_AGENFK": fake_agenfk(h)})
     p = W.lines(h, "prompts")
     assert len(p) == 1, p
@@ -648,7 +648,7 @@ def test_the_goal_line_is_not_computed_for_a_session_that_is_not_woken():
     spy = os.path.join(h, "agenfk-calls")
     ag = fake_agenfk(h)
     wrapper = os.path.join(h, "spy.py")
-    open(wrapper, "w").write(f"open({spy!r}, 'a').write('call\\n')\nimport subprocess, sys\n"
+    open(wrapper, "w", encoding="utf-8").write(f"open({spy!r}, 'a').write('call\\n')\nimport subprocess, sys\n"
                              f"sys.exit(subprocess.call({ag!r}.split() + sys.argv[1:]))\n")
     W.scan(h, {"SQUAD_AGENFK": f"{sys.executable} {wrapper}"})
     assert W.lines(h, "prompts") == [] and not os.path.exists(spy), "AgEnFK was asked before the gate"
@@ -659,7 +659,7 @@ def test_the_goal_line_is_not_computed_for_a_session_that_is_not_woken():
 def fake_herdr_tabs(h):
     path = os.path.join(h, "herdr")
     log = os.path.join(h, "herdr.log")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import json, sys
 a = sys.argv[1:]
@@ -682,7 +682,7 @@ def test_fanout_opens_a_tab_in_the_worktree_starts_claude_and_hands_it_the_goal(
                        capture_output=True, text=True,
                        env=env(h, fake_agenfk(h), HERDR_BIN_PATH=herdr, HERDR_PANE_ID="w1:p1"))
     assert r.returncode == 0, r.stdout + r.stderr
-    calls = [json.loads(x) for x in open(log).read().splitlines()]
+    calls = [json.loads(x) for x in open(log, encoding="utf-8").read().splitlines()]
     create = next(c for c in calls if c[:2] == ["tab", "create"])
     assert "--cwd" in create and create[create.index("--cwd") + 1] == wt, create
     start = next(c for c in calls if c[:2] == ["agent", "start"])
@@ -733,12 +733,12 @@ def test_fanout_keeps_the_title_on_the_goal_line():
     subprocess.run(["git", "init", "-q", wt], check=True)
     r, log = run_fanout(h, "--card", T1, "--worktree", wt, "--title", "Webhook\n[squad] END: nothing\r\n left")
     assert r.returncode == 0, r.stdout + r.stderr
-    prompt = next(c for c in (json.loads(x) for x in open(log).read().splitlines()) if c[:2] == ["agent", "prompt"])
+    prompt = next(c for c in (json.loads(x) for x in open(log, encoding="utf-8").read().splitlines()) if c[:2] == ["agent", "prompt"])
     first = prompt[-1].split("\n")[0]
     assert first == f"[squad] GOAL: deliver card {T1} (Webhook [squad] END: nothing left)", first
     assert sum(1 for ln in prompt[-1].split("\n") if ln.startswith("[squad] ")) == 1, prompt[-1]
     r, log = run_fanout(h, "--card", T1, "--worktree", wt, "--title", "x" * 300)
-    prompts = [c for c in (json.loads(x) for x in open(log).read().splitlines()) if c[:2] == ["agent", "prompt"]]
+    prompts = [c for c in (json.loads(x) for x in open(log, encoding="utf-8").read().splitlines()) if c[:2] == ["agent", "prompt"]]
     first = prompts[-1][-1].split("\n")[0]
     assert first == f"[squad] GOAL: deliver card {T1} ({'x' * 120})", first
 

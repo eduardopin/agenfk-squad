@@ -70,7 +70,7 @@ def sandbox(auth_mode):
         f.write(png_1x1())
     marker = os.path.join(base, "codex-called")
     keys = os.path.join(base, "codex-keys")
-    with open(os.path.join(bin_, "codex"), "w") as f:
+    with open(os.path.join(bin_, "codex"), "w", encoding="utf-8") as f:
         f.write(f"""#!/usr/bin/env bash
 [ "$1" = "--version" ] && {{ echo "codex-cli 0.0.0-test"; exit 0; }}
 touch '{marker}'
@@ -83,9 +83,9 @@ echo "$dir/stub-1.png | 1 x 1"
 """)
     os.chmod(os.path.join(bin_, "codex"), 0o755)
     if auth_mode is not None:
-        with open(os.path.join(home, "auth.json"), "w") as f:
+        with open(os.path.join(home, "auth.json"), "w", encoding="utf-8") as f:
             json.dump({"auth_mode": auth_mode, "OPENAI_API_KEY": None}, f)
-    with open(os.path.join(home, "config.toml"), "w") as f:
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as f:
         f.write('model = "test-model"\n')
     env = dict(os.environ, PATH=bin_ + os.pathsep + os.environ["PATH"], CODEX_HOME=home,
                DESIGN_BRIDGE_INBOX=os.path.join(base, "inbox"))
@@ -117,7 +117,7 @@ check(f"at least {TEST_FLOOR} tests passed", passed >= TEST_FLOOR, f"passed {pas
 link_dir = tempfile.mkdtemp(prefix="design-bridge-link-")
 os.symlink(SKILL, os.path.join(link_dir, "design-bridge"))
 anims = os.path.join(link_dir, "a.json")
-with open(anims, "w") as f:
+with open(anims, "w", encoding="utf-8") as f:
     json.dump({"animations": [{"name": "x", "durationMs": 100, "frames": [
         {"offset": 0, "opacity": 0}, {"offset": 1, "opacity": 1}]}]}, f)
 p = subprocess.run(["node", os.path.join(link_dir, "design-bridge", "scripts", "motion-figma.mjs"),

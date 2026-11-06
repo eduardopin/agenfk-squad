@@ -584,7 +584,7 @@ def test_markdown_flag_writes_the_review_text_for_the_slop_lint():
     slop = os.path.join(ROOT, "skills", "writing", "scripts", "slop_lint.py")
     if os.path.exists(slop):
         lint = subprocess.run([sys.executable, "-I", "-B", slop, out], capture_output=True, text=True)
-        assert lint.returncode in (0, 1), lint  # it reads the file; a finding is its verdict, a crash is not
+        assert lint.returncode == 0, lint  # the review text ships clean: no ERROR from the linter
         assert "Traceback" not in lint.stderr, lint.stderr
 
 

@@ -64,7 +64,9 @@ thread resolution and session wakeups behind owner confirmation. No auto-merge.
    is going to dispatch the `developer`/`frontend`/`tester`.
 4. **PR stack:** order, CI (`gh pr checks`), conflict via `merge-tree`,
    orphaned base, piggybacked diff, review block. Read the CI annotations before
-   calling something a defect.
+   calling something a defect. A run that fails in seconds without running a
+   step is billing or permissions, not a defect in the branch: read the
+   annotation first and send it to the owner.
 5. **Merge train as a proposal:** order, original SHAs saved, `rebase
    --onto` after each squash, what each merge unblocks.
 6. **Open a PR** only when the flow step asks for it and the `verifier`

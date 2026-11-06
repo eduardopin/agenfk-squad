@@ -91,13 +91,20 @@ there is no hook) and to run the switch.
    on the card (`agenfk comment`).
 4. **Handoff**: run MODE A of `clear-pickup` (ground truth from commands,
    short, `UNKNOWN` for whatever you did not verify) and, if the card is going
-   to wait, advise `/agenfk-pause <id>`. Never clear the session: `/clear`,
+   to wait, advise `/agenfk-pause <id>`. For the main Claude Code session,
+   return the handoff's text and path and let the main session write it with
+   its own Write: the watch hook recognises only a handoff the main session
+   wrote, and a handoff a sub-agent wrote does not trigger the swap. For Codex
+   and pi sessions, write it yourself. Never clear the session: `/clear`,
    `/new` and closing belong to the owner.
 5. **Pickup**: in the new session, MODE B: read the project's most recent
    handoff, **verify it against the repo** (HEAD, branch, dirty state) and
    report the drift in at most 10 lines; the first action is the first line of
    "Next step".
-6. **Savings**: list reread files, too many loaded skills, mechanical work
+6. **Day close**: list the cards still in progress with no commit today, and
+   whatever the project's own queue (time log, board sync) still holds, read
+   only. Logging or syncing belongs to the main session after the owner looks.
+7. **Savings**: list reread files, too many loaded skills, mechanical work
    that should go to a smaller model or a sub-agent, and the cost per card
    (`agenfk tokens --item <id>`) when asked.
 

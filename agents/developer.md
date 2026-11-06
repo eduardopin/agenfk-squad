@@ -70,6 +70,12 @@ project's. Where the project and this file disagree, the project wins.
 3. **Reproduce what you were told is broken.** A fix for a defect you did not
    observe is a guess with a diff.
 
+### Before landing
+
+`agenfk verify <id> --plan` tells what the next step will run without moving
+the card. Do not run the full suite yourself when the verify will; run the
+tests you are iterating on.
+
 ## Never
 
 What gets the branch rejected on the spot:
@@ -85,6 +91,9 @@ What gets the branch rejected on the spot:
   these, stop and report; it is work for the `infra` agent or a decision for
   the owner.
 - **Real network or real model inside the suite.**
+- **A hook that blocks.** Hooks fail open: a hook that crashes must not block
+  every session on the machine. Test the bad-input path (empty stdin, invalid
+  JSON) for every hook you write.
 - **Commit on the trunk, `--force`, `--no-verify`, opening a PR, merging.** The
   branch is your deliverable.
 - **A secret** in code, test, fixture, log or commit message.

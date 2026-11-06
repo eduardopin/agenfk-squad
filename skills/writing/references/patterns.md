@@ -189,6 +189,19 @@ After:
 > Two blockers remain. `DD_APP_KEY` is not in CI (owner: Ana, no date yet).
 > Three stacks have local-only state, which blocks plan in CI.
 
+### A8. Paired synonyms
+
+**Watch:** clear and concise, robust and scalable, simple and intuitive, quick
+and easy, safe and secure, claro e objetivo, simples e intuitivo
+
+Two adjectives that mean one thing. Keep one, or replace both with the measure.
+
+Before:
+> We need a clear and concise runbook that is simple and intuitive to follow.
+
+After:
+> The runbook fits on one page and an on-call engineer ran it cold in 12 minutes.
+
 ## B. Sentence shapes
 
 ### B1. Binary contrast
@@ -323,6 +336,78 @@ After:
 > The options come from the selected item; the user never has to guess.
 
 The caption is not a sentence. Write the clause.
+
+### B12. Vague "This" opening a sentence
+
+**Watch:** This underscores, This highlights, This reflects, This demonstrates,
+Isso reforça, Isso evidencia
+
+"This" with no noun points at the whole previous sentence and adds a verdict.
+Name the subject. If no noun fits, the previous sentence was unclear.
+
+Before:
+> Revenue grew 30% last quarter. This underscores the effectiveness of the new
+> strategy.
+
+After:
+> Revenue grew 30% last quarter. The new pricing tier drove 22 of those points.
+
+### B13. By-gerund chain
+
+**Watch:** By implementing, By leveraging, By automating, By focusing on, Ao
+implementar, Ao adotar
+
+A procedural opener that promises a mechanism and delivers a slogan. State what
+the thing does.
+
+Before:
+> By implementing automated testing, teams can significantly reduce bug counts.
+
+After:
+> Automated tests cut escaped bugs from 14 to 3 per release.
+
+### B14. Listicle in a trench coat
+
+**Watch:** The first X is... The second X is... The third X is...; a primeira...
+a segunda... a terceira...
+
+Numbered points dressed as paragraphs, usually after someone asked for fewer
+lists. If the content is a set, make it a list. If it is reasoning, weave the
+points and drop the counting.
+
+Before:
+> The first limitation is the short evaluation window. The second limitation is
+> the lack of a baseline. The third limitation is overfitting to two seasons.
+
+After:
+> The evaluation covers two seasons, both unusual, and no forecaster shared a
+> baseline, so the comparison is between training sets as much as between
+> models.
+
+### B15. Invented concept label
+
+**Watch:** the X paradox, the X trap, X creep, the X divide, the X vacuum, the X
+inversion, "what might be called"
+
+A compound label that sounds like an established term and skips the argument.
+Several in one piece is a strong tell. Describe the thing, or define the term
+once and then earn it.
+
+Before:
+> This creates what might be called the "calibration paradox": national
+> calibration does not guarantee state calibration.
+
+After:
+> National calibration does not guarantee state calibration. A model can hold
+> 90% coverage for the US overall and undercover in every small state.
+
+### B16. Wh- opener as a crutch
+
+**Watch:** What makes this hard is, What this means is, Where it gets
+interesting is, O que isso significa é
+
+Lead with the subject or the verb. "What makes this hard is the quota" becomes
+"The quota makes this hard", or better, the number in the quota.
 
 ## C. Framing tics
 
@@ -473,6 +558,24 @@ After:
 > Without traces you cannot tell whether the p95 came from Gemini or from the
 > watchdog re-running the turn.
 
+### C11. False vulnerability
+
+**Watch:** and yes, since we're being honest, I'll admit, this is not a rant,
+it's a diagnosis, I promise, they exist, I promise
+
+Performed candour. Real admissions are specific and cost the writer something;
+these are polished and risk-free. Keep the admission if it names a concrete
+thing the writer did or got wrong, and cut the staging around it.
+
+Before:
+> And yes, since we're being honest: I've squinted at a borderline p-value until
+> it cooperated. I want to explore why that impulse is so common.
+
+After:
+> I have nudged a borderline p-value along by trying one more covariate. The
+> rest of the analysis already "looked right", which is what makes it feel
+> acceptable in the moment.
+
 ## D. Endings
 
 ### D1. Fake-profound kicker
@@ -581,6 +684,24 @@ Before:
 After:
 > The migration moves the state. Nothing else changes.
 
+### E6. Lazy extremes
+
+**Watch:** every, always, never, everyone, nobody, all, sempre, nunca, todo
+mundo, ninguém, doing vague work
+
+A sweeping quantifier standing in for a count or a condition. Replace it with
+the number, the condition or the exception. A real rule keeps its "never": "never
+apply from a laptop" is the precise instruction, and a runbook's "always" is a
+step. The tell is the extreme that no one measured.
+
+Before:
+> Every team struggles with Terraform state, and manual applies always end in
+> drift.
+
+After:
+> Three of nine stacks keep state locally. The two manual applies in August both
+> left drift.
+
 ## F. Chatbot residue
 
 ### F1. Chatbot text left in the answer
@@ -627,6 +748,27 @@ After:
 
 The first version describes the file's shape. The second tells the reader the one
 thing they need before opening it.
+
+### F5. Artificial balance
+
+**Watch:** on the one hand... on the other hand, both approaches have merit,
+considerations include, it depends on your use case, there are trade-offs,
+it's important to consider multiple perspectives, cada caso é um caso
+
+The assistant register avoids a position by weighing both sides to a draw. In a
+document that exists to decide, take the position the evidence supports and say
+what it costs. When the evidence does not decide, say that in those words ("the
+two load tests disagree and we have not found why") rather than in balanced
+generalities. Uncertainty stated plainly is a fact; symmetry is a dodge.
+
+Before:
+> Both Terraform and Pulumi have their merits, and the right choice depends on
+> your team's needs and context.
+
+After:
+> Terraform. Every other repository we run uses it, the CI pipeline plans it, and
+> nobody on the team has shipped Pulumi. Pulumi's typed modules would help, and
+> that is not worth a second toolchain.
 
 ## G. Formatting
 
@@ -726,3 +868,42 @@ Before:
 
 After:
 > This function uses a hash map for O(1) lookups.
+
+### G11. Unicode arrows
+
+`→` and `⇒` in prose are a tell: a person typing writes "then", "to" or
+"becomes". Keep arrows inside code, diagrams and tables where they are
+notation. In a sentence, write the verb.
+
+### G12. Semicolon stitching
+
+A semicolon between two full clauses that could stand alone is usually the
+writer declining to choose a sentence shape. Most people rarely use one in
+working prose; models use them to glue related ideas. A period, then the second
+sentence. The writer's own sample overrides this.
+
+## H. Composition
+
+### H1. One-point dilution
+
+A single claim restated eight ways across a page, with a new metaphor each time
+and nothing added. State it once, support it with the fact or the number, move
+on. If the piece returns to the same claim more than twice, cut the returns.
+
+### H2. The dead metaphor
+
+A metaphor introduced once and then used in every paragraph ("walls and doors"
+thirty times, "primitives" in every sentence). Use it once or twice, then drop
+it.
+
+### H3. Fractal summary
+
+A preview at the top of each section, the content, then a recap at the bottom,
+at every level of the document. The reader was just there. Delete every
+preview and every recap; the headings do that job.
+
+### H4. Content duplication
+
+The same paragraph twice, reworded, because the model lost track of what it had
+written. Search the final text for its own sentences before delivering. Rare
+now, and fatal when it ships.

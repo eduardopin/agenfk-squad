@@ -33,6 +33,20 @@ evidence. When unsure, look for co-occurrence.
 - **Real alternatives.** Keep options a reader would actually consider in a design
   document or ADR. Remove only the unlikely option the text dismisses and never
   uses again.
+- **One tricolon, one self-answered question, one analogy.** Each is a tell
+  only in repetition. A single "pick two: speed, quality, cost" is a sentence.
+- **"Never" and "always" in a rule, a runbook or a policy.** "Never apply from
+  a laptop" is the instruction, not a lazy extreme. The tell is the extreme
+  nobody measured ("every team struggles with state").
+- **An established term that looks like an invented label.** "Technical debt",
+  "blast radius" and "split brain" are the field's words. Flag only a compound
+  the piece coined and then leaned on.
+- **Passive voice in a methods or incident section.** "The sample was
+  centrifuged" and "the alert was acknowledged at 14:02" hide no actor worth
+  naming. Flag passives that dodge responsibility, not the convention.
+- **Genuine balance.** When the source really is undecided, two sides stated
+  with their costs is the honest text. The tell is symmetry used to avoid a
+  decision the document exists to make.
 - **Unsourced claims.** Most writing is unsourced. That alone proves nothing.
 - **Clean complex formatting.** Templates and visual editors produce it without AI.
 - **Secondhand text.** Never rewrite a watched phrase inside a quotation, a title,

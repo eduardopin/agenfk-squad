@@ -110,6 +110,10 @@ what reading your own prose lets through.
 - **Em and en dashes.** Remove `—` and `–`, unless the writer's sample uses
   them. Replace with a full stop, comma, colon or parentheses. None in a short
   text; 1 or 2 in a long text when they clearly earn it.
+- **Arrows.** No `→` or `⇒` in prose; write "then" or "to". Keep them in code,
+  diagrams and tables.
+- **Semicolon stitching.** A semicolon between two full clauses is two
+  sentences. The writer's own sample overrides this.
 - **Curly quotes.** Replace `“ ” ‘ ’` with straight ones, unless the format
   asks for curly.
 - **Title Case Headings.** Capitalise only the first letter, proper nouns

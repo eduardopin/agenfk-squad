@@ -224,7 +224,7 @@ def test_identifier_in_a_file_that_is_not_utf8_fails_closed():
     with workdir() as tmp:
         src = tmp / "src"
         d = skill(src, "legacy", "name: legacy\ndescription: Latin-1 file")
-        (d / "notes.txt").write_bytes(f"Café account {ACCOUNT_B}\n".encode("latin-1"))
+        r, out = run(tmp, src, "--allow-binary")  # without it the file alone refuses the skill
         r, out = run(tmp, src)
         assert r.returncode == 1
         assert any("aws-account-id left in legacy/notes.txt" in e for e in manifest(out)[0]["errors"])

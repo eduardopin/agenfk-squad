@@ -231,6 +231,65 @@ def test_identifier_in_a_file_that_is_not_utf8_fails_closed():
         assert not (out / "skills" / "legacy.zip").exists()
 
 
+def test_a_secret_in_a_file_that_is_not_utf8_skips_the_skill():
+    key = "AKIAABCDEFGHIJKLMNOP"
+    with workdir() as tmp:
+        src = tmp / "src"
+        d = skill(src, "latin", "name: latin\ndescription: Latin-1 secret")
+        (d / "notes.txt").write_bytes(f"Caf\u00e9 {key}\n".encode("latin-1"))
+        d = skill(src, "wide", "name: wide\ndescription: UTF-16 secret")
+        (d / "notes.txt").write_bytes(f"key {key}\n".encode("utf-16"))
+        d = skill(src, "wide-nobom", "name: wide-nobom\ndescription: UTF-16 without a BOM")
+        (d / "notes.txt").write_bytes(f"key {key}\n".encode("utf-16-le"))
+        r, out = run(tmp, src)
+        assert r.returncode == 1
+        for row in manifest(out):
+            assert any("secret: aws-access-key in notes.txt" in e for e in row["errors"]), row
+            assert not (out / "skills" / f"{row['name']}.zip").exists()
+
+
+def test_a_symlink_out_of_the_skill_is_refused_by_name():
+    if os.name == "nt":
+        print("skipped: symlinks need privileges on Windows")
+        return
+    with workdir() as tmp:
+        outside = tmp / "outside.txt"
+        outside.write_text("private\n", encoding="utf-8")
+        src = tmp / "src"
+        d = skill(src, "linky", "name: linky\ndescription: Links out")
+        os.symlink(outside, d / "ref.txt")
+        r, out = run(tmp, src)
+        assert r.returncode == 1
+        assert any("symlink ref.txt" in e for e in manifest(out)[0]["errors"]), manifest(out)
+        assert not (out / "skills" / "linky.zip").exists()
+
+
+def test_a_file_that_is_not_utf8_refuses_the_skill_unless_allowed():
+    with workdir() as tmp:
+        src = tmp / "src"
+        d = skill(src, "pics", "name: pics\ndescription: Has an image")
+        (d / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\xff\xfe")
+        r, out = run(tmp, src)
+        assert r.returncode == 1
+        assert any("logo.png is not UTF-8 text" in e for e in manifest(out)[0]["errors"]), manifest(out)
+        r, out = run(tmp, src, "--allow-binary")
+        assert r.returncode == 0, r.stderr
+        row = manifest(out)[0]
+        assert any("logo.png is not UTF-8 text" in w for w in row["warnings"]), row
+        with zipfile.ZipFile(out / "skills" / "pics.zip") as z:
+            assert z.read("pics/logo.png").startswith(b"\x89PNG")
+
+
+def test_utf16_without_a_bom_is_searched_for_identifiers():
+    with workdir() as tmp:
+        src = tmp / "src"
+        d = skill(src, "wide", "name: wide\ndescription: UTF-16 identifier")
+        (d / "n.txt").write_bytes(f"account {ACCOUNT_A}\n".encode("utf-16-le"))
+        r, out = run(tmp, src, "--allow-binary")
+        assert r.returncode == 1
+        assert any("aws-account-id left in wide/n.txt" in e for e in manifest(out)[0]["errors"]), manifest(out)
+
+
 def test_angle_brackets_leave_the_description():
     # claude.ai refuses '<' and '>' in a description ("XML tags"); Claude Code accepts them.
     with workdir() as tmp:

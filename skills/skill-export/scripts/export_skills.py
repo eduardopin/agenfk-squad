@@ -186,25 +186,71 @@ def files_of(skill_dir):
         rel = p.relative_to(skill_dir)
         if any(part in JUNK_DIRS for part in rel.parts) or p.name in JUNK_FILES or p.suffix == ".pyc":
             continue
-        if p.is_file():
+        if p.is_file() and not p.is_symlink():
             yield rel, p
 
 
+def unsafe_entries(skill_dir):
+    """Symlinks and anything resolving outside the skill: a link to ~/.ssh would
+    be zipped as the file it points at. Refused by name, like safe_extract."""
+    root, bad = skill_dir.resolve(), []
+    for p in sorted(skill_dir.rglob("*")):
+        rel = p.relative_to(skill_dir)
+        if any(part in JUNK_DIRS for part in rel.parts):
+            continue
+        if p.is_symlink():
+            bad.append(f"symlink {rel.as_posix()} is not exported")
+        elif p.resolve() != root and root not in p.resolve().parents:
+            bad.append(f"{rel.as_posix()} resolves outside the skill")
+    return bad
+
+
+def decodings(data):
+    """Every reading a secret or an identifier could hide in: UTF-8 when valid,
+    else latin-1, plus UTF-16 with a BOM or when NUL bytes make up a good part
+    of the file (UTF-16 text without a BOM)."""
+    try:
+        texts = [data.decode("utf-8")]
+    except UnicodeDecodeError:
+        texts = [data.decode("latin-1")]
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        texts.append(data.decode("utf-16", errors="replace"))
+    elif data and data.count(b"\0") * 8 >= len(data):
+        texts += [data.decode(enc, errors="replace") for enc in ("utf-16-le", "utf-16-be")]
+    return texts
+
+
+def is_text(data):
+    """UTF-8 without NUL bytes: the only kind the redactor can read and clean."""
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return b"\0" not in data
+
+
 def scan(skill_dir):
-    secrets, warnings, local = [], set(), False
+    """Returns (errors, warnings, undecodable): errors skip the skill, undecodable
+    names the files that are not UTF-8 text, which the redactor cannot clean."""
+    errors, warnings, local, undecodable = unsafe_entries(skill_dir), set(), False, []
     for rel, p in files_of(skill_dir):
         try:
-            text = p.read_text(encoding="utf-8", errors="strict")
-        except (UnicodeDecodeError, OSError):
+            data = p.read_bytes()
+        except OSError as e:
+            errors.append(f"cannot read {rel.as_posix()}: {e.strerror or e}")
             continue
-        for kind, rx in SECRETS.items():
-            if rx.search(text):
-                secrets.append(f"{kind} in {rel}")
-        if LOCAL_TOOLS.search(text):
-            local = True
+        if not is_text(data):
+            undecodable.append(rel.as_posix())
+        for text in decodings(data):
+            for kind, rx in SECRETS.items():
+                if rx.search(text):
+                    errors.append(f"secret: {kind} in {rel.as_posix()}")
+            if LOCAL_TOOLS.search(text):
+                local = True
+    errors = list(dict.fromkeys(errors))
     if local:
         warnings.add("calls developer tools (gh, aws, terraform, git, ~/.claude): may not work in chat")
-    return secrets, sorted(warnings)
+    return errors, sorted(warnings), undecodable
 
 
 def build_rules(email_domains, literals):
@@ -258,9 +304,7 @@ def residue(data, rules):
     """Identifiers still in a file after redaction. A file that is not UTF-8
     skipped the redactor, so it is read as UTF-16 and latin-1 here: the export
     fails closed instead of shipping what it could not read."""
-    texts = [data.decode("latin-1")]
-    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        texts.append(data.decode("utf-16", errors="replace"))
+    texts = decodings(data)
     found = set()
     for text in texts:
         for kind, (rx, _) in rules.items():
@@ -364,6 +408,9 @@ def main(argv=None):
                     help="replace e-mail addresses at this domain and its subdomains by <EMAIL>; repeatable")
     ap.add_argument("--redact-literal", action="append", default=[], metavar="TEXT",
                     help="replace this text, any case, by <REDACTED>; repeatable")
+    ap.add_argument("--allow-binary", action="store_true",
+                    help="ship files that are not UTF-8 text (images, fonts) unredacted, with a warning per file; "
+                         "secrets and identifiers are still searched for in them")
     ap.add_argument("--plugin-name", default="exported-skills")
     ap.add_argument("--org-manifest", default=".claude/skills/synced/*/manifest.json",
                     help="claude.ai sync manifest(s), relative to $HOME; their skills are not exported")
@@ -387,9 +434,15 @@ def main(argv=None):
             text = (s["dir"] / "SKILL.md").read_text(encoding="utf-8")
             fm, body = split_frontmatter(text)
             errors = validate(s["name"], fm)
-            secrets, warnings = scan(s["dir"])
+            scan_errors, warnings, undecodable = scan(s["dir"])
             row = {"name": s["name"], "source": s["source"], "shadowed": s["shadowed"],
-                   "warnings": warnings, "errors": errors + [f"secret: {x}" for x in secrets]}
+                   "warnings": warnings, "errors": errors + scan_errors}
+            for rel in undecodable:
+                if args.allow_binary:
+                    row["warnings"].append(f"{rel} is not UTF-8 text: shipped unredacted (--allow-binary)")
+                else:
+                    row["errors"].append(f"{rel} is not UTF-8 text, so it cannot be redacted; "
+                                         "remove it or pass --allow-binary")
             if fm and not errors and re.search(r"[<>]", fm["description"]):
                 row["warnings"].append("angle brackets in the description, rewritten for the uploader")
             if row["errors"]:

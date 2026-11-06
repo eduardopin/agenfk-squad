@@ -792,7 +792,9 @@ def pre_dispatch(p):
         if n >= (MAX_REV * 3 if key and key.endswith(":no-card") else MAX_REV):
             why = (f"the reviewer has already been dispatched {n}x for this card ({key}). One more round is not "
                    "review, it is a loop. Comment on the card what keeps failing (`agenfk comment`), stop and "
-                   "take the choice to the owner: fix it another way, split the card or accept the risk")
+                   "take the choice of HOW to fix it to the owner: fix it another way or split the card. Never "
+                   "propose merging with the defect or accepting the failures (no PR passes or merges with a "
+                   "defect)")
     if why:
         st["blocked"] = st.get("blocked", 0) + 1
         st["denied_ts"] = time.time()     # fan_out() keeps quiet for DENIED_QUIET: the brake just said no

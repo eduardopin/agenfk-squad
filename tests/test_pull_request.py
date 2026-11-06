@@ -534,9 +534,9 @@ REVIEW_FINDING = {"severity": "High", "path": "a.py", "line": 2,
 
 def run_review_comments(tmp, findings, *extra):
     d, f = os.path.join(tmp, "pr.diff"), os.path.join(tmp, "findings.json")
-    with open(d, "w") as fh:
+    with open(d, "w", encoding="utf-8") as fh:
         fh.write(REVIEW_DIFF)
-    with open(f, "w") as fh:
+    with open(f, "w", encoding="utf-8") as fh:
         json.dump(findings, fh)
     return subprocess.run([sys.executable, "-I", "-B", os.path.join(SKILL, "scripts", "review_comments.py"),
                            "--diff", d, "--findings", f, *extra], capture_output=True, text=True)
@@ -571,7 +571,7 @@ def test_markdown_flag_writes_the_review_text_for_the_slop_lint():
                             "--markdown", out)
     assert p.returncode == 0, p.stderr
     payload = json.loads(p.stdout)
-    text = open(out).read()
+    text = open(out, encoding="utf-8").read()
     assert payload["body"] in text and payload["comments"][0]["body"] in text, text
     assert "### a.py:2" in text and "Naming." in text, text
     plain = run_review_comments(tmp, [dict(REVIEW_FINDING)])
@@ -590,7 +590,7 @@ def test_markdown_flag_writes_the_review_text_for_the_slop_lint():
 
 def test_review_reference_documents_the_three_levels_and_the_lint_step():
     """Pins references/review.md: High is defined between Blocking and Minor, and the posting step lints --markdown."""
-    with open(os.path.join(SKILL, "references", "review.md")) as fh:
+    with open(os.path.join(SKILL, "references", "review.md"), encoding="utf-8") as fh:
         doc = fh.read()
     assert "**High**:" in doc and doc.index("**Blocking**:") < doc.index("**High**:") < doc.index("**Minor**:"), "High level"
     assert "--markdown" in doc and "slop_lint.py" in doc, "lint step"

@@ -45,7 +45,7 @@ It links, into `${CLAUDE_CONFIG_DIR:-~/.claude}`:
 | `agents/<name>.md` | each file in `agents/` |
 | `skills/<name>` | each skill directory that has a `SKILL.md`, including those in `skills/vendor/` |
 | `CLAUDE.md` | `CLAUDE.md` |
-| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py`, `squad-decisions.py` | the files in `hooks/` |
+| `hooks/squad-router.py`, `squad-watch.py`, `squad-switch.py`, `squad-turn.py`, `squad-seal.py`, `squad-wake.py`, `squad-decisions.py`, `squad-graph.py` | the files in `hooks/` |
 
 and, so that the merge queue and the project decisions can be called by name:
 
@@ -69,6 +69,14 @@ reads `~/.claude/squad/wake.env`, if present, for `SQUAD_WAKE=0` and the
 thresholds. Elsewhere (macOS, a container, no user manager) the installer
 prints `SKIPPED squad-wake.timer` with the command to run every 2 minutes from
 cron or launchd, and does not fail. Windows is not covered yet.
+
+It also installs the graphify CLI that `squad-graph.py` calls (not on
+Windows: see [Known limitations on Windows](#known-limitations-on-windows)), with
+`uv tool install graphifyy[terraform]==<version>`, the version being the one in
+`hooks/graphify.pin`. Without `uv`, or with `SQUAD_GRAPHIFY=0`, it prints `SKIPPED`
+with that command and carries on. It never runs `graphify install`, which would
+write an always-on block into `~/.claude/CLAUDE.md`. A graph is built per
+project, by hand: see `skills/graph-context/SKILL.md`.
 
 ### What it will not do
 
@@ -119,6 +127,12 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
         "matcher": "*",
         "hooks": [
           { "type": "command", "command": "python3 ~/.claude/hooks/squad-watch.py", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "Bash|Grep|Read|Glob",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.claude/hooks/squad-graph.py", "timeout": 5 }
         ]
       }
     ],
@@ -175,6 +189,7 @@ have. Replace `~/.claude` with the absolute path if your shell does not expand
 | `squad-router.py` | `UserPromptSubmit` |
 | `squad-watch.py` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStop`, `Stop`, `PreCompact` |
 | `squad-decisions.py` | `SessionStart`: prints the index of the project's active decisions ([Project decisions](decisions.md)) |
+| `squad-graph.py` | `PreToolUse`, matcher `Bash\|Grep\|Read\|Glob` |
 
 `squad-switch.py` and `squad-turn.py` are not registered: the watcher starts
 them when needed. `squad-wake.py` is not a hook either: the timer runs it.
@@ -400,6 +415,17 @@ directory if you want it gone.
   herdr panes, so it does not run on Windows either: `install.ps1` does not
   install it and no timer is set up. A session that stops without
   delivering waits until you look at it.
+- **No graphify.** `install.ps1` links `hooks/squad-graph.py` and the
+  settings script registers it, like every hook in `hooks/manifest.json`,
+  but neither installs graphify. Without a `graphify` on `PATH` the hook
+  prints nothing and every call goes ahead as before; `SQUAD_GRAPHIFY=0`
+  turns it off. Windows searches the current folder before `PATH`, so the
+  hook sets `NoDefaultCurrentDirectoryInExePath=1`, skips relative `PATH`
+  entries and refuses a graphify inside the project or the current folder:
+  a repository cannot plant the one it runs. With a graphify you installed
+  yourself it is not yet verified: there are no POSIX locks, so its
+  per-session counters may undercount and a once-per-session notice may
+  show twice. Its tests say so and exit 0 on Windows.
 - **No chmod.** The squad's state under `%USERPROFILE%\.claude\squad` is
   protected by your profile's folder permissions (ACLs), not by mode bits:
   the `0600` and `0700` the Linux hooks set are not applied, and the

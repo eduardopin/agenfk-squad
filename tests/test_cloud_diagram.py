@@ -2,7 +2,8 @@
 """The cloud-diagram skill fails a drawing with no status or with a floating edge, and its pages pass.
 
 Self-checking: the exit code is the verdict. Writes only to temporary
-directories. The render.sh cases need Chrome or Chromium; without one they are
+directories, all under one directory of the run (TMPDIR of every child points
+there too), removed at the end; the last case proves nothing is left. The render.sh cases need Chrome or Chromium; without one they are
 reported as SKIP and do not fail. They run offline: the Google Fonts link is
 stripped from the page copy and Chrome resolves no host name.
 
@@ -453,17 +454,30 @@ def test_zz_no_pycache_in_the_skill():
 
 if __name__ == "__main__":
     failures = skipped = passed = 0
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            try:
-                fn()
-                passed += 1
-                print("ok  ", name)
-            except Skip as e:
-                skipped += 1
-                print("SKIP", name, "-", e)
-            except Exception as e:  # an AssertionError and an unexpected error both fail
-                failures += 1
-                print("FAIL", name, "\n     ", f"{type(e).__name__}: {e}"[:1500].replace("\n", "\n      "))
+    # One temporary directory per run: every mkdtemp above, and the TMPDIR of every child (Chrome's
+    # profile included), lands in it. Without it each run left a directory per case in /tmp.
+    RUN_TMP = tempfile.mkdtemp(prefix="cloud-diagram-run-")
+    tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+    try:
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                try:
+                    fn()
+                    passed += 1
+                    print("ok  ", name)
+                except Skip as e:
+                    skipped += 1
+                    print("SKIP", name, "-", e)
+                except Exception as e:  # an AssertionError and an unexpected error both fail
+                    failures += 1
+                    print("FAIL", name, "\n     ", f"{type(e).__name__}: {e}"[:1500].replace("\n", "\n      "))
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    if os.path.exists(RUN_TMP):
+        failures += 1
+        print("FAIL nothing is left in the temporary directory after the run:", RUN_TMP)
+    else:
+        passed += 1
+        print("ok   nothing is left in the temporary directory after the run")
     print(f"{passed} passed, {skipped} skipped, {failures} failed")
     sys.exit(1 if failures else 0)

@@ -88,13 +88,13 @@ def test_cli_render_then_check_roundtrip_and_drift():
         src = os.path.join(tmp, "agents")
         out = os.path.join(tmp, "omp")
         os.makedirs(src)
-        with open(os.path.join(src, "sample.md"), "w") as fh:
+        with open(os.path.join(src, "sample.md"), "w", encoding="utf-8") as fh:
             fh.write(SAMPLE)
         assert cli("render", "--src", src, "--out", out) == 0
         rendered = os.path.join(out, "sample.md")
         assert os.path.exists(rendered)
         assert cli("render", "--src", src, "--out", out, "--check") == 0
-        with open(rendered, "a") as fh:
+        with open(rendered, "a", encoding="utf-8") as fh:
             fh.write("\ndrift\n")
         assert cli("render", "--src", src, "--out", out, "--check") == 1
         assert cli("render", "--src", src, "--out", out) == 0
@@ -106,14 +106,14 @@ def test_unknown_tool_fails_unless_allowed():
         src = os.path.join(tmp, "agents")
         out = os.path.join(tmp, "omp")
         os.makedirs(src)
-        with open(os.path.join(src, "bad.md"), "w") as fh:
+        with open(os.path.join(src, "bad.md"), "w", encoding="utf-8") as fh:
             fh.write(SAMPLE.replace(
                 "tools: Read, Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch",
                 "tools: Read, Telepathy",
             ))
         assert cli("render", "--src", src, "--out", out) == 1
         assert cli("render", "--src", src, "--out", out, "--allow-unknown") == 0
-        assert "Telepathy" not in open(os.path.join(out, "bad.md")).read()
+        assert "Telepathy" not in open(os.path.join(out, "bad.md"), encoding="utf-8").read()
 
 
 def test_the_squad_agents_render_without_anthropic_and_all_present():
@@ -123,7 +123,7 @@ def test_the_squad_agents_render_without_anthropic_and_all_present():
         names = sorted(os.path.splitext(f)[0] for f in os.listdir(tmp))
         assert names == sorted(os.path.splitext(f)[0] for f in os.listdir(src)), names
         for fname in os.listdir(tmp):
-            text = open(os.path.join(tmp, fname)).read()
+            text = open(os.path.join(tmp, fname), encoding="utf-8").read()
             # Prose may name `CLAUDE.md` or Claude Code; only the model selector
             # is a compliance surface, and it may never name Anthropic.
             block = re.search(r"^model:\s*\n((?:[ \t]+-.*\n?)*)", text, re.M)

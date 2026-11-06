@@ -37,7 +37,7 @@ def omp_session(home, sid="01a136aa-1111-2222-3333-444455556666"):
                                                     "content": [{"type": "toolCall", "name": "read",
                                                                  "arguments": {"path": "a.py"}}]}},
     ]
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         for r in recs:
             fh.write(json.dumps(r) + "\n")
     return path, sid
@@ -53,7 +53,7 @@ def run(home, payload):
 
 
 def state(home, sid):
-    with open(os.path.join(home, ".claude", "squad", "watch", f"{sid}.main.json")) as fh:
+    with open(os.path.join(home, ".claude", "squad", "watch", f"{sid}.main.json"), encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -81,7 +81,7 @@ def test_fold_reads_the_pi_family_fields():
 def test_fold_still_reads_claude():
     with tempfile.TemporaryDirectory() as home:
         path = os.path.join(home, "session.jsonl")
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"type": "assistant", "requestId": "r1",
                                  "message": {"usage": {"input_tokens": 10,
                                                        "cache_creation_input_tokens": 2,

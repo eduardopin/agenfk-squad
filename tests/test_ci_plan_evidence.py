@@ -98,7 +98,7 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(self.run_check(data).returncode, 3)
         p = subprocess.run([sys.executable, '-I', '-B', str(SCRIPT), '--help'], capture_output=True)
         self.assertEqual(p.returncode, 0)
-        source = SCRIPT.read_text()
+        source = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn('import subprocess', source)
         self.assertNotIn('import urllib', source)
 

@@ -3,13 +3,15 @@
 seal on, squad-watch lets a merge through only for a sealed SHA.
 
 Self-checking: the exit code is the verdict. Runs in a throwaway HOME and never
-touches ~/.claude.
+touches ~/.claude. Every throwaway directory, and the TMPDIR of every child, lives
+under one directory of the run, removed at the end; the last case proves it.
 
     python3 tests/test_seal.py
 """
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -44,14 +46,14 @@ def setup():
     subprocess.run(["git", "init", "-q", "-b", "feat", repo], check=True)
     for k, v in (("user.name", "t"), ("user.email", "t@t"), ("commit.gpgsign", "false")):
         git(repo, "config", k, v)
-    with open(os.path.join(repo, "a.txt"), "w") as fh:
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("a\n")
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "a")
     ev = report(h, git(repo, "rev-parse", "HEAD"))
     head = os.path.join(h, "pr-head")
     gh = os.path.join(h, "gh")
-    with open(gh, "w") as fh:
+    with open(gh, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import json, sys
 print(json.dumps({{"number": 5, "baseRefName": "main", "headRefName": "feat",
@@ -65,13 +67,13 @@ print(json.dumps({{"number": 5, "baseRefName": "main", "headRefName": "feat",
 def report(h, sha):
     """The verifier's report of this commit, named after it."""
     path = os.path.join(h, f"{sha}.md")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write("SHIP\n")
     return path
 
 
 def point(head, sha):
-    with open(head, "w") as fh:
+    with open(head, "w", encoding="utf-8") as fh:
         fh.write(sha)
 
 
@@ -102,14 +104,14 @@ def test_record_writes_a_private_seal_of_head_and_show_reads_it():
     (sub,) = os.listdir(folder)
     path = os.path.join(folder, sub, f"{sha}.json")
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         d = json.load(fh)
     assert set(d) == {"repo", "branch", "sha", "card", "at", "model", "verdict", "evidence"}, d
     assert (d["sha"], d["branch"], d["card"], d["model"], d["verdict"]) == (sha, "feat", "card-1", "m1", "SHIP")
     assert d["repo"] == os.path.realpath(os.path.join(repo, ".git")) and d["evidence"] == os.path.realpath(ev)
     assert json.loads(seal(h, repo, "show").stdout)["sha"] == sha
     assert json.loads(seal(h, repo, "show", sha).stdout)["sha"] == sha
-    with open(os.path.join(repo, "a.txt"), "w") as fh:
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("b\n")
     git(repo, "commit", "-qam", "b")
     assert seal(h, repo, "show").returncode == 1                       # the new HEAD has no seal
@@ -117,12 +119,12 @@ def test_record_writes_a_private_seal_of_head_and_show_reads_it():
 
 def test_record_refuses_dirty_worktree_and_a_verdict_other_than_ship():
     h, repo, ev, _, _ = setup()
-    with open(os.path.join(repo, "a.txt"), "w") as fh:
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("dirty\n")
     r = record(h, repo, ev)
     assert r.returncode == 1 and "dirty" in r.stderr and "a.txt" in r.stderr, r.stderr
     git(repo, "checkout", "--", "a.txt")
-    with open(os.path.join(repo, "new.txt"), "w") as fh:
+    with open(os.path.join(repo, "new.txt"), "w", encoding="utf-8") as fh:
         fh.write("untracked\n")
     assert record(h, repo, ev).returncode == 1                         # untracked counts as dirty too
     os.remove(os.path.join(repo, "new.txt"))
@@ -142,7 +144,7 @@ def test_seal_on_merge_needs_a_seal_of_the_pr_head():
     assert record(h, repo, ev).returncode == 0
     assert merge(h, repo, gh) == "nothing"                             # sealed head: passes
     sealed = git(repo, "rev-parse", "HEAD")
-    with open(os.path.join(repo, "a.txt"), "w") as fh:
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("after the review\n")
     git(repo, "commit", "-qam", "after")
     point(head, git(repo, "rev-parse", "HEAD"))
@@ -168,13 +170,13 @@ def test_seal_on_push_to_trunk_needs_a_seal_of_the_pushed_sha():
 def test_record_refuses_evidence_that_is_not_the_report_of_head():
     h, repo, ev, _, _ = setup()
     other = os.path.join(h, "notes.md")
-    with open(other, "w") as fh:
+    with open(other, "w", encoding="utf-8") as fh:
         fh.write("SHIP\n")
     for bad in (other, os.path.join(h, "0" * 40 + ".md"), os.path.join(h, "missing", os.path.basename(ev))):
         r = record(h, repo, bad)
         assert r.returncode == 1 and "report of this very commit" in r.stderr, (bad, r.stderr)
     middle = os.path.join(h, os.path.basename(ev)[5:17] + ".md")
-    with open(middle, "w") as fh:
+    with open(middle, "w", encoding="utf-8") as fh:
         fh.write("SHIP\n")
     r = record(h, repo, middle)
     assert r.returncode == 1 and "report of this very commit" in r.stderr, r.stderr  # a prefix, not any 12 characters
@@ -197,10 +199,10 @@ def test_a_seal_file_whose_verdict_is_not_ship_does_not_count():
     (sub,) = os.listdir(folder)
     (name,) = os.listdir(os.path.join(folder, sub))
     path = os.path.join(folder, sub, name)
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         d = json.load(fh)
     for verdict in ("FIX_FIRST", "REJECT", "ship", None):
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump({**d, "verdict": verdict}, fh)
         out = merge(h, repo, gh)
         assert "MERGE SEAL" in out and "no seal for that SHA" in out, (verdict, out)
@@ -226,7 +228,7 @@ def test_seal_is_on_when_git_cannot_answer_the_setting():
 
 def fake_gh(h, body, code=0):
     gh = os.path.join(h, "gh-broken")
-    with open(gh, "w") as fh:
+    with open(gh, "w", encoding="utf-8") as fh:
         fh.write(f"#!/usr/bin/env python3\nimport sys\nprint({body!r})\nsys.exit({code})\n")
     os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
     return gh
@@ -242,12 +244,12 @@ def test_seal_on_any_failed_check_denies_the_merge():
     folder = os.path.join(h, ".claude", "squad", "seals")
     (sub,) = os.listdir(folder)
     (name,) = os.listdir(os.path.join(folder, sub))
-    with open(os.path.join(folder, sub, name), "w") as fh:
+    with open(os.path.join(folder, sub, name), "w", encoding="utf-8") as fh:
         fh.write("{not json")
     assert "MERGE SEAL" in merge(h, repo, gh)                                        # unreadable seal
     turn = os.path.join(h, ".claude", "squad", "turn")
     subprocess.run(["rm", "-rf", turn], check=True)
-    with open(turn, "w") as fh:                                                      # the check raises
+    with open(turn, "w", encoding="utf-8") as fh:                                                      # the check raises
         fh.write("not a directory")
     out = merge(h, repo, gh)
     assert "MERGE SEAL" in out and "check failed" in out, out
@@ -259,9 +261,9 @@ def gh_by_target(h, prs):
     """A fake gh that answers `gh pr view [<target>] [--repo R]` from prs, keyed by
     "<target>" or "<R> <target>" ("" is the current branch's PR), and logs every argv."""
     table, log, gh = os.path.join(h, "prs-by-target.json"), os.path.join(h, "gh.log"), os.path.join(h, "gh-target")
-    with open(table, "w") as fh:
+    with open(table, "w", encoding="utf-8") as fh:
         json.dump(prs, fh)
-    with open(gh, "w") as fh:
+    with open(gh, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import json, sys
 a = sys.argv[1:]
@@ -286,7 +288,7 @@ def test_seal_checks_the_pr_the_merge_names_not_the_current_branch():
     assert record(h, repo, ev).returncode == 0                                       # the current branch is sealed
     sealed = git(repo, "rev-parse", "HEAD")
     git(repo, "checkout", "-q", "-b", "other-branch")
-    with open(os.path.join(repo, "a.txt"), "w") as fh:
+    with open(os.path.join(repo, "a.txt"), "w", encoding="utf-8") as fh:
         fh.write("other\n")
     git(repo, "commit", "-qam", "other")
     other = git(repo, "rev-parse", "HEAD")
@@ -310,7 +312,7 @@ def test_seal_checks_the_pr_the_merge_names_not_the_current_branch():
         os.remove(log) if os.path.exists(log) else None
         out = merge(h, repo, gh, cmd)
         assert "MERGE SEAL" in out and f"is at {other[:12]}" in out, (cmd, out)
-        with open(log) as fh:
+        with open(log, encoding="utf-8") as fh:
             calls = [json.loads(line) for line in fh]
         assert ["pr", "view", *argv] == calls[0][:2 + len(argv)] and calls[0][2 + len(argv)] == "--json", (cmd, calls)
     for cmd in (f"{GM} --frobnicate 7", f"{GM} 7 8", f"{GM} 7 -t", f"{GM} --repo o/r", f'{GM} "$PR"',
@@ -351,7 +353,16 @@ def test_install_names_post_tool_use_failure_and_the_changed_variables():
 
 
 if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok ", name)
+    # One temporary directory per run: every mkdtemp above, and the TMPDIR of every child, lands in
+    # it. Without it each run left a HOME per case in /tmp.
+    RUN_TMP = tempfile.mkdtemp(prefix="seal-run-")
+    tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+    try:
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+                print("ok ", name)
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
+    print("ok  nothing is left in the temporary directory after the run")

@@ -39,7 +39,7 @@ class TemplateGateTests(unittest.TestCase):
         subprocess.run(['git', 'init', '-q', str(self.repo)], check=True)
         (self.repo / '.github').mkdir()
         self.template = self.repo / '.github/PULL_REQUEST_TEMPLATE.md'
-        self.template.write_text('## Rollback plan\n')
+        self.template.write_text('## Rollback plan\n', encoding="utf-8")
 
     def codes(self, body):
         return {p.code for p in gate.repository_template_problems(body, self.repo)}
@@ -56,7 +56,7 @@ class TemplateGateTests(unittest.TestCase):
         TEMPLATE_UNREADABLE, never read: the repo does not get to point the gate at a file outside itself."""
         self.template.unlink()
         outside = Path(self.tmp.name) / 'private.md'
-        outside.write_text('## Private\n')
+        outside.write_text('## Private\n', encoding="utf-8")
         self.template.symlink_to(outside)
         self.assertEqual(self.codes('## Rollback plan\nRevert.\n'), {'TEMPLATE_UNREADABLE'})
 
@@ -70,22 +70,22 @@ class TemplateGateTests(unittest.TestCase):
     def test_real_bash_and_mcp_hook_enforce_template(self):
         """The real hook, as a subprocess, denies a Bash `gh pr create` and an MCP create_pull_request
         whose body lacks the repo template heading (TEMPLATE_SECTION_MISSING), and allows both once answered."""
-        fixture = ast.parse((ROOT / 'tests/test_pull_request.py').read_text())
+        fixture = ast.parse((ROOT / 'tests/test_pull_request.py').read_text(encoding="utf-8"))
         body = next(ast.literal_eval(n.value) for n in fixture.body if isinstance(n, ast.Assign)
                     and any(isinstance(t, ast.Name) and t.id == 'GOOD_EN' for t in n.targets))
-        (self.repo / 'CLAUDE.md').write_text('PR titles and commits in English.\n')
+        (self.repo / 'CLAUDE.md').write_text('PR titles and commits in English.\n', encoding="utf-8")
         body_file = self.repo / 'body.md'
         fakebin = Path(self.tmp.name) / 'bin'
         fakebin.mkdir()
         gh = fakebin / 'gh'
-        gh.write_text('#!/bin/sh\nexit 1\n')
+        gh.write_text('#!/bin/sh\nexit 1\n', encoding="utf-8")
         gh.chmod(0o755)
         env = {k: v for k, v in os.environ.items() if not k.startswith('SQUAD_')}
         env.update(HOME=self.tmp.name, PATH=str(fakebin) + os.pathsep + env['PATH'])
         title = 'Show the guided tour notice once per browser'
         for answered in (False, True):
             current = body + ('\n## Rollback plan\nRevert the change.\n' if answered else '')
-            body_file.write_text(current)
+            body_file.write_text(current, encoding="utf-8")
             for tool, inp in [('Bash', {'command': 'gh pr create --title ' + shlex.quote(title)
                                         + ' --body-file ' + shlex.quote(str(body_file))}),
                               ('mcp__plugin_github_github__create_pull_request', {'title': title, 'body': current})]:
@@ -108,7 +108,7 @@ class TemplateGateTests(unittest.TestCase):
 
     def test_oversized_or_non_regular_template_blocks(self):
         """A template over 128 KiB, or a directory where the file should be, is refused rather than read."""
-        self.template.write_text('x' * 131073)
+        self.template.write_text('x' * 131073, encoding="utf-8")
         self.assertEqual(self.codes('text'), {'TEMPLATE_UNREADABLE'})
         self.template.unlink()
         self.template.mkdir()

@@ -81,7 +81,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
        dispatch rule; the review still belongs to the `verifier`.
      - *no reviewer slot*: carry on with whatever does not depend on the verdict and dispatch
        when `SLOT FREE` arrives. Never approve your own code.
-     - *7th reviewer*: comment on the card and take the decision to the owner.
+     - *7th reviewer*: comment on the card and take the choice of how to fix it (another approach,
+       split the card) to the owner; never propose shipping with the defect.
      The stop is soft: only the new dispatch is denied, the task in progress finishes.
      Whoever orchestrates first receives a `DISPATCH NOTICE` (informational, not an
      order to stop), and the denied brief is kept in full in

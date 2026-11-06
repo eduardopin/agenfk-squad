@@ -267,7 +267,7 @@ def test_the_squad_turn_command_runs_from_the_shim():
 def test_oh_my_pi_gets_its_extension_and_its_agents_when_omp_is_on_the_path():
     repo, h = repo_copy(), profile()
     fake = tempfile.mkdtemp(prefix="bin-", dir=TMP)
-    with open(os.path.join(fake, "omp.cmd"), "w") as fh:
+    with open(os.path.join(fake, "omp.cmd"), "w", encoding="utf-8") as fh:
         fh.write("@echo off\r\n")
     r = run(repo, h, "-NoSymlink", env={"PATH": fake + os.pathsep + os.environ["PATH"]})
     assert r.returncode == 0, r.out

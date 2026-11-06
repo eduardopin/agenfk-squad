@@ -2334,7 +2334,7 @@ def main_state(h, sid, hours, idle_s=0):
     """A main session that already has `hours` of work counted, last measured `idle_s` ago."""
     d = os.path.join(h, ".claude", "squad", "watch")
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, f"{sid}.main.json"), "w") as fh:
+    with open(os.path.join(d, f"{sid}.main.json"), "w", encoding="utf-8") as fh:
         json.dump({"active": hours * 3600, "seen": time.time() - idle_s}, fh)
 
 

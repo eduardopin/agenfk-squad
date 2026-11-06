@@ -563,7 +563,7 @@ After:
 **Watch:** and yes, since we're being honest, I'll admit, this is not a rant,
 it's a diagnosis, I promise, they exist, I promise
 
-Performed candour. Real admissions are specific and cost the writer something;
+Performed candour. Real admissions are specific and cost the writer something.
 these are polished and risk-free. Keep the admission if it names a concrete
 thing the writer did or got wrong, and cut the staging around it.
 
@@ -759,7 +759,7 @@ The assistant register avoids a position by weighing both sides to a draw. In a
 document that exists to decide, take the position the evidence supports and say
 what it costs. When the evidence does not decide, say that in those words ("the
 two load tests disagree and we have not found why") rather than in balanced
-generalities. Uncertainty stated plainly is a fact; symmetry is a dodge.
+generalities. Uncertainty stated plainly is a fact. Symmetry is a dodge.
 
 Before:
 > Both Terraform and Pulumi have their merits, and the right choice depends on
@@ -879,7 +879,7 @@ notation. In a sentence, write the verb.
 
 A semicolon between two full clauses that could stand alone is usually the
 writer declining to choose a sentence shape. Most people rarely use one in
-working prose; models use them to glue related ideas. A period, then the second
+working prose. Models use them to glue related ideas. A period, then the second
 sentence. The writer's own sample overrides this.
 
 ## H. Composition
@@ -900,7 +900,7 @@ it.
 
 A preview at the top of each section, the content, then a recap at the bottom,
 at every level of the document. The reader was just there. Delete every
-preview and every recap; the headings do that job.
+preview and every recap. The headings do that job.
 
 ### H4. Content duplication
 

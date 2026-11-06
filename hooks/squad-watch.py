@@ -121,7 +121,7 @@ A denied dispatch is never just a "no": the message says where the work continue
   no orchestrator slot, reviewer     carry on with whatever does not depend on the
                                      verdict; the watcher announces SLOT FREE when
                                      there is a slot
-  7th reviewer on the same card      the owner's decision, with what keeps failing
+  7th reviewer on the same card      the owner chooses how to fix it (never whether to ship the defect)
 
 Review gate (main session only): `agenfk verify <id>` (or the MCP validate_progress)
 on a review step with no reviewer dispatch recorded for that card since it entered
@@ -2107,7 +2107,7 @@ def post_tool(p):
             if rev[key] == 3 and not key.endswith(":no-card"):
                 out.append(f"[squad-watch] 3rd reviewer round for {key}. The rule is at most 2 "
                            f"correction rounds; dispatch number {MAX_REV + 1} is denied. If the same "
-                           "failure came back, the decision is the owner's.")
+                           "failure came back, the choice of how to fix it is the owner's.")
         if st["subs"] == int(MAX_SUBS * 0.6):
             out.append(f"[squad-watch] {st['subs']} sub-sessions dispatched in this session (ceiling "
                        f"{MAX_SUBS}). Prepare the handoff: the rest goes to a new session.")

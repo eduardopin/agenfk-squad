@@ -200,7 +200,7 @@ A `DISPATCH DENIED` always says where the work continues. There are four exits:
 | No orchestrator slot, implementation, context < `SQUAD_ORCH_HERE` (500k) | **Do it right here** | Implements the card in the main session, without an agent and without a handoff. This is the one authorised exception to the dispatch rule. The review still belongs to the `verifier`. |
 | No orchestrator slot, implementation, context ≥ `SQUAD_ORCH_HERE` | **Handoff with the plan** | As above; the fresh session, with a clean context, implements directly. |
 | No orchestrator slot, reviewer | **Wait for the slot** | Carries on with whatever does not depend on the verdict. The watcher sends `SLOT FREE` when a slot opens. The session never approves its own code. |
-| Seventh reviewer on the same card | **Owner's decision** | Comments on the card with what keeps failing and takes it to the owner. |
+| Seventh reviewer on the same card | **Owner's decision on how to fix** | Comments on the card with what keeps failing and takes the choice of how to fix it (another approach, or split the card) to the owner; never whether to ship with the defect. |
 
 The session must not work around a denial with another tool or another agent
 type, and must not repeat the dispatch.

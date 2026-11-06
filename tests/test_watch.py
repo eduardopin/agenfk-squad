@@ -480,7 +480,6 @@ def test_no_slot_reviewer_waits_for_the_slot_without_handoff():
     assert not st.get("ordered") and st["wait_slot"] is True
 
 
-
 def test_the_reviewer_cap_takes_the_fix_to_the_owner_never_shipping_the_defect():
     h = home()
     sid = "12345678-0035"

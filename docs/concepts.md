@@ -139,7 +139,7 @@ So each denial in this project names the next action:
 | Dispatch (implementation) | No orchestrator slot, session is light | Implement the card right here, without an agent |
 | Dispatch (implementation) | No orchestrator slot, session is heavy | Handoff with the implementation plan; the fresh session implements directly |
 | Dispatch (review) | No orchestrator slot | Carry on with what does not depend on the verdict; wait for `SLOT FREE` |
-| Dispatch (review) | Seventh reviewer on one card | Comment on the card, take the decision to the owner |
+| Dispatch (review) | Seventh reviewer on one card | Comment on the card, take the choice of how to fix it (another approach, split the card) to the owner; never ship with the defect |
 | Merge | Another session holds the turn | Join the queue; do other work; act on `MERGE TURN` |
 | Sync with main | Another session holds the turn | Denied once with the reason; a second attempt goes through |
 

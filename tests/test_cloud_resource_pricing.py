@@ -23,7 +23,7 @@ CLOUD = ROOT / 'skills/cloud-resource/references'
 
 class CloudResourcePricingTests(unittest.TestCase):
     def test_historical_monthly_arithmetic(self):
-        text = (CLOUD / 'aws-prices.md').read_text()
+        text = (CLOUD / 'aws-prices.md').read_text(encoding="utf-8")
 
         def monthly(label):
             row = next(line for line in text.splitlines() if line.startswith('| ' + label + ' |'))
@@ -38,10 +38,10 @@ class CloudResourcePricingTests(unittest.TestCase):
         # The sheet is dated and says it was not re-checked: the reading date stays.
         self.assertIn('without a new check', text)
         self.assertRegex(text, r'\*\*20\d\d-\d\d-\d\d\*\*')
-        self.assertIn('not a query to the pricing API', (CLOUD / 'ci-and-account.md').read_text())
+        self.assertIn('not a query to the pricing API', (CLOUD / 'ci-and-account.md').read_text(encoding="utf-8"))
 
     def test_documented_ci_guard_rejects_missing_invalid_and_accepts_shape(self):
-        doc = (CLOUD / 'ci-and-account.md').read_text()
+        doc = (CLOUD / 'ci-and-account.md').read_text(encoding="utf-8")
         script = re.search(r'    run: \|\n(.*?)\n```', doc, re.S)[1]
         script = '\n'.join(line[6:] for line in script.splitlines())
         for value, success in [('', False), ('1234', False), ('x' * 12, False), ('1' * 12, True)]:

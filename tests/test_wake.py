@@ -40,10 +40,55 @@ def home():
     return h
 
 
+def _alive_in(homes):
+    """pids of live processes whose HOME is one of `homes`: the detached squad-switch children
+    (and the fake herdr they call) that squad-wake / squad-watch started and nobody waits for."""
+    marks = [f"HOME={h}" for h in homes]
+    found = []
+    if os.path.isdir("/proc/self"):
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit() or int(pid) == os.getpid():
+                continue
+            try:
+                with open(f"/proc/{pid}/environ", "rb") as fh:
+                    env = fh.read().decode("utf-8", "replace").split("\0")
+            except OSError:               # gone, a zombie (empty environ), or not ours
+                continue
+            if any(m in env for m in marks):
+                found.append(int(pid))
+        return found
+    try:                                  # no /proc (macOS): ps appends the environment with `e`
+        out = subprocess.run(["ps", "eww", "-A", "-o", "pid=,command="], capture_output=True, text=True).stdout
+    except OSError:
+        return found
+    for line in out.splitlines():
+        pid, _, rest = line.strip().partition(" ")
+        if pid.isdigit() and int(pid) != os.getpid() and any(f" {m}" in rest or rest.endswith(m) for m in marks):
+            found.append(int(pid))
+    return found
+
+
+def _settle(secs=120):
+    """Wait for the detached children of the throwaway HOMEs to exit, so none writes
+    HOME/.claude/squad/switches.log (makedirs and all) after the HOME is removed."""
+    end = time.time() + secs
+    while _alive_in(_HOMES) and time.time() < end:
+        time.sleep(0.2)
+    for pid in _alive_in(_HOMES):         # a child stuck past the limit must not outlive the test either
+        print(f"warning: killing pid {pid}, still running in a throwaway HOME after {secs}s", file=sys.stderr)
+        try:
+            os.kill(pid, 9)
+        except OSError:
+            pass
+    while _alive_in(_HOMES) and time.time() < end + 5:
+        time.sleep(0.1)
+
+
 @atexit.register
 def _remove_homes():
     # every test creates a throwaway HOME; without this /tmp (tmpfs) runs out of inodes
     # when several sessions run the suite all day long
+    _settle()
     for h in _HOMES:
         shutil.rmtree(h, ignore_errors=True)
 
@@ -57,10 +102,10 @@ def module(path, name):
 
 def fake_herdr(h, panes):
     """panes: {pane: [sid, status]} in h/panes.json; prompts and notices are logged."""
-    with open(os.path.join(h, "panes.json"), "w") as fh:
+    with open(os.path.join(h, "panes.json"), "w", encoding="utf-8") as fh:
         json.dump(panes, fh)
     path = os.path.join(h, "herdr")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/usr/bin/env python3
 import json, sys
 a = sys.argv[1:]
@@ -102,7 +147,7 @@ def conversation(h, sid, reply="Step 1 done; moving on to step 2.", ago=0, extra
     recs = [{"type": "user", "message": {"role": "user", "content": "deliver cards X-1 and X-2"}},
             {"type": "assistant", "message": {"content": [{"type": "text", "text": reply}]}}]
     recs += list(extra)
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         for r in recs:
             fh.write(json.dumps(r) + "\n")
     age(path, ago)
@@ -117,7 +162,7 @@ def age(path, ago):
 def watch_state(h, sid, **fields):
     folder = os.path.join(h, ".claude", "squad", "watch")
     os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, f"{sid}.main.json"), "w") as fh:
+    with open(os.path.join(folder, f"{sid}.main.json"), "w", encoding="utf-8") as fh:
         json.dump(fields, fh)
 
 
@@ -134,19 +179,19 @@ def scan(h, env=None, *args):
 
 def lines(h, name):
     try:
-        with open(os.path.join(h, name)) as fh:
+        with open(os.path.join(h, name), encoding="utf-8") as fh:
             return [x for x in fh.read().splitlines() if x]
     except OSError:
         return []
 
 
 def mine(h, sid):
-    with open(os.path.join(h, ".claude", "squad", "wake", f"{sid}.json")) as fh:
+    with open(os.path.join(h, ".claude", "squad", "wake", f"{sid}.json"), encoding="utf-8") as fh:
         return json.load(fh)
 
 
 def wakes_log(h):
-    with open(os.path.join(h, ".claude", "squad", "wakes.log")) as fh:
+    with open(os.path.join(h, ".claude", "squad", "wakes.log"), encoding="utf-8") as fh:
         return fh.read()
 
 
@@ -219,7 +264,7 @@ def test_owner_asked_to_stop_handoff_or_switch_is_not_woken():
     fake_herdr(h, {"w1:p1": [SID, "idle"]})
     conversation(h, SID, ago=500)
     os.makedirs(os.path.join(h, ".claude", "squad", "switches"))
-    open(os.path.join(h, ".claude", "squad", "switches", f"{SID}.claim"), "w").close()
+    open(os.path.join(h, ".claude", "squad", "switches", f"{SID}.claim"), "w", encoding="utf-8").close()
     scan(h)
     assert lines(h, "prompts") == []
 
@@ -275,7 +320,7 @@ def test_progress_after_the_wake_resets_the_count():
     tr = conversation(h, SID, ago=150)
     scan(h)
     assert mine(h, SID)["n"] == 1
-    with open(tr, "a") as fh:
+    with open(tr, "a", encoding="utf-8") as fh:
         for i in range(3):
             fh.write(json.dumps({"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "name": "Bash", "input": {"command": f"git commit -m step{i}"}}]}}) + "\n")
@@ -328,7 +373,7 @@ def test_session_with_no_request_is_not_woken():
     folder = os.path.join(h, ".claude", "projects", "-proj")
     os.makedirs(folder)
     path = os.path.join(folder, f"{SID}.jsonl")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "summary", "summary": "x"}) + "\n")
     age(path, 5000)
     scan(h)
@@ -349,7 +394,7 @@ def handoff_on_disk(h):
     os.makedirs(folder)
     ho = os.path.join(folder, "h1.md")
     body = "# handoff\nNext step: X\n"
-    with open(ho, "w") as fh:
+    with open(ho, "w", encoding="utf-8") as fh:
         fh.write(body)
     return {"type": "assistant", "isSidechain": False, "message": {"content": [
         {"type": "tool_use", "name": "Write", "input": {"file_path": ho, "content": body}}]}}
@@ -365,7 +410,7 @@ def test_stuck_switch_goes_back_to_the_watcher_and_is_redone():
     switches = os.path.join(h, ".claude", "squad", "switches")
     os.makedirs(switches)
     claim = os.path.join(switches, f"{SID}.claim")
-    open(claim, "w").close()
+    open(claim, "w", encoding="utf-8").close()
     age(claim, 2000)                      # old claim: the switch gave up a long time ago
     scan(h, {"SQUAD_WAKE_SWITCH": "100"})
     assert wait_for(h, "prompts", "w1:p1 /clear"), lines(h, "prompts")   # squad-switch went out again
@@ -379,7 +424,7 @@ def test_stuck_switch_after_two_tries_only_tells_the_owner():
     conversation(h, SID, ago=2000)
     watch_state(h, SID, ctx_level=2, switched=True, switched_ts=time.time() - 1500)
     os.makedirs(os.path.join(h, ".claude", "squad", "wake"))
-    with open(os.path.join(h, ".claude", "squad", "wake", f"{SID}.json"), "w") as fh:
+    with open(os.path.join(h, ".claude", "squad", "wake", f"{SID}.json"), "w", encoding="utf-8") as fh:
         json.dump({"reswitch_n": 2}, fh)
     scan(h, {"SQUAD_WAKE_SWITCH": "100"})
     scan(h, {"SQUAD_WAKE_SWITCH": "100"})
@@ -392,7 +437,7 @@ def sealed_copy(h, of=SID):
     folder = os.path.join(h, ".claude", "squad", "handoffs")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, f"{of}-abcdef123456.md")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write("# handoff\nNext step: X\n")
     return path
 
@@ -401,7 +446,7 @@ def record_pickup(h, sid, content):
     switches = os.path.join(h, ".claude", "squad", "switches")
     os.makedirs(switches, exist_ok=True)
     pend = os.path.join(switches, f"{sid}.pickup")
-    with open(pend, "w") as fh:
+    with open(pend, "w", encoding="utf-8") as fh:
         fh.write(content)
     age(pend, 200)
     return pend
@@ -469,7 +514,7 @@ def test_forged_pickup_record_never_becomes_a_prompt():
     h = home()                            # a symlink to any file: neither read nor touched
     fake_herdr(h, {"w1:p1": [SID2, "idle"]})
     secret = os.path.join(h, "secret")
-    with open(secret, "w") as fh:
+    with open(secret, "w", encoding="utf-8") as fh:
         fh.write("TOKEN=abc")
     age(secret, 9999)
     before = os.path.getmtime(secret)
@@ -485,7 +530,7 @@ def test_the_checks_the_wake_asks_for_do_not_count_as_progress():
     fake_herdr(h, {"w1:p1": [SID, "idle"]})
     tr = conversation(h, SID, ago=150)
     scan(h)
-    with open(tr, "a") as fh:
+    with open(tr, "a", encoding="utf-8") as fh:
         for cmd in ("git status", "agenfk get X-1", "squad-turn status", "git log --oneline -3"):
             fh.write(json.dumps({"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}) + "\n")
@@ -513,14 +558,14 @@ def test_dry_run_writes_no_state():
     fake_herdr(h, {"w1:p1": [SID, "idle"]})
     tr = conversation(h, SID, ago=150)
     scan(h)
-    with open(tr, "a") as fh:
+    with open(tr, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Bash", "input": {"command": "git commit -m x"}}]}}) + "\n")
     path = os.path.join(h, ".claude", "squad", "wake", f"{SID}.json")
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         before = fh.read()
     scan(h, None, "--dry-run")
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         assert fh.read() == before
 
 
@@ -530,7 +575,7 @@ def test_unreadable_watcher_state_is_not_woken():
     conversation(h, SID, ago=500)
     folder = os.path.join(h, ".claude", "squad", "watch")
     os.makedirs(folder)
-    with open(os.path.join(folder, f"{SID}.main.json"), "w") as fh:
+    with open(os.path.join(folder, f"{SID}.main.json"), "w", encoding="utf-8") as fh:
         fh.write('{"asked_stop": tr')
     scan(h)
     assert lines(h, "prompts") == []
@@ -541,7 +586,7 @@ def test_pane_that_changed_between_the_decision_and_the_send_gets_no_prompt():
         h = home()
         fake_herdr(h, {"w1:p1": [SID, "idle"]})
         conversation(h, SID, ago=500)
-        with open(os.path.join(h, "get.json"), "w") as fh:
+        with open(os.path.join(h, "get.json"), "w", encoding="utf-8") as fh:
             json.dump({"w1:p1": after}, fh)
         scan(h)
         assert lines(h, "prompts") == [], after
@@ -596,9 +641,9 @@ def test_odd_herdr_item_does_not_bring_the_scan_down():
     fake_herdr(h, {"w1:p1": [SID, "idle"]})
     conversation(h, SID, ago=500)
     path = os.path.join(h, "herdr")
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         src = fh.read().replace('[ag(k, v) for k, v in p.items()]', '["junk", 7] + [ag(k, v) for k, v in p.items()]')
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(src)
     scan(h)
     assert len(lines(h, "prompts")) == 1
@@ -636,7 +681,7 @@ def test_session_resumed_with_an_old_claim_gets_no_clear():
     switches = os.path.join(h, ".claude", "squad", "switches")
     os.makedirs(switches)
     claim = os.path.join(switches, f"{SID}.claim")
-    open(claim, "w").close()
+    open(claim, "w", encoding="utf-8").close()
     age(claim, 1500)                      # a 25 min claim, before the use
     out = scan(h, {"SQUAD_WAKE_SWITCH": "100"}, "--dry-run").stdout
     assert "reswitch" not in out, out
@@ -657,15 +702,15 @@ def test_pickup_record_only_takes_a_session_id_and_does_not_follow_a_symlink():
         assert m.pending(forged, "/x.md") is False, forged
     assert not os.path.exists(os.path.join(h, ".claude", "escaped.pickup"))
     target = os.path.join(h, "target")
-    with open(target, "w") as fh:
+    with open(target, "w", encoding="utf-8") as fh:
         fh.write("untouched")
     os.makedirs(switches, exist_ok=True)
     os.symlink(target, os.path.join(switches, f"{SID}.pickup"))
     assert m.pending(SID, "/copy.md") is True       # replaces the link with the file, never writes the target
-    with open(target) as fh:
+    with open(target, encoding="utf-8") as fh:
         assert fh.read() == "untouched"
     dest = os.path.join(switches, f"{SID}.pickup")
-    with open(dest) as fh:
+    with open(dest, encoding="utf-8") as fh:
         assert not os.path.islink(dest) and fh.read() == "/copy.md"
     assert (os.stat(dest).st_mode & 0o777) == 0o600
 
@@ -673,7 +718,7 @@ def test_pickup_record_only_takes_a_session_id_and_does_not_follow_a_symlink():
 def test_forged_new_session_id_goes_to_the_switch_log():
     h = home()
     fake_herdr(h, {"w1:p1": [SID, "idle"]})
-    with open(os.path.join(h, "on-clear"), "w") as fh:
+    with open(os.path.join(h, "on-clear"), "w", encoding="utf-8") as fh:
         fh.write("../../forged")
     tr = conversation(h, SID, ago=2000, extra=[handoff_on_disk(h)])
     age(tr, 2000)
@@ -692,7 +737,7 @@ def test_forged_new_session_id_goes_to_the_switch_log():
 def test_dry_run_with_herdr_silent_writes_no_log():
     h = home()
     path = os.path.join(h, "herdr")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write("#!/bin/sh\nexit 1\n")
     os.chmod(path, 0o755)
     out = scan(h, None, "--dry-run")
@@ -717,13 +762,13 @@ def test_watch_records_the_stop_and_does_not_take_the_wake_for_the_owner():
     tr = conversation(h, SID)
     watch(h, "UserPromptSubmit", SID, tr, {"prompt": "deliver cards X-1 and X-2"})
     path = os.path.join(h, ".claude", "squad", "watch", f"{SID}.main.json")
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         before = json.load(fh)["prompt_ts"]
     # the WAKE prompt carries words the stop regex would catch if it were read as the owner
     watch(h, "UserPromptSubmit", SID, tr, {"prompt": "[squad-watch] WAKE: idle; handoff, pause, /clear"})
     watch(h, "Stop", SID, tr, {"background_tasks": [{"id": "b1", "type": "local_bash", "status": "running"},
                                                     {"id": "b2", "type": "local_bash", "status": "completed"}]})
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         st = json.load(fh)
     assert st["prompt_ts"] == before and st["last_prompt"] == "deliver cards X-1 and X-2", st
     assert not st.get("asked_stop")
@@ -737,7 +782,7 @@ def fake_systemctl(h, manager_home, show_rc=0):
     bin_dir = os.path.join(h, "bin")
     os.makedirs(bin_dir, exist_ok=True)
     path = os.path.join(bin_dir, "systemctl")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"""#!/bin/sh
 echo "$@" >> {os.path.join(h, "systemctl.log")!r}
 if [ "$1 $2" = "--user show-environment" ]; then
@@ -762,9 +807,9 @@ def test_install_links_squad_wake_and_enables_the_user_timer():
     link = os.path.join(cfg, "hooks", "squad-wake.py")
     assert os.path.islink(link) and os.path.realpath(link) == os.path.realpath(WAKE), r.stdout + r.stderr
     units = os.path.join(h, ".config", "systemd", "user")
-    with open(os.path.join(units, "squad-wake.service")) as fh:
+    with open(os.path.join(units, "squad-wake.service"), encoding="utf-8") as fh:
         service = fh.read()
-    with open(os.path.join(units, "squad-wake.timer")) as fh:
+    with open(os.path.join(units, "squad-wake.timer"), encoding="utf-8") as fh:
         timer = fh.read()
     assert "EnvironmentFile=-%h/.claude/squad/wake.env" in service, service
     assert f'"{link}"' in service and "Type=oneshot" in service, service
@@ -790,28 +835,28 @@ def test_install_never_overwrites_a_unit_it_did_not_write():
     r, _ = install(h, bin_dir)            # first install: the units are written with the marker
     units = os.path.join(h, ".config", "systemd", "user")
     service = os.path.join(units, "squad-wake.service")
-    with open(service) as fh:
+    with open(service, encoding="utf-8") as fh:
         first = fh.readline()
     assert first.startswith("# Written by agenfk-squad install.sh"), first
     r, _ = install(h, bin_dir)            # ours: rewritten without complaint
     assert "SKIPPED" not in r.stderr.replace("SKIPPED squad-wake.timer", ""), r.stderr
     assert "ok      squad-wake.timer" in r.stdout, r.stdout
-    with open(service, "w") as fh:        # the owner's own unit, with no marker
+    with open(service, "w", encoding="utf-8") as fh:        # the owner's own unit, with no marker
         fh.write("[Service]\nExecStart=/bin/true\n")
     os.remove(os.path.join(h, "systemctl.log"))
     r, _ = install(h, bin_dir)
-    with open(service) as fh:
+    with open(service, encoding="utf-8") as fh:
         assert fh.read() == "[Service]\nExecStart=/bin/true\n"
     assert f"SKIPPED {service} exists and was not written by this installer" in r.stderr, r.stderr
     assert r.returncode != 0, r.stdout + r.stderr
     assert not any("enable" in c for c in lines(h, "systemctl.log")), lines(h, "systemctl.log")
     os.remove(service)                    # a symlink is not ours either, and its target stays untouched
     target = os.path.join(h, "mine.service")
-    with open(target, "w") as fh:
+    with open(target, "w", encoding="utf-8") as fh:
         fh.write("mine")
     os.symlink(target, service)
     r, _ = install(h, bin_dir)
-    with open(target) as fh:
+    with open(target, encoding="utf-8") as fh:
         assert fh.read() == "mine"
     assert os.path.islink(service) and "SKIPPED" in r.stderr, r.stderr
 

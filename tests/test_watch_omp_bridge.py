@@ -41,7 +41,7 @@ def omp_session(home, sid=SID):
                                                     "usage": {"input": 5000, "output": 40,
                                                               "cacheRead": 0, "cacheWrite": 0}}},
     ]
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         for r in recs:
             fh.write(json.dumps(r) + "\n")
     return path
@@ -57,7 +57,7 @@ def run(home, event):
 
 
 def state(home, sid=SID):
-    with open(os.path.join(home, ".claude", "squad", "watch", f"{sid}.main.json")) as fh:
+    with open(os.path.join(home, ".claude", "squad", "watch", f"{sid}.main.json"), encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -120,14 +120,14 @@ def test_own_handoff_reads_an_omp_transcript():
         os.makedirs(d)
         written = os.path.join(d, "20261013-000000-x.md")
         content = "# Handoff\n\nreal content\n"
-        with open(written, "w", newline="") as fh:
+        with open(written, "w", newline="", encoding="utf-8") as fh:
             fh.write(content)
         transcript = os.path.join(home, "s.jsonl")
         rec = {"type": "message", "id": "m9", "message": {
             "role": "assistant",
             "content": [{"type": "toolCall", "name": "write",
                          "arguments": {"path": written, "content": content}}]}}
-        with open(transcript, "w") as fh:
+        with open(transcript, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(rec) + "\n")
         assert sw.own_handoff(transcript, 0, "omp") == \
             (written, hashlib.sha256(content.encode()).hexdigest())
@@ -147,14 +147,14 @@ def test_a_translated_write_clears_the_loop_counter_like_a_mutation():
         base = {"event": "tool_result", "session_id": SID, "transcript_path": path,
                 "cwd": "/work/proj"}
 
-        with open(state_file, "w") as fh:
+        with open(state_file, "w", encoding="utf-8") as fh:
             json.dump({"calls": ["stale-hash"]}, fh)
         r = run(home, {**base, "tool_name": "write", "tool_input": {"path": "a.py"}})
         assert r.returncode == 0, r.stderr
         assert state(home)["calls"] == [], state(home)
 
         # a read is not mutating: the entry survives and the call is appended
-        with open(state_file, "w") as fh:
+        with open(state_file, "w", encoding="utf-8") as fh:
             json.dump({"calls": ["stale-hash"]}, fh)
         r = run(home, {**base, "tool_name": "read", "tool_input": {"path": "a.py"}})
         assert r.returncode == 0, r.stderr
@@ -177,7 +177,7 @@ def test_an_over_ceiling_dispatch_is_denied_and_the_brief_is_kept():
         path = omp_session(home)
         watch = os.path.join(home, ".claude", "squad", "watch")
         os.makedirs(watch)
-        with open(os.path.join(watch, f"{SID}.main.json"), "w") as fh:
+        with open(os.path.join(watch, f"{SID}.main.json"), "w", encoding="utf-8") as fh:
             json.dump({"ctx": 850_000}, fh)          # above MAIN_CEIL (800k)
         r = run(home, {"event": "before_subagent_spawn", "session_id": SID,
                        "transcript_path": path, "cwd": "/work/proj", "agent": "verifier",
@@ -186,7 +186,7 @@ def test_an_over_ceiling_dispatch_is_denied_and_the_brief_is_kept():
         out = json.loads(r.stdout)
         assert out["block"] is True and "DISPATCH DENIED" in out["reason"], out
         kept = os.path.join(home, ".claude", "squad", "handoffs", f"{SID}-dispatches.md")
-        assert "Review card e3351732" in open(kept).read()
+        assert "Review card e3351732" in open(kept, encoding="utf-8").read()
 
 
 def test_unknown_event_and_missing_session_are_quiet():

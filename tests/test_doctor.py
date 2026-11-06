@@ -436,7 +436,7 @@ def test_vendored_skills_are_expected_as_links_and_vendor_itself_is_not():
     for rel in ("agents/x.md", "CLAUDE.md", "skills/a/SKILL.md", "skills/no-doc/notes.md",
                 "skills/vendor/SKILL.md", "skills/vendor/b/SKILL.md", "skills/vendor/c/notes.md"):
         os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
-        open(os.path.join(root, rel), "w").close()
+        open(os.path.join(root, rel), "w", encoding="utf-8").close()
     config = os.path.join(root, "config")
     links = {name: (src, dst) for kind, name, src, dst in doc.expected_links(root, config) if kind == "skill"}
     assert sorted(links) == ["a", "b"], links
@@ -638,7 +638,7 @@ def test_a_missing_squad_decisions_command_fails_by_name_and_squad_turn_stays_ok
     assert checks["squad-decisions"]["status"] == doc.FAIL and "dangling" in checks["squad-decisions"]["summary"]
     os.unlink(local)
     os.symlink(os.path.join(base, "other-squad-decisions.py"), local)
-    open(os.path.join(base, "other-squad-decisions.py"), "w").close()
+    open(os.path.join(base, "other-squad-decisions.py"), "w", encoding="utf-8").close()
     os.chmod(os.path.join(base, "other-squad-decisions.py"), 0o755)
     _, checks = as_json(doctor(base, home, config, "--json"))      # a link to another clone's script
     assert checks["squad-decisions"]["status"] == doc.WARN, checks["squad-decisions"]

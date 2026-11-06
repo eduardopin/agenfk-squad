@@ -925,7 +925,7 @@ def test_no_file_is_skipped_in_ordinary_trees():
 # 5g. Limits against a large repository: files and depth
 def test_file_and_depth_limits():
     many = project({f"a{i:03d}.txt": "x" for i in range(40)})
-    with open(os.path.join(many, "zz.css"), "w") as f:
+    with open(os.path.join(many, "zz.css"), "w", encoding="utf-8") as f:
         f.write(TOKENS)
     before = sw.MAX_FILES
     sw.MAX_FILES = 10

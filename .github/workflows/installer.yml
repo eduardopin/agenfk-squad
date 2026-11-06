@@ -19,6 +19,9 @@ on:
       - tests/test_squad_settings.py
       - tests/test_install_ps1.py
       - tests/test_get_ps1.py
+      - tests/test_install_graph.py
+      - hooks/graphify.pin
+      - hooks/squad-graph.py
       - .github/workflows/installer.yml
   pull_request:
     paths:
@@ -33,6 +36,9 @@ on:
       - tests/test_squad_settings.py
       - tests/test_install_ps1.py
       - tests/test_get_ps1.py
+      - tests/test_install_graph.py
+      - hooks/graphify.pin
+      - hooks/squad-graph.py
       - .github/workflows/installer.yml
 
 permissions:
@@ -64,6 +70,8 @@ jobs:
         run: python tests/test_get.py
       - name: Settings writer unit tests (per-hook matchers)
         run: python tests/test_squad_settings.py
+      - name: graphify install step (fake uv, pin file, never graphify install; says so and exits 0 on Windows)
+        run: python tests/test_install_graph.py
       - name: "Windows installers (install.ps1 and get.ps1, throwaway profile, file:// clone)"
         if: runner.os == 'Windows'
         shell: bash

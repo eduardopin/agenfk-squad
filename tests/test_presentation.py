@@ -243,7 +243,7 @@ def test_on_windows_the_script_runs_under_git_bash_not_the_wsl_launcher():
         def tool(*parts):
             p = os.path.join(tmp, *parts)
             os.makedirs(os.path.dirname(p), exist_ok=True)
-            with open(p, "w") as f:
+            with open(p, "w", encoding="utf-8") as f:
                 f.write("")
             os.chmod(p, 0o755)
             return p

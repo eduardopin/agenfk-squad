@@ -92,6 +92,51 @@ def test_visuals_send_cloud_diagrams_to_their_skill():
         assert term not in vis.lower(), term
 
 
+def test_patterns_carry_the_ported_prose_sections():
+    pat = read("references", "patterns.md")
+    for heading in ("### A8. Paired synonyms", "### B12. Vague \"This\" opening a sentence",
+                    "### B13. By-gerund chain", "### B14. Listicle in a trench coat",
+                    "### B15. Invented concept label", "### B16. Wh- opener as a crutch",
+                    "### C11. False vulnerability", "### E6. Lazy extremes",
+                    "### F5. Artificial balance", "### G11. Unicode arrows",
+                    "### G12. Semicolon stitching", "## H. Composition",
+                    "### H1. One-point dilution", "### H2. The dead metaphor",
+                    "### H3. Fractal summary", "### H4. Content duplication"):
+        assert heading in pat, heading
+
+
+def test_ported_sections_keep_company_material_out():
+    for name in ("references/patterns.md", "references/false-positives.md", "eval.md", "SKILL.md"):
+        text = read(*name.split("/"))
+        for needle in ("CG/lab", "Myles", "/home/", "INFRA-"):
+            assert needle not in text, (name, needle)
+
+
+def test_false_positives_pin_the_ported_bullets():
+    fp = " ".join(read("references", "false-positives.md").split())
+    for phrase in ("One tricolon, one self-answered question, one analogy",
+                   "\"Never\" and \"always\" in a rule",
+                   "An established term that looks like an invented label",
+                   "Passive voice in a methods or incident section",
+                   "Genuine balance"):
+        assert phrase in fp, phrase
+
+
+def test_eval_pins_the_ported_items():
+    ev = " ".join(read("eval.md").split())
+    for item in ("31a. Are paired synonyms", "31b. Does every \"every\"",
+                 "36a. Does the text take the position", "36b. Is each claim stated once",
+                 "No unicode arrows in prose"):
+        assert item in ev, item
+
+
+def test_mechanical_sweep_names_arrows_and_semicolons():
+    for name in ("SKILL.md", "references/process.md"):
+        text = " ".join(read(*name.split("/")).split())
+        assert "no `→`" in text.lower() or "no unicode arrow" in text.lower(), name
+        assert "semicolon stitching" in text.lower(), name
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

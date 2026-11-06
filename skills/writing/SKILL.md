@@ -235,10 +235,10 @@ writer's rhythm.
 ## 9. Mechanical sweep
 
 In the final text, from tier 1 up: no em dash or en dash (unless the writer's
-sample uses them), straight quotes, sentence-case headings, lower case after a
-colon, no emoji, bold only for a defined term or a warning, no list of bold
-labels, a code block for everything that gets pasted. Full list in
-`references/process.md`.
+sample uses them), no `→` (write "then"), no semicolon stitching two sentences,
+straight quotes, sentence-case headings, lower case after a colon, no emoji,
+bold only for a defined term or a warning, no list of bold labels, a code block
+for everything that gets pasted. Full list in `references/process.md`.
 
 ## 10. Language
 

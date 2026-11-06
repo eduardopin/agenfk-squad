@@ -57,6 +57,18 @@ def check(*args):
     return r.returncode, r.stdout + r.stderr
 
 
+
+def test_a_test_on_another_drive_is_named_by_its_full_path():
+    import importlib.util
+    import ntpath
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts",
+                          "check_temp_leftovers.py")
+    spec = importlib.util.spec_from_file_location("check_temp_leftovers", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.shown_name("C:\\Temp\\t.py", "D:\\a\\repo", ntpath.relpath) == "C:\\Temp\\t.py"
+    assert mod.shown_name("D:\\a\\repo\\tests\\t.py", "D:\\a\\repo", ntpath.relpath) == "tests\\t.py"
+
 def test_a_clean_file_passes():
     code, out = check(*planted(clean=CLEAN))
     assert code == 0, out

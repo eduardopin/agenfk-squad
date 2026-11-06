@@ -46,6 +46,16 @@ def measure(test, timeout, base):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+def shown_name(path, root=None, relpath=os.path.relpath):
+    """The test file as printed: relative to the repository, or the absolute path when it is on another
+    drive (Windows: relpath raises across drives, e.g. a test in C:\\Temp and the clone on D:)."""
+    try:
+        return relpath(path, ROOT if root is None else root)
+    except ValueError:
+        return path
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Run each test file with an empty TMPDIR and count what it leaves.")
     ap.add_argument("tests", nargs="*", help="test files (default: every tests/test_*.py)")
@@ -61,7 +71,7 @@ def main(argv=None):
     base = tempfile.mkdtemp(prefix="tl-")
     try:
         for test in tests:
-            name = os.path.relpath(os.path.abspath(test), ROOT)
+            name = shown_name(os.path.abspath(test))
             code, left = measure(os.path.abspath(test), args.timeout, base)
             if code is None:
                 print(f"FAIL {name}: timed out after {args.timeout:g}s")

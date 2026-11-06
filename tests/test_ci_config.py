@@ -99,6 +99,10 @@ def test_each_test_file_runs_with_its_own_empty_tmpdir_and_fails_when_it_leaves_
         run = body.index('python -B "$t"')
         check = body.index('ls -A "$tmp"')
         assert run < check < body.index('rm -rf "$tmp"'), (name, "run, then look at what is left, then remove the directory")
+        # GitHub runs `shell: bash` steps with -eo pipefail: neither the cleanup nor the listing may abort the step
+        assert re.search(r'rm -rf "\$tmp" \|\| (?:true|echo )', body), (name, "a failed rm (locked dir, open file on Windows) must not stop later files")
+        assert "mapfile -t left < <(ls -A" in body and "${left[@]:0:5}" in body, (name, "the listing is an array slice, not a pipe")
+        assert not re.search(r"\|\s*(?:head|paste|sed|wc)\b", body), (name, "no `| head`: SIGPIPE (141) under pipefail on a big leak")
         assert re.search(r"::error file=\$t::\$t left \$n entries in TMPDIR \(\$names\)", body), (name, "the annotation names the file and the leftovers")
     win = steps(job(TESTS, "windows"))
     assert any("cygpath -m" in st for st in win), "Windows hands native Python a Windows-form path, not Git Bash's /tmp/..."

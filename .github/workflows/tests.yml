@@ -57,14 +57,17 @@ jobs:
             tmp=$(mktemp -d)
             TMPDIR="$tmp" TEMP="$tmp" TMP="$tmp" python -B "$t" || crashed+=("$t")
             echo "::endgroup::"
-            left=$(ls -A "$tmp")
-            if [ -n "$left" ]; then
-              n=$(printf '%s\n' "$left" | wc -l)
-              names=$(printf '%s\n' "$left" | head -n 5 | paste -sd, - | sed 's/,/, /g')
+            # GitHub runs bash steps with -eo pipefail: no `| head` here (SIGPIPE, exit 141, on a big leak)
+            # and no bare command that can fail; the listing is read into an array, the first names sliced.
+            mapfile -t left < <(ls -A "$tmp")
+            if [ "${#left[@]}" -gt 0 ]; then
+              n=${#left[@]}
+              names=$(printf '%s, ' "${left[@]:0:5}")
+              names=${names%, }
               echo "::error file=$t::$t left $n entries in TMPDIR ($names)"
               failed+=("$t")
             fi
-            rm -rf "$tmp"
+            rm -rf "$tmp" || echo "::warning file=$t::could not remove $tmp"
           done
           for t in "${crashed[@]}"; do
             echo "::error file=$t::$t failed"
@@ -128,14 +131,17 @@ jobs:
             ok=1
             TMPDIR="$wtmp" TEMP="$wtmp" TMP="$wtmp" python -B "$t" || { echo "::error::$t failed"; ok=0; }
             echo "::endgroup::"
-            left=$(ls -A "$tmp")
-            if [ -n "$left" ]; then
-              n=$(printf '%s\n' "$left" | wc -l)
-              names=$(printf '%s\n' "$left" | head -n 5 | paste -sd, - | sed 's/,/, /g')
+            # GitHub runs bash steps with -eo pipefail: no `| head` here (SIGPIPE, exit 141, on a big leak)
+            # and no bare command that can fail; the listing is read into an array, the first names sliced.
+            mapfile -t left < <(ls -A "$tmp")
+            if [ "${#left[@]}" -gt 0 ]; then
+              n=${#left[@]}
+              names=$(printf '%s, ' "${left[@]:0:5}")
+              names=${names%, }
               echo "::error file=$t::$t left $n entries in TMPDIR ($names)"
               ok=0
             fi
-            rm -rf "$tmp"
+            rm -rf "$tmp" || echo "::warning file=$t::could not remove $tmp"
             [ "$ok" -eq 1 ] || failed="$failed $t"
           done
           if [ -n "$failed" ]; then echo "::error::failed:$failed"; exit 1; fi

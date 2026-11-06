@@ -1,9 +1,19 @@
+<div align="center">
+
 # agenfk-squad
 
-[![tests](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml/badge.svg)](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml)
-[![license: FSL-1.1-ALv2](https://img.shields.io/badge/license-FSL--1.1--ALv2-blue.svg)](LICENSE)
+**Keep parallel Claude Code sessions within budget, independently reviewed, and moving through the default branch one at a time.**
 
-**A squad of eleven Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).**
+A squad of Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).
+
+<a href="https://eduardopin.github.io/agenfk-squad/"><img src="site/img/watcher-terminal.svg" width="900" alt="Example squad-watch hook output from a synthetic transcript at an artificial 550 thousand tokens of context"></a>
+
+[See how the squad works](https://eduardopin.github.io/agenfk-squad/) · [Read the architecture](docs/architecture.md) · [Try the installer](#quickstart)
+
+[![tests](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml/badge.svg)](https://github.com/eduardopin/agenfk-squad/actions/workflows/tests.yml)
+[![License](https://img.shields.io/github/license/eduardopin/agenfk-squad)](LICENSE)
+
+</div>
 
 AgenFK gives an AI coding session a board, a flow and gates: no card, no edit; no
 evidence, no next step. The squad adds what a single gated session still lacks
@@ -25,6 +35,19 @@ beyond the standard library, and one test suite. It is also an open question.
 The rules here came from watching real sessions fail, and there are many
 failures we have not seen yet. If you run AI agents in parallel, we want your
 evidence and your rules. See [Contributing](#contributing).
+
+## What is missing
+
+The current system covers context handoffs, dispatch brakes, independent review and a local
+merge queue; it does not yet wake sessions outside herdr, enforce worktree
+ownership, run its hooks in other agent harnesses beyond the existing oh-my-pi
+port, or coordinate two people on two machines.
+
+Concrete ways in: bring a sanitized watcher failure, test the defaults with a
+200k context window, add a tmux/Zellij/WezTerm/kitty adapter, port one rule to
+another harness, or take a smaller item from the [roadmap](ROADMAP.md). Start
+with [CONTRIBUTING.md](CONTRIBUTING.md); outside coding agents can use the
+[external contributor protocol](docs/external-contributor-agent.md).
 
 ## The problem
 
@@ -170,7 +193,20 @@ register the hooks); what to have first, options, update and uninstall are in
 irm https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.ps1 | iex
 ```
 
-On Linux, macOS and WSL:
+On Linux, macOS and WSL, the stable installer command is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.sh | sh
+```
+
+This command also requires `curl`, POSIX `sh`, and Bash. The project is
+developed and run daily on Linux; macOS is untested. WSL behaves like Linux
+when Claude Code runs inside WSL.
+
+The command clones into `~/.local/share/agenfk-squad` by default, links the
+agents, skills and hooks, and merges the hook manifest into Claude Code's
+settings after making a backup. Run the same command again to update. For a
+manual development clone instead:
 
 ```bash
 # 1. AgenFK first: the squad assumes its CLI is on your PATH
@@ -269,8 +305,9 @@ and 11, with its own installer and CI job (see
 [herdr](docs/installation.md#optional-dependencies) pane manager, which
 Windows does not have; without it the watcher still
 orders the handoff and you type `/clear` and `/clear-pickup pickup` yourself.
-The session report reads Codex, pi and oh-my-pi transcripts too, but the hooks
-only drive Claude Code. [ROADMAP.md](ROADMAP.md) lists what that leaves open.
+The session report reads Codex, pi and oh-my-pi transcripts too. The Claude
+Code hooks drive only that harness; oh-my-pi has its own port.
+[ROADMAP.md](ROADMAP.md) lists what that leaves open.
 
 ## Contributing
 

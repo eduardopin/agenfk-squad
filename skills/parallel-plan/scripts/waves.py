@@ -5,7 +5,9 @@ A list, {"items": [...]} or {"cards": [...]} accepts id, parentId, status,
 depends_on, touches, size, and a description with Depends on:/Touches:/Size:.
 Parents pass their constraints to every leaf. DONE/CLOSED satisfy dependencies;
 blocked, paused, cancelled, archived or trashed cards do not. Unknown Touches
-serialize conservatively. Exit 0 is a forecast, 2 means invalid input or cycle.
+serialize conservatively. --parent plans only the leaves under one container:
+an open card outside it blocks what waits on it. --done names merged cards the
+board has not closed yet. Exit 0 is a forecast, 2 means invalid input or cycle.
 """
 import argparse
 from collections import deque
@@ -21,6 +23,10 @@ BLOCKED = {'BLOCKED', 'PAUSED', 'CANCELLED', 'CANCELED', 'ARCHIVED', 'TRASHED', 
 DONE = {'DONE', 'CLOSED'}
 NAMED = re.compile(r'^[a-z][a-z0-9_-]*:')
 WILDCARD = re.compile(r'[*?\[]')
+NOTHING = {'none', 'nothing', 'nenhum', 'nenhuma', 'n/a', 'na', '-'}
+JOINERS = {'and', 'e', '&'}
+# A shorter word on a Depends on line is more likely prose than an id prefix.
+MIN_PREFIX = 6
 
 
 def tokens(value, field):
@@ -58,21 +64,40 @@ def block(text):
             continue
         if fence:
             continue
-        line = re.sub(r'^\s*[-*+]\s+', '', line).replace('**', '').strip()
-        m = re.match(r'^(Depends on|Touches|Size):\s*(.*)$', line, re.I)
+        line = re.sub(r'^\s*(?:[-*+>]|\d+[.)])\s+', '', line).strip()
+        # Bold may wrap the key or the whole line; a ** inside a path is a glob.
+        m = re.match(r'^(\*\*)?(Depends on|Touches|Size)(\*\*)?:(\*\*)?\s*(.*)$', line, re.I)
         if not m:
             continue
-        key, value = m.group(1).lower(), m.group(2)
+        key, value = m.group(2).lower(), m.group(5)
+        if m.group(1) and not (m.group(3) or m.group(4)) and value.endswith('**'):
+            value = value[:-2]
         if key == 'depends on':
-            for token in tokens(value, key):
-                ref = re.match(r'[\w-]+', token)
-                if ref and ref[0].casefold() not in {'none', 'nothing', 'nenhum'}:
-                    deps.append(ref[0])
+            deps.extend(depends(value))
         elif key == 'touches':
-            touches.extend(tokens(value, key))
+            touches.extend(t for t in tokens(value, key) if t.casefold() not in NOTHING)
         else:
             size = value
     return deps, touches, size
+
+
+def depends(value):
+    """Every id on a Depends on line. A word that is not an id fails: reading
+    only the first word of `a and b` would put b's dependent in a wave early."""
+    ids = []
+    for token in tokens(value, 'depends on'):
+        while re.search(r'\([^()]*\)', token):
+            token = re.sub(r'\([^()]*\)', ' ', token)
+        if token.strip().casefold() in NOTHING:
+            continue
+        for word in re.split(r'[;\s]+', token):
+            word = word.strip('`')
+            if not word or word.casefold() in JOINERS | NOTHING:
+                continue
+            if not re.fullmatch(r'[\w-]+', word):
+                raise ValueError(f'Depends on: cannot read {word!r} in {value.strip()!r}')
+            ids.append(word)
+    return ids
 
 
 def normalize_touch(path):
@@ -117,7 +142,7 @@ def overlap(a, b):
     return False
 
 
-def load(data):
+def load(data, root=None, done=()):
     items = data.get('cards', data.get('items')) if isinstance(data, dict) else data
     if not isinstance(items, list):
         raise ValueError('expected a list, {"cards": [...]} or {"items": [...]}')
@@ -128,7 +153,10 @@ def load(data):
         cid = item['id']
         if cid in cards:
             raise ValueError(f'duplicate id: {cid}')
-        deps, touches, weight = block(item.get('description') or '')
+        try:
+            deps, touches, weight = block(item.get('description') or '')
+        except ValueError as exc:
+            raise ValueError(f'{cid}: {exc}') from None
         deps += tokens(item.get('depends_on', []), 'depends_on')
         touches += tokens(item.get('touches', []), 'touches')
         weight = item.get('size', weight if weight is not None else 1)
@@ -142,12 +170,14 @@ def load(data):
         cards[cid] = dict(id=cid, parent=item.get('parentId'), deps=deps,
                           touches=sorted({normalize_touch(p) for p in touches}), size=weight, status=status.upper())
     ids = sorted(cards)
-    def resolve(ref):
+    def resolve(ref, what='dependency'):
         if ref in cards:
             return ref
+        if len(ref) < MIN_PREFIX:
+            raise ValueError(f'unknown {what}: {ref} (a shortened id needs at least {MIN_PREFIX} characters)')
         hits = [cid for cid in ids if cid.startswith(ref)]
         if len(hits) != 1:
-            raise ValueError(f'unknown or ambiguous dependency: {ref}')
+            raise ValueError(f'unknown or ambiguous {what}: {ref}')
         return hits[0]
     children = {cid: [] for cid in ids}
     for cid, c in cards.items():
@@ -178,6 +208,15 @@ def load(data):
                               touches=set(c['touches']) | (parent['touches'] if parent else set()),
                               blocked=c['status'] in BLOCKED or bool(parent and parent['blocked']),
                               done=c['status'] in DONE)
+    if root is not None:
+        container = resolve(root, '--parent')
+        if not children[container]:
+            raise ValueError(f'--parent {root}: no cards to plan under it')
+        scope = leaves[container]
+    else:
+        scope = set(ids)
+    # Merged but not yet closed on the board: counts as done, like DONE.
+    merged = set().union(*(leaves[resolve(ref, '--done')] for ref in done))
     result = {}
     for cid in ids:
         if children[cid]:
@@ -187,13 +226,55 @@ def load(data):
         if cid in deps:
             raise ValueError(f'dependency cycle at {cid}')
         result[cid] = dict(cards[cid], deps=deps, touches=sorted(context['touches']),
-                           blocked=context['blocked'], done=context['done'])
+                           blocked=context['blocked'], done=context['done'] or cid in merged,
+                           scope=cid in scope)
     return result
 
 
+def cycle(deps, stuck):
+    """Name one dependency cycle among the cards a topological sort left over.
+    Each of them waits on another one of them, so following the smallest such
+    dependency from the smallest card must come back to a card already seen."""
+    path, seen, cid = [], {}, min(stuck)
+    while cid not in seen:
+        seen[cid] = len(path); path.append(cid)
+        cid = min(deps[cid] & stuck)
+    return ' -> '.join(path[seen[cid]:] + [cid])
+
+
+def shared(a, b):
+    for x in a:
+        for y in b:
+            if overlap(x, y):
+                return x if x == y else f'{x} ~ {y}'
+    return None
+
+
+def maybe_shared(cards, ids):
+    """Pairs that can overlap at all, without comparing every pair: two plain
+    paths overlap only under one first segment and a resource only by name,
+    while a glob or the root is compared with every card."""
+    groups, wild = {}, set()
+    for cid in ids:
+        for t in cards[cid]['touches']:
+            if WILDCARD.search(t) or t == './':
+                wild.add(cid)
+            else:
+                groups.setdefault(t if NAMED.match(t) else t.split('/', 1)[0], set()).add(cid)
+    pairs = {tuple(sorted((a, b))) for a in wild for b in ids if a != b and cards[b]['touches']}
+    for group in groups.values():
+        members = sorted(group)
+        pairs.update((a, b) for i, a in enumerate(members) for b in members[i + 1:])
+    return sorted(pairs)
+
+
 def plan(cards, width):
-    active = {cid for cid, c in cards.items() if not c['done']}
+    done = {cid for cid, c in cards.items() if c['done']}
+    active = {cid for cid, c in cards.items() if c.get('scope', True) and not c['done']}
     deps = {cid: cards[cid]['deps'] & active for cid in active}
+    # An open card outside --parent cannot be scheduled here, so neither can
+    # whatever waits on it.
+    outside = {cid: cards[cid]['deps'] - active - done for cid in active}
     nexts = {cid: [] for cid in active}
     counts = {cid: len(ds) for cid, ds in deps.items()}
     for cid, ds in deps.items():
@@ -208,11 +289,13 @@ def plan(cards, width):
             if counts[nxt] == 0:
                 heapq.heappush(ready, nxt)
     if len(topo) != len(active):
-        raise ValueError('dependency cycle: ' + ', '.join(sorted(active - set(topo))))
-    blocked = {cid for cid in active if cards[cid]['blocked']}
+        raise ValueError('dependency cycle: ' + cycle(deps, active - set(topo)))
+    blocked = {cid for cid in active if cards[cid]['blocked'] or outside[cid]}
     for cid in topo:
         if deps[cid] & blocked:
             blocked.add(cid)
+    # What holds each blocked card; empty means its own or a parent's status.
+    waiting_on = {cid: sorted((deps[cid] & blocked) | outside[cid]) for cid in sorted(blocked)}
     runnable = active - blocked
     tail, head, previous = {}, {}, {}
     for cid in topo:
@@ -241,19 +324,34 @@ def plan(cards, width):
         if not wave:
             raise ValueError('unschedulable dependencies')
         waves.append(sorted(wave)); placed.update(wave)
+    # Pairs a shared resource keeps apart; a pair already ordered by a
+    # dependency would never meet in one wave, so it is not reported.
+    pairs = [(a, b, res) for a, b in maybe_shared(cards, runnable)
+             for res in [shared(cards[a]['touches'], cards[b]['touches'])] if res]
+    reach = {}
+    if pairs:
+        for cid in topo:
+            reach[cid] = set(deps[cid]).union(*(reach[d] for d in deps[cid]))
+    conflicts = [dict(cards=[a, b], resource=res) for a, b, res in pairs
+                 if a not in reach[b] and b not in reach[a]]
     return dict(waves=waves, ready=waves[0] if waves else [], blocked=sorted(blocked),
+                waiting_on=waiting_on, conflicts=conflicts,
                 unknown_touches=sorted(c for c in runnable if not cards[c]['touches']),
-                done=sorted(c for c in cards if cards[c]['done']), critical_path=path, critical_length=length)
+                done=sorted(c for c in done if cards[c].get('scope', True)), critical_path=path,
+                critical_length=length)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('cards', help='JSON file or - for stdin')
     p.add_argument('--max-width', type=int, default=6, choices=range(1, 7))
+    p.add_argument('--parent', help='plan only the leaves under this epic or story (id or unique prefix)')
+    p.add_argument('--done', default='', help='comma-separated ids merged but not yet closed on the board')
     args = p.parse_args()
     try:
         raw = sys.stdin.read() if args.cards == '-' else Path(args.cards).read_text(encoding='utf-8')
-        print(json.dumps(plan(load(json.loads(raw)), args.max_width), sort_keys=True))
+        cards = load(json.loads(raw), root=args.parent, done=tokens(args.done, '--done'))
+        print(json.dumps(plan(cards, args.max_width), sort_keys=True))
         return 0
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
         print(f'PLAN_ERROR: {exc}', file=sys.stderr)

@@ -29,7 +29,7 @@ measured. `SQUAD_WATCH=0` turns it off.
 | `PostToolUseFailure` | A tool call failed: if it was the merge that held the merge turn, gives the turn back at once instead of waiting for `SQUAD_TURN_HOLD` to expire. |
 | `SubagentStop` | Writes the sub-session's metrics to `metrics.jsonl` and leaves a note for the parent when the sub-session ended badly. |
 | `UserPromptSubmit` | Delivers pending notes to the main session. |
-| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). Main session outside handoff, with a large context: schedules a `/compact` just before the prompt cache goes cold (see [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)). |
+| `Stop` | Main session at handoff level: if it stopped without writing the handoff, the stop is blocked and the order repeated; if it stops again without one, the watcher writes a minimal handoff itself. With a handoff on disk, it launches the session switch; with a background task still running, the switch is scheduled instead (see [The session switch](#the-session-switch)). Main session outside handoff with a delivery still open: refuses the stop (see [Carrying a delivery to the end](#carrying-a-delivery-to-the-end)). Otherwise, with a large context: schedules a `/compact` just before the prompt cache goes cold (see [Compacting before the cache goes cold](#compacting-before-the-cache-goes-cold)). |
 | `PreCompact` | Main session, `/compact` or auto-compact: before the conversation is summarized, writes the same minimal handoff to `~/.claude/squad/handoffs/<session>-compact.md`. It prints nothing, so it never blocks the compaction, and it never switches the session. A compaction the watcher ordered is labelled as such in that handoff. |
 
 Reading the transcript is incremental: the watcher keeps a byte offset per
@@ -467,9 +467,8 @@ session itself when it comes back.
 It never wakes a pane that is working or whose session changed between the
 decision and the send, a session whose owner asked to stop, a session at
 handoff level or switching, a session idle for more than `SQUAD_WAKE_AGE`
-(43200), or one whose last reply ends with a line `[squad] END: <why nothing
-is left>` (`[squad] DONE:` is accepted too) or `[squad] BLOCKED: <what only the
-owner can do>` (the owner gets a herdr notification once). Unreadable watcher
+(43200), or one whose last reply ends with a line `[squad] END: no card is left
+that I can take` (`[squad] DONE:` is accepted too) or `[squad] BLOCKED: merge approval on PR #64 is the owner's` (the owner gets a herdr notification once). Unreadable watcher
 state means no wake.
 
 Each wake without progress doubles the deadline, up to `SQUAD_WAKE_CEILING`
@@ -515,6 +514,120 @@ timer not enabled). `systemctl --user disable --now
 squad-wake.timer` stops it. Without a systemd user manager for your `HOME`
 (macOS, a container) the installer prints the line to run every 2 minutes from
 cron or launchd. Windows is not covered yet.
+
+## Carrying a delivery to the end
+
+Sessions delivering a large piece of work used to stop at each milestone with
+"the next step is card X" and wait for a person who was not reading the pane.
+The `Stop` of a main session outside handoff level now refuses that stop while
+a defined delivery is open, and sends the session back with `[squad-watch] CARRY
+ON`.
+
+A delivery is open when either holds:
+
+- **an explicit goal**: a line such as `[squad] GOAL: docs/architect/plan.json - 51d1c739-d0d2-400a-8037-f46b00d1668b` (what is delivered, then the card ids) in the
+  owner's message or in one of the session's replies. The `architect` skill
+  writes it when a plan goes to execution. AgEnFK card ids on that line, whole or the
+  8-character prefix (`card 51d1c739`), are the goal's cards; an external id
+  such as `INFRA-419` is not looked up, so name the AgEnFK id. A line whose text starts with `<` is read as a quoted template
+  and opens no goal, so write the real text. An explicit goal survives the owner's side questions: the
+  session answers and goes back to work. Writing the same line again changes
+  nothing, a session's line never replaces the owner's goal, and a new session
+  goal keeps the guard's counters.
+- **an implicit one**: the last reply hands the work back. It names a next step
+  or card ("o próximo passo é o card X", "next card"), offers to do it ("posso
+  abrir essa frente agora, se você quiser", "quer que eu", "want me to", "shall
+  I"), or says it is waiting for the owner ("esperando você", "waiting on
+  you"). An offer or a wait counts only when its own line speaks of delivery work
+  (a card, front, PR, merge, push, wave, deploy, worktree, `#12`) or follows
+  work done in the same turn, so "want me to go deeper?" after an explanation
+  is not a delivery; code blocks and quoted lines are not read. It lives only
+  while replies keep doing that, and it ends at the owner's next message. Its first hold counts as no progress unless work was
+  done since the previous stop, so a Q&A answer that only mentions a next step
+  is held at most twice.
+
+The session stops by ending a reply with one line:
+
+| Line | Effect |
+|---|---|
+| `[squad] DONE: PR #64 merged, cards DONE` | Closes the goal. Refused (`DONE refused`) while a goal card is not DONE in AgEnFK (`agenfk get <id> --json`, the first 4 cards, in parallel, within 7 s); a CLI or server that does not answer in time counts as done. After `SQUAD_CARRY_MAX` (3) refused DONEs the line is accepted while a card is still open, so a CLI or server that stays down, or a card that cannot reach DONE, cannot hold the session. |
+| `[squad] BLOCKED: merge approval on PR #64 is the owner's` | Lets go until the owner speaks again: merge approval, a production apply, an answer only the owner has. |
+| `[squad] END: no card is left that I can take` | Closes the goal. |
+
+The text after the colon is the session's own: a line whose text starts with `<`
+is read as a quoted template, so a copied `<placeholder>` does not exit.
+These are the same lines `squad-wake.py` reads: the pattern in `squad-watch.py`
+is a copy of that file's `MARK`, kept so a Stop without a goal never loads
+`squad-wake.py`, and `tests/test_carry_on.py` fails when the two differ. So a session that stopped
+for a reason the hook cannot see (an API error, a reboot) is still woken by
+the timer.
+
+The order names what the session must do itself before it calls anything the
+owner's: push, open or reopen a session or pane, merge where the project's
+rules let the session merge (rule 11: a green gate and SHIP, through the merge
+queue), start the next front. Only what only the owner can do goes in
+`BLOCKED`, a merge approval the project reserves for the owner among them.
+
+The hold never wins against the owner or the watcher:
+
+- the owner asking to stop or pause (the same reading as the soft stop) lets go;
+- handoff level keeps its own order, and the pickup carries the goal in the
+  handoff's Next step;
+- a sub-session's stop is never held;
+- `SQUAD_CARRY_MAX` (3) stops in a row without progress let go and leave a note
+  for the session and a line in `~/.claude/squad/carry.log` (and a herdr
+  notification in a pane). Progress is what squad-wake counts: an edit, a
+  dispatch, a commit, push or merge, a PR, an `agenfk verify/update/create`.
+  Checking alone is not progress. Progress, or the owner speaking, re-arms it;
+- `SQUAD_CARRY_CAP` (200) holds per goal let go even with progress;
+- an explicit goal released twice in a row without progress in between is
+  closed, and one with no progress for `SQUAD_CARRY_AGE` (43200 s, 12 h) has
+  expired, so an abandoned goal does not hold the owner's later chat. A goal in
+  `BLOCKED` ages for `SQUAD_CARRY_BLOCKED_AGE` (7 days) instead, and the owner's
+  answer re-arms it. A closed goal does not come back by the session writing
+  the same line again; the owner's next message lifts that;
+- reaching `SQUAD_CARRY_CAP` closes the goal;
+- `SQUAD_CARRY=0` turns it off.
+
+The idea follows two public Stop hooks: [claude-goal](https://github.com/jthack/claude-goal)
+(an active `/goal` holds the stop, with a cap per goal) and
+[taskmaster](https://github.com/levi-openclaw/taskmaster) (the transcript is
+re-read for unfinished work). Both are MIT; no code was taken from them.
+
+## Fanning a goal out
+
+Parallel is the default. A `[squad] GOAL:` that names AgEnFK cards is read when it
+opens and on each CARRY ON hold: the open cards at the bottom of the goal's tree
+(`open_leaves`) against the sub-sessions of that session touched in the last 10
+minutes (`live_subs`). With two or more open cards and nothing running the verdict
+is FAN OUT, and the watcher says so: on the UserPromptSubmit that opened the goal,
+and as `[squad-watch] CARRY ON + FAN OUT:` on a hold, ahead of the usual exits.
+Cards in BLOCKED, PAUSED, TRASHED or IDEAS are not open work, as in parallel-plan's
+waves, and a parked card takes its children out with it. Every card the goal names
+is read (up to 10), in parallel, with 6 seconds for AgEnFK as the only bound. If the
+deadline cuts the read short the order still goes out but says "read N of the M named
+cards" and the goal is not marked fanned, so the rest is ordered at a later hold.
+The order names the cards, tells the session to run parallel-plan's waves and
+dispatch wave 1 in one message (at most 6 fronts, one worktree each). Any failure
+(no AgEnFK, no `fleet.py`) means no order, never a broken hook. A check that finds
+nothing to order is remembered on the goal (`fan_checked`) for 5 minutes (`FAN_CHECK`),
+so a dead AgEnFK costs one lookup per window, not one per event. No order goes out
+within 5 minutes (`DENIED_QUIET`) of a denied dispatch either. Implicit goals carry
+no cards and are never fanned out; a BLOCKED or released goal is not either.
+
+- `skills/architect/scripts/fleet.py [--json]` is the survey: one row per live main
+  session with its goal, open cards, running sub-sessions and verdict.
+- `skills/architect/scripts/fanout.py --card <id> --worktree <path>` is for a card
+  that will not fit a sub-agent (over about 120k of context): it opens the card in
+  its own herdr tab, starts Claude there and hands it the goal. Outside herdr it
+  prints how to do that by hand.
+- squad-wake wakes an idle session whose goal is still open once it is past
+  `SQUAD_WAKE_AGE`, instead of leaving it as an old conversation, and the wake text
+  carries the goal and the FAN OUT order. A wake keeps the same brake: no order
+  within `DENIED_QUIET` of a denied dispatch, and the order is recorded on the wake
+  state (`fan_goal`, the goal's `ts`) so a later wake does not repeat it.
+- `fleet.py` reads the session state under `$HOME/.claude/squad/watch`, where the
+  hooks write it, whatever `CLAUDE_CONFIG_DIR` says.
 
 ## Compacting before the cache goes cold
 

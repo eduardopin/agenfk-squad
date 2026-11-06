@@ -86,6 +86,37 @@ def test_the_installer_workflow_covers_windows_and_the_files_that_matter_there()
             assert f"      - {path}\n" in block + "\n", f"a change to {path} should run the installer workflow"
 
 
+def test_each_test_file_runs_with_its_own_empty_tmpdir_and_fails_when_it_leaves_entries():
+    """The leak check lives inside the existing per-file loops (no second pass of the suite)."""
+    for name, loop_head in (("watcher", 'for t in "${files[@]}"; do'), ("windows", "for t in tests/test_*.py; do")):
+        live = steps(job(TESTS, name))
+        loop = [st for st in live if loop_head in st and 'python -B "$t"' in st]
+        assert len(loop) == 1, (name, "one live loop step runs every file")
+        body = loop[0]
+        assert "tmp=$(mktemp -d)" in body, (name, "a fresh empty directory per file")
+        assert re.search(r'TMPDIR="\$\w+" TEMP="\$\w+" TMP="\$\w+" python -B "\$t"', body), \
+            (name, "the file runs with TMPDIR, TEMP and TMP on that directory (Python reads TMPDIR first, then TEMP, TMP)")
+        run = body.index('python -B "$t"')
+        check = body.index('ls -A "$tmp"')
+        assert run < check < body.index('rm -rf "$tmp"'), (name, "run, then look at what is left, then remove the directory")
+        # GitHub runs `shell: bash` steps with -eo pipefail: neither the cleanup nor the listing may abort the step
+        assert re.search(r'rm -rf "\$tmp" \|\| (?:true|echo )', body), (name, "a failed rm (locked dir, open file on Windows) must not stop later files")
+        assert "mapfile -t left < <(ls -A" in body and "${left[@]:0:5}" in body, (name, "the listing is an array slice, not a pipe")
+        assert not re.search(r"\|\s*(?:head|paste|sed|wc)\b", body), (name, "no `| head`: SIGPIPE (141) under pipefail on a big leak")
+        assert re.search(r"::error file=\$t::\$t left \$n entries in TMPDIR \(\$names\)", body), (name, "the annotation names the file and the leftovers")
+    win = steps(job(TESTS, "windows"))
+    assert any("cygpath -m" in st for st in win), "Windows hands native Python a Windows-form path, not Git Bash's /tmp/..."
+    linux = [st for st in steps(job(TESTS, "watcher")) if 'for t in "${files[@]}"' in st][0]
+    assert "failed+=(\"$t\")" in linux and 'echo "ran ${#files[@]} test files, ${#failed[@]} failed"' in linux, \
+        "a leaking file counts in the failed total and the summary line is kept"
+    assert tests_run_count(TESTS) == 2, "no second loop over the suite for the leak check"
+
+
+def tests_run_count(source):
+    """How many times the workflow runs the test files (one `python -B "$t"` per job loop)."""
+    return source.count('python -B "$t"')
+
+
 def test_the_private_path_check_is_the_script_not_a_one_line_grep():
     live = " ".join(steps(job(TESTS, "watcher")) + steps(job(TESTS, "windows")))
     assert live.count("python scripts/check_private_paths.py") == 2, "on Linux and on Windows"

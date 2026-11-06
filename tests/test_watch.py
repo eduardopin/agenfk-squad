@@ -11,6 +11,7 @@ import atexit
 import datetime
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -2303,9 +2304,14 @@ def test_a_record_does_not_let_a_later_card_of_the_call_through_unchecked():
         out = verify(h, sid, CARD_A, env, " && ".join(f"agenfk verify {c}" for c in before + [CARD_A]),
                      {"cwd": ROOT})
         assert time.time() - t0 < 9.5
-        assert "ONE CARD PER CALL" in out and CARD_A in out and why in out, (mode, out)
+        assert "ONE CARD PER CALL" in out and why in out, (mode, out)
+        # which later card is left unchecked depends on the runner: with 2.4 s per answer, a slow Windows
+        # runner (7 s minus 2 for the kill) runs out on the second card instead of CARD_A. What must hold
+        # is that the call is denied on a card after the first, never let through.
+        m = re.search(r"and card (\S+) was left unchecked", out)
+        assert m and m.group(1) in before[1:] + [CARD_A], (mode, out)
         last = gate_log(h)[-1]
-        assert (last["card"], last["decision"]) == (CARD_A, "deny") and "one card per call" in last["why"], last
+        assert (last["card"], last["decision"]) == (m.group(1), "deny") and "one card per call" in last["why"], last
     stub_mode(h, "slow")
     assert verify(h, sid, CARD_A, env, extra={"cwd": ROOT}) == "nothing"   # the first card still fails open
     # no time left for a later card (`wait` under 0.5 s): unchecked, record or not. Called directly: through

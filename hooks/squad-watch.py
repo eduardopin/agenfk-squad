@@ -81,7 +81,9 @@ Thresholds, by environment variable:
   SQUAD_CTX_BASE      (40000)   context of a fresh session, for the payback
   The main session's handoff (level 2) is arithmetic, with no judgement by the agent:
       context >= SQUAD_CTX_PCT (90)% of the window, OR
-      reread >= SQUAD_REREAD (60)% AND context >= floor
+      reread >= SQUAD_REREAD (60)% AND context >= floor, OR
+      context >= SQUAD_MAIN_FLOOR (150000) AND (weighted burn >= SQUAD_MAIN_BURN (15000000)
+      OR hours of work >= SQUAD_MAIN_AGE (28800 s; a gap over 30 min between turns is left out))
       (reread = 0.1*cache-read / weighted burn, the cockpit's REREAD %; minimum floor 2*CTX_BASE)
   The floor weighs the burn: SQUAD_REREAD_FLOOR (50)% of the window once the burn
   has reached SQUAD_BURN_FULL (50)% of the session budget (CLAUDE_SESSION_BUDGET,
@@ -242,6 +244,12 @@ BURN_WARN = env_int("SQUAD_SUB_BURN", 2_000_000)
 MAIN_WARN = env_int("SQUAD_CTX_WARN", 0)         # 0 = no absolute threshold; only the % of the window applies
 MAIN_HANDOFF = env_int("SQUAD_CTX_HANDOFF", 0)
 MAIN_CEIL = env_int("SQUAD_CTX_CEILING", 800_000)
+# A long session can stay below the context line for days. Above a floor of context, where a fresh
+# session would not be dearer, accumulated burn and hours of work bring the handoff forward.
+MAIN_BURN = env_int("SQUAD_MAIN_BURN", 15_000_000)
+MAIN_AGE = env_int("SQUAD_MAIN_AGE", 8 * 3600)
+MAIN_FLOOR = env_int("SQUAD_MAIN_FLOOR", 150_000)
+ACTIVE_GAP = 1800      # seconds between two measurements that still count as work
 MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 90), 10), 100)       # % of the window at which the handoff goes out regardless
 MAX_SUBS = env_int("SQUAD_MAX_SUBS", 60)
 MAX_ORCH = env_int("SQUAD_MAX_ORCH", 6)
@@ -572,6 +580,19 @@ def main_window(session, client="claude"):
 def figures(c, ctx):
     pay = f"a new session pays for itself in {c['payback']:g} turn(s)" if c["payback"] else "no gain from restarting"
     return (f"reread {c['share']:.0%}, each turn rereads {k(c['toll'])} weighted tokens, {pay}")
+
+
+def handoff_reason(ctx, due, burn, age):
+    """Why the main session hands off now, or "" when it does not. due: the context rules already fired."""
+    if due:
+        return "context"
+    if ctx < MAIN_FLOOR:
+        return ""
+    if burn >= MAIN_BURN:
+        return f"burn {k(burn)} weighted >= {k(MAIN_BURN)}"
+    if age >= MAIN_AGE:
+        return f"open {age / 3600:.1f} h of work >= {MAIN_AGE / 3600:g} h"
+    return ""
 
 
 def cx_share():
@@ -2147,7 +2168,13 @@ def post_tool(p):
             else:
                 # The decision is this arithmetic and nothing else: level 2 = handoff, level 1 = notice with no action.
                 pct = 100.0 * ctx / window
-                level = (2 if (pct >= MAIN_PCT or c["due"] or (MAIN_HANDOFF and ctx >= MAIN_HANDOFF))
+                # hours of work, not of calendar: a gap over ACTIVE_GAP is a night or a weekend
+                gap = now - st.get("seen", now)
+                st["active"] = st.get("active", 0) + (gap if gap <= ACTIVE_GAP else 0)
+                st["seen"] = now
+                why = handoff_reason(ctx, pct >= MAIN_PCT or c["due"] or bool(MAIN_HANDOFF and ctx >= MAIN_HANDOFF),
+                                     c["burn"], st["active"])
+                level = (2 if why
                          else 1 if (ctx >= c["floor_min"] or (MAIN_WARN and ctx >= MAIN_WARN)) else 0)
                 # the level went up, or it keeps growing after the alert: reminds every 50k
                 again = level == 2 and ctx >= st.get("alert_ctx", 0) + 50_000
@@ -2156,7 +2183,7 @@ def post_tool(p):
                     if level == 2:
                         st.setdefault("alert_ts", now)
                     head = (f"context {k(ctx)}/{k(window)} ({pct:.0f}%), burn {c['burn_pct']:.0f}% of the "
-                            f"budget, {figures(c, ctx)}")
+                            f"budget, {figures(c, ctx)}" + (f", {why}" if why != "context" and level == 2 else ""))
                     if level == 2:
                         out.append(
                             f"[squad-watch] PROACTIVE HANDOFF — {head}. When you close the step in progress, without "

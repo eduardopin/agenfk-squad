@@ -480,6 +480,21 @@ def test_no_slot_reviewer_waits_for_the_slot_without_handoff():
     assert not st.get("ordered") and st["wait_slot"] is True
 
 
+def test_the_reviewer_cap_takes_the_fix_to_the_owner_never_shipping_the_defect():
+    h = home()
+    sid = "12345678-0035"
+    tr = session(h, sid, 100_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    env = {"SQUAD_MAX_REVIEWS": "2"}
+    call = {"tool_name": "Agent", "tool_input": {"subagent_type": "verifier", "prompt": "card ABC-1"}}
+    for _ in range(2):                                   # two reviewer rounds go through and are counted
+        assert "DISPATCH DENIED" not in dispatch(h, sid, tr, "verifier", env)
+        run(h, "PostToolUse", sid, tr, call, env)
+    out = dispatch(h, sid, tr, "verifier", env)          # the third is the cap
+    assert "DISPATCH DENIED" in out and "already been dispatched" in out, out
+    assert "split the card" in out and "Never propose merging with the defect" in out, out
+    assert "accept the risk" not in out, out
+
 def test_notice_ahead_of_the_brake_only_for_whoever_orchestrates():
     h = home()
     sid = "12345678-0006"

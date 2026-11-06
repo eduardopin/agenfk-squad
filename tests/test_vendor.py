@@ -3,7 +3,8 @@
 
 Self-checking: the exit code is the verdict. The install tests run on a temporary
 copy of the repository with a throwaway HOME and CLAUDE_CONFIG_DIR, and never
-touch ~/.claude.
+touch ~/.claude. Every copy, and the TMPDIR of every child, lives under one
+directory of the run, removed at the end; the last case proves it.
 
     python3 tests/test_vendor.py                          # the checks
     python3 tests/test_vendor.py --hash skills/vendor/X   # the sha256 to write in LOCK
@@ -339,7 +340,16 @@ if __name__ == "__main__":
             sys.exit(f"symlinks inside {sys.argv[2]}: {', '.join(links)}; replace them with the files they point to")
         print(digest)
         sys.exit(0)
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok ", name)
+    # One temporary directory per run: every mkdtemp above, and the TMPDIR of every child, lands in
+    # it. Without it each run left copies of the repository in /tmp.
+    RUN_TMP = tempfile.mkdtemp(prefix="vendor-run-")
+    tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+    try:
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+                print("ok ", name)
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
+    print("ok  nothing is left in the temporary directory after the run")

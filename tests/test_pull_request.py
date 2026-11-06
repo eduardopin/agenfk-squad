@@ -4,9 +4,11 @@
 Self-checking: the exit code is the verdict. Throwaway git repositories, a
 throwaway HOME and a fake `gh` at the front of PATH: nothing goes out to the
 network and nothing touches ~/.claude. It does not depend on the `writing` skill.
+All of it lives under one temporary directory of the run, removed at the end.
 
     python3 tests/test_pull_request.py
 """
+import atexit
 import json
 import os
 import shutil
@@ -31,6 +33,13 @@ CHECK = os.path.join(SKILL, "scripts", "pr_check.py")
 sys.path.insert(0, os.path.join(SKILL, "scripts"))
 import pr_check  # noqa: E402
 import review_comments  # noqa: E402
+
+# One temporary directory per run: FAKE_BIN, every repository and HOME below, and the TMPDIR of every
+# child (the hook, the scripts, git) land in it, and it is removed at exit; the last case proves it is
+# gone. Without it each run left about 160 pr-* directories in /tmp.
+RUN_TMP = tempfile.mkdtemp(prefix="pr-run-")
+tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+atexit.register(shutil.rmtree, RUN_TMP, True)
 
 # A fake `gh`: prints the file named in FAKE_GH_OUT, or fails as if not logged in.
 FAKE_BIN = tempfile.mkdtemp(prefix="pr-fakebin-")
@@ -1035,3 +1044,6 @@ if __name__ == "__main__":
                 print("ok ", name)
     finally:
         shutil.rmtree(FAKE_BIN, ignore_errors=True)
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
+    print("ok  nothing is left in the temporary directory after the run")

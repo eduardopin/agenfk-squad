@@ -3,7 +3,9 @@
 
 Self-checking: the exit code is the verdict. Runs in a throwaway HOME, with a
 fake `agenfk` and a fake `gh` on a PATH that holds only them and `git`, and
-never touches ~/.claude or the network.
+never touches ~/.claude or the network. Every throwaway directory, and the
+TMPDIR of every child, lives under one directory of the run, removed at the
+end; the last case proves nothing is left.
 
     python3 tests/test_heartbeat.py
 """
@@ -57,7 +59,9 @@ class World:
     """A HOME, a repository with a GitHub remote, a board and a PR list, all fresh."""
 
     def __init__(self, tools=("agenfk", "gh")):
-        self.root = tempfile.mkdtemp(prefix="heartbeat-")
+        # short names here and for the run directory below: some cases print a path inside a line cut at
+        # 80 characters and compare it whole, and the paths must fit in it under a long TMPDIR too
+        self.root = tempfile.mkdtemp(prefix="hb-")
         self.home = os.path.join(self.root, "home")
         self.bin = os.path.join(self.root, "bin")
         self.fix = os.path.join(self.root, "fixtures")
@@ -97,7 +101,7 @@ class World:
                 json.dump(getattr(self, name), fh)
 
     def run(self, *args, env=None):
-        e = {"HOME": self.home, "PATH": self.bin, "LANG": "C.UTF-8"}
+        e = {"HOME": self.home, "PATH": self.bin, "LANG": "C.UTF-8", "TMPDIR": tempfile.gettempdir()}
         e.update(env or {})
         r = subprocess.run([sys.executable, SCRIPT, *args], cwd=self.root, capture_output=True, text=True,
                            env=e, timeout=60)
@@ -654,7 +658,16 @@ def test_help_and_bad_hours():
 
 
 if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok ", name)
+    # One temporary directory per run: every mkdtemp above, and the TMPDIR of every child, lands in
+    # it. Without it each run left a World and a HOME per case in /tmp.
+    RUN_TMP = tempfile.mkdtemp(prefix="hb-")
+    tempfile.tempdir = os.environ["TMPDIR"] = RUN_TMP
+    try:
+        for name, fn in sorted(globals().items()):
+            if name.startswith("test_") and callable(fn):
+                fn()
+                print("ok ", name)
+    finally:
+        shutil.rmtree(RUN_TMP, ignore_errors=True)
+    assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
+    print("ok  nothing is left in the temporary directory after the run")

@@ -32,7 +32,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
    dispatching two or more agents in the same repo, `github` delivers the map
    (session → worktree → branch → card), the table of fronts and the path of each
    worktree. One `developer`/`frontend` per card, in the same message, each
-   in its own worktree. Ceiling ~6 fronts. Same file in two fronts = run them in series.
+   in its own worktree. Ceiling ~6 fronts. Same file in two fronts, or the same Terraform state in two fronts = run them in series.
    Parallel is the default: the watcher orders FAN OUT for a goal with 2+ open cards and nothing running.
 4. **Whoever writes does not approve.** REVIEW, ADVERSARIAL and VERIFY go to the
    `verifier` in a clean context: pass the card and the branch, not the
@@ -147,6 +147,10 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
     after the colon, never a `<placeholder>`). The watcher
     refuses any other stop while the delivery is open (docs/watcher.md, "Carrying
     a delivery to the end").
+14. **Production is read-only for every agent** unless the owner asks in
+    writing. Agents work with read-only credentials, and in doubt about the
+    environment they pick staging. A plan is shown before any apply, and the
+    apply is the owner's.
 
 ## Response modes
 

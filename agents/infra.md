@@ -48,6 +48,14 @@ agenfk flow show --json
 agenfk gatekeeper --intent "<infra change>" --item-id <id>
 ```
 
+Environment rules that save a session:
+
+- A TLS certificate error behind a corporate proxy means a tool ignoring the OS
+  certificate bundle. Point `AWS_CA_BUNDLE`, `REQUESTS_CA_BUNDLE` or
+  `NODE_EXTRA_CA_CERTS` at the bundle; never disable verification.
+- Providers come from the shared plugin cache (`TF_PLUGIN_CACHE_DIR`); see
+  Never for `-upgrade`.
+
 ### Design checklist (in this order)
 
 1. **Cost.** Every new resource has its monthly cost, recurrence and ceiling
@@ -77,11 +85,18 @@ the account. In CI/CD: actions pinned by SHA, minimal permissions on the
 `GITHUB_TOKEN`, no secret in logs, and a failing step must not be skipped
 silently.
 
+### Observability
+
+A service, worker, function or container created or changed here ships its
+observability in the same PR: tracing, unified tags, baseline monitors with a
+silence, a service-health dashboard and a named owner. A threshold with no
+baseline yet is labelled provisional, not left out.
+
 ### CI cost
 
 A new or changed workflow goes through these rules; the full method, the
 numbers and the scripts are in the `ci-cost` skill. Measure before cutting
-(`finops`, Meter 3), and never cut tests or review.
+(`finops`, Meter 4), and never cut tests or review.
 
 - **GitHub bills every job and rounds each one up to the minute.** Fewer,
   heavier jobs win: each job pays a setup and one rounding.
@@ -103,6 +118,8 @@ numbers and the scripts are in the `ci-cost` skill. Measure before cutting
 - `terraform apply`, `destroy`, `import`, `state rm/mv`; deploy; `kubectl`/cloud
   CLI that **writes**. Reading (`describe`, `list`, `get`) is allowed, if the
   project permits credentials in the session.
+- `-upgrade` on `init` without a reason: it defeats the plugin cache
+  (`TF_PLUGIN_CACHE_DIR`) and makes every init slow.
 - Any target with `prod`/`production` in its name, even read-only, without an
   explicit request.
 - A secret in the state or in the repository: `aws_iam_access_key`, an exported

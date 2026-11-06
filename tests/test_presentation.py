@@ -342,6 +342,10 @@ esac
 FAKE_CHROME = r"""#!/usr/bin/env bash
 log="@LOG@"
 printf '%s\n' "$@" >> "$log"
+# What the real Chrome does: scratch in the temp directory it was started with,
+# outside its profile (a socket dir; on Windows a <uuid>.tmp file).
+t=$(cygpath -u "${TMPDIR:-/tmp}")
+mkdir "$t/.com.google.Chrome.$$" && : > "$t/$$.tmp" && echo "scratch" >> "$log"
 for a in "$@"; do
   case "$a" in
     file://*) u=${a#file://}; case "$u" in /[A-Za-z]:*) u=${u#/} ;; esac
@@ -384,8 +388,16 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
             out = os.path.join(tmp, "out")
             shutil.rmtree(out, ignore_errors=True)
             pdf, pngs = os.path.join(out, "deck.pdf"), os.path.join(out, "png")
-            r = export(TEMPLATE, "--pdf", pdf, "--png-dir", pngs, *chrome_arg, env=env)
+            # The run's own temp directory: it must come out empty, whatever Chrome wrote to it.
+            scratch = os.path.join(tmp, "scratch")
+            shutil.rmtree(scratch, ignore_errors=True)
+            os.makedirs(scratch)
+            r = export(TEMPLATE, "--pdf", pdf, "--png-dir", pngs, *chrome_arg,
+                       env={**(env or {}), "TMPDIR": scratch, "TEMP": scratch, "TMP": scratch})
             assert r.returncode == 0, said(r)
+            assert os.listdir(scratch) == [], f"the export left {os.listdir(scratch)} in its TMPDIR"
+            assert read(log).splitlines().count("scratch") == len(ids) + 2, \
+                "the fake Chrome did not write its scratch, so the check above proves nothing"
             assert pages(pdf) == len(ids) and len(os.listdir(pngs)) == len(ids), said(r)
             lines = read(log).splitlines()
             urls = [a for a in lines if a.startswith("file:")]
@@ -498,12 +510,17 @@ addEventListener("load", function(){
 @needs_chrome
 def test_any_arrow_changes_slide_and_the_rails_agree():
     tmp = tempfile.mkdtemp(prefix="presentation-")
+    scratch = None
     try:
         deck = variant(tmp, "probe.html", lambda h: h.replace("</body>", KEY_PROBE + "</body>"))
+        # Chrome writes scratch into its temp directory too, so it gets one of its own, removed below.
+        # Short on purpose: its unix socket path must stay under about 100 characters.
+        scratch = tempfile.mkdtemp(prefix="c-")
         r = subprocess.run([chrome(), "--headless", "--disable-gpu", "--no-first-run",
                             f"--user-data-dir={tmp}/profile", "--window-size=1440,830",
                             "--virtual-time-budget=5000", "--dump-dom", pathlib.Path(deck).as_uri() + "#2"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                           env={**os.environ, "TMPDIR": scratch, "TEMP": scratch, "TMP": scratch})
         m = re.search(r"<pre id=\"probe\">PROBE (.*?) END</pre>", r.stdout)
         assert m, "the probe did not run: " + r.stdout[-300:]
         n = len(slides(read(TEMPLATE)))
@@ -518,6 +535,8 @@ def test_any_arrow_changes_slide_and_the_rails_agree():
         assert got == expected, "\n".join(f"{a} != {b}" for a, b in zip(got, expected) if a != b) or got
     finally:
         shutil.rmtree(tmp)
+        if scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 @needs_chrome

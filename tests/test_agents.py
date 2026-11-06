@@ -202,6 +202,29 @@ def test_the_verifier_stays_without_a_mutation_round():
     assert "mutation" not in flat(read_agent("verifier"))
 
 
+SONNET = ("context", "developer", "finops", "github", "product", "tester", "verifier")
+
+
+def frontmatter_model(name):
+    match = re.search(r"^model:\s*(\S+)", read_agent(name), re.M)
+    return match.group(1) if match else None
+
+
+def test_supporting_agents_run_on_sonnet():
+    # A fan-out of supporting agents billed at the orchestrator's model was the
+    # largest line in the private squad's token report; they run on Sonnet there.
+    wrong = {name: frontmatter_model(name) for name in SONNET if frontmatter_model(name) != "sonnet"}
+    assert not wrong, wrong
+
+
+def test_the_readme_model_column_matches_the_frontmatter():
+    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    for name in SONNET:
+        row = re.search(r"^\| `" + name + r"` \|.*\| (\w+) \|$", readme, re.M)
+        assert row, name
+        assert row.group(1).lower() == frontmatter_model(name), (name, row.group(1))
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

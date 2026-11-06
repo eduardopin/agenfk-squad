@@ -496,6 +496,73 @@ def test_the_reviewer_cap_takes_the_fix_to_the_owner_never_shipping_the_defect()
     assert "split the card" in out and "Never propose merging with the defect" in out, out
     assert "accept the risk" not in out, out
 
+def meminfo(h, total_kb, avail_kb, name="meminfo"):
+    """A fake /proc/meminfo for SQUAD_MEMINFO."""
+    path = os.path.join(h, name)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(f"MemTotal:       {total_kb} kB\nMemFree:         1 kB\nMemAvailable:   {avail_kb} kB\n"
+                 "Buffers:           10 kB\n")
+    return path
+
+
+def mem_session(h, sid):
+    tr = session(h, sid, 100_000, 0.0)
+    run(h, "PostToolUse", sid, tr)
+    return tr
+
+
+def test_memory_below_the_ceiling_lets_the_dispatch_through():
+    h = home()
+    tr = mem_session(h, "12345678-0071")
+    env = {"SQUAD_MEM_CEILING": "90", "SQUAD_MEMINFO": meminfo(h, 1000, 200)}    # 80% in use
+    assert "DISPATCH DENIED" not in dispatch(h, "12345678-0071", tr, env=env)
+
+
+def test_memory_at_or_above_the_ceiling_denies_the_dispatch_and_names_the_reading():
+    h = home()
+    tr = mem_session(h, "12345678-0072")
+    at = {"SQUAD_MEM_CEILING": "90", "SQUAD_MEMINFO": meminfo(h, 1000, 100)}      # exactly 90%
+    out = dispatch(h, "12345678-0072", tr, env=at)
+    assert "DISPATCH DENIED" in out and "memory" in out and "90%" in out, out
+    above = {"SQUAD_MEM_CEILING": "90", "SQUAD_MEMINFO": meminfo(h, 1000, 50)}    # 95%
+    out = dispatch(h, "12345678-0072", tr, env=above)
+    assert "DISPATCH DENIED" in out and "95%" in out and "ceiling 90%" in out, out
+    task = said(run(h, "PreToolUse", "12345678-0072", tr, {
+        "tool_name": "Task", "tool_input": {"subagent_type": "developer", "prompt": "card ABC-1"}}, above))
+    assert "DISPATCH DENIED" in task and "memory" in task, task
+
+
+def test_memory_ceiling_zero_is_off_even_on_a_full_machine():
+    h = home()
+    tr = mem_session(h, "12345678-0073")
+    full = meminfo(h, 1000, 0)
+    assert "DISPATCH DENIED" not in dispatch(h, "12345678-0073", tr, env={"SQUAD_MEMINFO": full})
+    assert "DISPATCH DENIED" not in dispatch(h, "12345678-0073", tr, env={
+        "SQUAD_MEM_CEILING": "0", "SQUAD_MEMINFO": full})
+
+
+def test_unreadable_meminfo_never_denies():
+    h = home()
+    tr = mem_session(h, "12345678-0074")
+    bad = os.path.join(h, "garbled")
+    with open(bad, "w", encoding="utf-8") as fh:
+        fh.write("MemTotal: lots kB\nMemAvailable: none\n")
+    empty = os.path.join(h, "empty")
+    open(empty, "w", encoding="utf-8").close()
+    for path in (os.path.join(h, "missing"), bad, empty):
+        env = {"SQUAD_MEM_CEILING": "1", "SQUAD_MEMINFO": path}
+        assert "DISPATCH DENIED" not in dispatch(h, "12345678-0074", tr, env=env), path
+
+
+def test_memory_ceiling_leaves_other_tools_alone():
+    h = home()
+    tr = mem_session(h, "12345678-0075")
+    env = {"SQUAD_MEM_CEILING": "50", "SQUAD_MEMINFO": meminfo(h, 1000, 10)}
+    for tool, args in (("Bash", {"command": "ls"}), ("Read", {"file_path": "/etc/hostname"})):
+        out = said(run(h, "PreToolUse", "12345678-0075", tr, {"tool_name": tool, "tool_input": args}, env))
+        assert "DISPATCH DENIED" not in out, (tool, out)
+
+
 def test_notice_ahead_of_the_brake_only_for_whoever_orchestrates():
     h = home()
     sid = "12345678-0006"

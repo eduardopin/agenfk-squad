@@ -360,6 +360,69 @@ def test_cli_write_auto_failing_to_write_is_one_line_not_a_traceback():
     assert out.stderr.startswith("handoff.py:") and out.stdout == "", (out.stdout, out.stderr)
 
 
+def test_a_date_in_the_file_name_is_not_a_session():
+    h = home()
+    d = hdir(h)
+    a = put(os.path.join(d, "20261104-141330-a.md"), "# Handoff: a\n")
+    b = put(os.path.join(d, "20261104-194930-b.md"), "# Handoff: b\n")
+    m = lib()
+    assert m.handoff_session(a) == ""
+    m.claim(a, NEXT)
+    r = m.check(b, ME)
+    assert r["status"] == "current" and r["picked_by"] == [] and r["newest"] is None
+
+
+def test_a_sealed_copy_name_still_gives_its_session():
+    h = home()
+    m = lib()
+    p = put(os.path.join(m.COPIES, f"{OLD}-0123456789ab.md"), "# Handoff: x\n")
+    assert m.handoff_session(p) == OLD
+
+
+def test_a_symlinked_handoff_is_unreadable():
+    h = home()
+    d = hdir(h)
+    real = handoff(os.path.join(h, "outside.md"), OLD)
+    link = os.path.join(d, "20261026-000000-x.md")
+    os.makedirs(d, exist_ok=True)
+    os.symlink(real, link)
+    r = lib().check(link, ME)
+    assert r["status"] == "unreadable", r
+
+
+def test_a_symlinked_candidate_is_never_the_successor():
+    h = home()
+    d = hdir(h)
+    p = handoff(os.path.join(d, "1.md"), OLD, mtime=time.time() - 600)
+    real = handoff(os.path.join(h, "outside.md"), OLD)
+    os.symlink(real, os.path.join(d, "2.md"))
+    assert lib().check(p, ME)["status"] == "current"
+
+
+def test_pi_session_id_is_the_fallback_session():
+    h = home()
+    p = handoff(os.path.join(hdir(h), "20261024-231046-x.md"), OLD)
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CODE_SESSION_ID"}
+    env.update(HOME=h, USERPROFILE=h, PI_SESSION_ID=ME)
+    out = subprocess.run([sys.executable, "-I", LIB, "claim", p], env=env,
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert ME[:8] in read(os.path.join(h, ".claude", "squad", "pickups.log"))
+    facts = subprocess.run([sys.executable, "-I", LIB, "facts"], env=env,
+                           capture_output=True, text=True)
+    assert json.loads(facts.stdout)["session"] == ME
+
+
+def test_auto_handoff_names_an_unknown_transcript_shape():
+    h = home()
+    t = transcript(os.path.join(h, "pi.jsonl"),
+                   [{"type": "message", "message": {"role": "user", "content": "hi"}}])
+    path, _ = lib().write_auto(ME, t, h)
+    text = read(path)
+    assert "UNKNOWN" in text and "not a Claude Code transcript" in text
+    assert "> (none)" not in text
+
+
 # ---------------------------------------------------------------- git
 def test_git_facts_do_not_run_the_repository_fsmonitor():
     h = home()
@@ -380,11 +443,12 @@ def test_git_runs_without_optional_locks_or_system_config():
         seen["cmd"], seen["env"] = cmd, kw.get("env") or {}
         raise OSError
 
+    real = subprocess.run
     m.subprocess.run = fake
     try:
         m.run("/x", "status")
     finally:
-        m.subprocess.run = subprocess.run
+        m.subprocess.run = real
     assert "--no-optional-locks" in seen["cmd"] and seen["env"].get("GIT_CONFIG_NOSYSTEM") == "1"
 
 

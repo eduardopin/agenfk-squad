@@ -194,7 +194,7 @@ what is missing, with a short brief, in a new sub-session. One redispatch.
 
 ## The dispatch brake
 
-Before any `Agent` or `Task` call from a main session, the watcher checks four
+Before any `Agent` or `Task` call from a main session, the watcher checks five
 ceilings:
 
 | Ceiling | Variable | Default |
@@ -203,13 +203,14 @@ ceilings:
 | Sub-sessions spawned by this session | `SQUAD_MAX_SUBS` | 60 |
 | Sessions orchestrating at the same time, per repository | `SQUAD_MAX_ORCH` | 6 |
 | Reviewer dispatches for the same card | `SQUAD_MAX_REVIEWS` | 6 (the 7th is denied) |
+| Host memory in use, percent | `SQUAD_MEM_CEILING` | 0 (off) |
 
 A session counts as orchestrating while it has a sub-session with activity in
 the last ten minutes. A dispatch counts as a reviewer when the agent type or
 description matches review, verify, security, audit or adversarial; the card
 is recognised by its id in the brief.
 
-A `DISPATCH DENIED` always says where the work continues. There are four exits:
+A `DISPATCH DENIED` always says where the work continues. There are five exits:
 
 | Situation | Exit | What the session does |
 |---|---|---|
@@ -217,6 +218,7 @@ A `DISPATCH DENIED` always says where the work continues. There are four exits:
 | No orchestrator slot, implementation, context < `SQUAD_ORCH_HERE` (500k) | **Do it right here** | Implements the card in the main session, without an agent and without a handoff. This is the one authorised exception to the dispatch rule. The review still belongs to the `verifier`. |
 | No orchestrator slot, implementation, context ≥ `SQUAD_ORCH_HERE` | **Handoff with the plan** | As above; the fresh session, with a clean context, implements directly. |
 | No orchestrator slot, reviewer | **Wait for the slot** | Carries on with whatever does not depend on the verdict. The watcher sends `SLOT FREE` when a slot opens. The session never approves its own code. |
+| Memory at the ceiling | **Wait** | Lets the running agents finish, or asks the owner to free memory, then dispatches again. No handoff: the plan does not change. |
 | Seventh reviewer on the same card | **Owner's decision on how to fix** | Comments on the card with what keeps failing and takes the choice of how to fix it (another approach, or split the card) to the owner; never whether to ship with the defect. |
 
 The session must not work around a denial with another tool or another agent

@@ -131,6 +131,8 @@ denial after 3 identical calls in a row.
 | `SQUAD_MAX_ORCH` | 6 | Sessions that may orchestrate sub-agents at the same time, across the machine |
 | `SQUAD_ORCH_HERE` | 500,000 | With no orchestrator slot: below this context the card is implemented in the session itself; at or above it, handoff with the plan |
 | `SQUAD_MAX_REVIEWS` | 6 | Reviewer dispatches allowed for the same card. The next one is denied |
+| `SQUAD_MEM_CEILING` | 0 (off) | Percent of host memory in use (MemTotal minus MemAvailable) at or above which a new dispatch is denied. The denial names the reading and the ceiling |
+| `SQUAD_MEMINFO` | `/proc/meminfo` | File the memory reading comes from. A missing or malformed file never denies |
 
 ## The review gate
 

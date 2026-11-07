@@ -67,7 +67,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
      brief. Read the return handoff, check in git what actually got done and
      dispatch only what is MISSING, with a short brief, in a new sub-session. 1 redispatch.
    - **DISPATCH DENIED** (orchestrator context ≥ 800k, 60 sub-sessions in the
-     session, 6 sessions orchestrating at the same time, 7th reviewer on the same card):
+     session, 6 sessions orchestrating at the same time, host memory at `SQUAD_MEM_CEILING` when set,
+     7th reviewer on the same card):
      do not work around it with another tool or another agent type, and do not
      repeat the dispatch. The denial says where the work continues; do what
      it says:
@@ -81,6 +82,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
        dispatch rule; the review still belongs to the `verifier`.
      - *no reviewer slot*: carry on with whatever does not depend on the verdict and dispatch
        when `SLOT FREE` arrives. Never approve your own code.
+     - *memory at the ceiling*: dispatch nothing; let the running agents finish or ask the owner
+       to free memory, then dispatch again. No handoff.
      - *7th reviewer*: comment on the card and take the choice of how to fix it (another approach,
        split the card) to the owner; never propose shipping with the defect.
      The stop is soft: only the new dispatch is denied, the task in progress finishes.

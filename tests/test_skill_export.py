@@ -152,6 +152,8 @@ def test_account_ids_guids_and_sso_instance_become_placeholders():
         for leaked in (ACCOUNT_A, ACCOUNT_B, FAKE_GUID, "ssoins-0123"):
             assert leaked not in text, leaked
         assert DATADOG_LAYER_ACCOUNT in text and "<AWS_ACCOUNT_ID>" in text
+        with zipfile.ZipFile(out / "skills" / "deploy.zip") as z:
+            assert frontmatter_of(z, "deploy")["description"] == "Deploy to [AWS_ACCOUNT_ID]"
         assert manifest(out)[0]["redacted"] == {"aws-account-id": 2, "guid": 1, "sso-instance": 1}
         assert (out / "INSTALL.md").is_file()
 
@@ -409,6 +411,58 @@ def test_a_skill_skipped_on_a_rerun_leaves_no_old_zip_behind():
         r, out = run(tmp, src)
         assert r.returncode == 1, r.stderr
         assert not (out / "skills" / "later-bad.zip").exists()
+
+
+def test_no_angle_bracket_survives_a_redacted_description():
+    with workdir() as tmp:
+        src = tmp / "src"
+        skill(src, "acme", f"name: acme\ndescription: Acme Widgets in {ACCOUNT_B} for ops@corp.example",
+              body="Acme Widgets.\n")
+        r, out = run(tmp, src, "--redact-literal", "Acme Widgets", "--redact-email-domain", "corp.example")
+        assert r.returncode == 0, r.stderr
+        with zipfile.ZipFile(out / "skills" / "acme.zip") as z:
+            desc = frontmatter_of(z, "acme")["description"]
+        assert desc == "[REDACTED] in [AWS_ACCOUNT_ID] for [EMAIL]", desc
+        assert "<" not in desc and ">" not in desc
+
+
+def test_a_skill_md_that_is_not_utf8_skips_that_skill_only():
+    with workdir() as tmp:
+        src = tmp / "src"
+        skill(src, "good", "name: good\ndescription: Fine")
+        skill(src, "bad", "name: bad\ndescription: Fine")
+        (src / "bad" / "SKILL.md").write_bytes("---\nname: bad\ndescription: Caf\u00e9\n---\n".encode("latin-1"))
+        r, out = run(tmp, src)
+        assert r.returncode == 1 and "Traceback" not in r.stderr, r.stderr
+        rows = {x["name"]: x for x in manifest(out)}
+        assert any("not UTF-8" in e for e in rows["bad"]["errors"]), rows["bad"]
+        assert not (out / "skills" / "bad.zip").exists() and (out / "skills" / "good.zip").exists()
+        assert (out / "index.md").is_file() and (out / "INSTALL.md").is_file()
+
+
+def test_a_refused_skill_leaves_no_plugin_zip_from_an_earlier_run():
+    with workdir() as tmp:
+        src = tmp / "src"
+        skill(src, "later-bad", "name: later-bad\ndescription: Fine at first")
+        r, out = run(tmp, src)
+        plugin = out / "plugin" / "exported-skills.zip"
+        assert r.returncode == 0 and plugin.exists(), r.stderr
+        (src / "later-bad" / "notes.md").write_text("key " + "AKIA" + "ABCDEFGHIJKLMNOP\n", encoding="utf-8")
+        r, out = run(tmp, src)
+        assert r.returncode == 1 and not plugin.exists(), r.stderr
+
+
+def test_a_skill_the_org_starts_delivering_loses_its_old_zip():
+    with workdir() as tmp:
+        src = tmp / "src"
+        skill(src, "synced-later", "name: synced-later\ndescription: Fine")
+        r, out = run(tmp, src)
+        assert (out / "skills" / "synced-later.zip").exists(), r.stderr
+        org = tmp / "org.json"
+        org.write_text(json.dumps({"skills": [{"name": "synced-later"}]}), encoding="utf-8")
+        r2, out = run(tmp, src, "--org-manifest", str(org))
+        assert r2.returncode == 0, r2.stderr
+        assert not (out / "skills" / "synced-later.zip").exists(), r2.stdout
 
 
 if __name__ == "__main__":

@@ -338,6 +338,9 @@ def write_zip(path, entries):
 
 
 def skill_entries(name, skill_dir, fm, body, counts, rules):
+    # Redact the description before chat_safe: a placeholder written first would come back as <PLACEHOLDER>.
+    if isinstance(fm.get("description"), str):
+        fm = {**fm, "description": redact(fm["description"], counts, rules)}
     head = dump_frontmatter(normalize(fm))
     yield f"{name}/SKILL.md", redact(f"---\n{head}---\n{body}", counts, rules).encode("utf-8")
     for rel, p in files_of(skill_dir):
@@ -358,18 +361,28 @@ def safe_extract(tar, dest):
     tar.extractall(dest)
 
 
+GIT_TIMEOUT = 60
+
+
 def git_source(repo, ref, subdir, tmp):
     """The committed content at a git ref, untouched by local edits."""
     # A value shaped like an option would reach git as one (--output= writes outside --out).
     for label, value in (("--git-ref", ref), ("--git-subdir", subdir)):
         if not value or value.startswith("-"):
             sys.exit(f"{label} {value!r} is not a ref or path: it may not start with '-'")
-    r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--end-of-options", ref + "^{commit}"],
-                       capture_output=True, text=True, encoding="utf-8")
+    try:
+        r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--end-of-options", ref + "^{commit}"],
+                           capture_output=True, text=True, encoding="utf-8", timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        sys.exit(f"git rev-parse of {ref} in {repo} timed out after {GIT_TIMEOUT}s")
     sha = r.stdout.strip() if r.returncode == 0 else None
     if not sha:
         sys.exit(f"cannot resolve {ref} in {repo}; run git fetch there first")
-    a = subprocess.run(["git", "-C", str(repo), "archive", sha, "--", subdir], capture_output=True)
+    try:
+        a = subprocess.run(["git", "-C", str(repo), "archive", sha, "--", subdir], capture_output=True,
+                           timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        sys.exit(f"git archive of {subdir} at {ref} in {repo} timed out after {GIT_TIMEOUT}s")
     if a.returncode != 0:
         sys.exit(f"git archive of {subdir} at {ref} failed: {a.stderr.decode('utf-8', 'replace').strip()}")
     tar = a.stdout
@@ -438,10 +451,18 @@ def main(argv=None):
             if s["name"] in delivered:
                 manifest.append({"name": s["name"], "source": s["source"], "shadowed": s["shadowed"],
                                  "warnings": [], "errors": [], "status": "already delivered by claude.ai"})
+                (out / "skills" / f"{s['name']}.zip").unlink(missing_ok=True)
                 continue
-            text = (s["dir"] / "SKILL.md").read_text(encoding="utf-8")
+            try:
+                text = (s["dir"] / "SKILL.md").read_bytes().decode("utf-8")
+            except UnicodeDecodeError:
+                text, read_error = "", "SKILL.md is not UTF-8 text"
+            except OSError as e:
+                text, read_error = "", f"SKILL.md cannot be read: {e}"
+            else:
+                read_error = None
             fm, body = split_frontmatter(text)
-            errors = validate(s["name"], fm)
+            errors = [read_error] if read_error else validate(s["name"], fm)
             scan_errors, warnings, undecodable = scan(s["dir"])
             row = {"name": s["name"], "source": s["source"], "shadowed": s["shadowed"],
                    "warnings": warnings, "errors": errors + scan_errors}
@@ -477,13 +498,15 @@ def main(argv=None):
             manifest.append(row)
 
     exported = [r for r in manifest if "zip" in r]
+    ppath = out / "plugin" / f"{args.plugin_name}.zip"
+    ppath.unlink(missing_ok=True)  # never leave the zip of an earlier run beside a manifest that no longer lists it
     if exported:
         pj = {"name": args.plugin_name, "version": date.today().strftime("%Y.%m.%d"),
               "description": f"{len(exported)} skills for chat users, exported from Claude Code"}
-        ppath = out / "plugin" / f"{args.plugin_name}.zip"
         write_zip(ppath, [(".claude-plugin/plugin.json", json.dumps(pj, indent=2).encode("utf-8"))] + plugin_entries)
         if ppath.stat().st_size > PLUGIN_LIMIT:
             print(f"ERROR {ppath} exceeds the 50 MB plugin limit; split it with --only", file=sys.stderr)
+            ppath.unlink()
             skipped += 1
 
     out.mkdir(parents=True, exist_ok=True)

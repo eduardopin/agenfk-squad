@@ -201,13 +201,13 @@ applicable.
 - Every gesture (swipe, long-press, pinch, drag) has a visible alternative that
   works with assistive technology.
 - Stay clear of system back: the left screen edge on iOS, and predictive back on
-  Android, which is on by default for apps targeting API 36.
+  Android, which is on by default for apps targeting API 36 (as of 2026-10; an opt-out exists, check the current behaviour-changes page).
 - Reordering by drag has a visible handle and "Move up" and "Move down" actions.
 
 ## Tablet, foldable and landscape
 
-- On Android 16, apps targeting API 36 can no longer lock orientation or
-  resizability on screens of 600 dp and wider. Build adaptive layouts such as
+- On Android 16, apps targeting API 36 are expected to ignore orientation and
+  resizability locks on screens of 600 dp and wider (as of 2026-10; an opt-out exists for API 36, check the current behaviour-changes page). Build adaptive layouts such as
   list and detail, or columns, rather than forcing portrait.
 - On the web, test landscape and tablet widths. They expose over-long lines and
   bars that eat the usable height.
@@ -224,4 +224,4 @@ applicable.
 
 ## Origin
 
-Written for this skill from the public sources linked in this file.
+Adapted from Mobile Design Studio (MIT; see NOTICE) and rewritten for this skill. Platform figures follow that source and are not re-verified.

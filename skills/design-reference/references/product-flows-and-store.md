@@ -3,7 +3,7 @@
 These are the flows where people drop out and where store review rejects apps.
 Component measurements are in `references/mobile-patterns.md`. Store rules move,
 so read the current guideline before claiming compliance and note the date you
-checked. The sources at the end were consulted in October 2026.
+checked. The source list at the end was carried from the upstream list dated 2026-10-23 and has not been re-checked.
 
 ## Contents
 
@@ -38,7 +38,7 @@ checked. The sources at the end were consulted in October 2026.
 |---|---|
 | Passkey (first choice when you control the backend) | iOS: AuthenticationServices, `ASAuthorizationController`. Android: Credential Manager. Web: WebAuthn, with `autocomplete="username webauthn"` for conditional autofill. Suggest creating one right after a successful sign-in, with a single sentence on the benefit |
 | Social login | An iOS app that offers a third-party login must also offer an equivalent option that limits data collection and hides the email; Sign in with Apple qualifies (App Review 4.8). Follow each provider's button rules |
-| One-time code by SMS or email | Web: `autocomplete="one-time-code"`, `inputmode="numeric"`. iOS: `.oneTimeCode`. Android: SMS Retriever or User Consent; apps targeting API 37 that read the inbox get the code delayed by about three hours. Use one input, not six boxes, so paste and screen readers work; show a resend countdown and a way to change the number |
+| One-time code by SMS or email | Web: `autocomplete="one-time-code"`, `inputmode="numeric"`. iOS: `.oneTimeCode`. Android: SMS Retriever or User Consent; apps targeting API 37 that read the inbox may get the code delayed (Android 17 / API 37 behaviour change as of 2026-10; check the current behaviour-changes page). Use one input, not six boxes, so paste and screen readers work; show a resend countdown and a way to change the number |
 | Email and password | Show the rules before typing, offer a show-password toggle, set `current-password` or `new-password` (iOS `.password`, `.newPassword`) so the password manager can fill and generate |
 | Magic link | Fragile when the person switches apps on a phone; include the code in the same message |
 | Biometrics | Unlock an existing session (Face ID with a usage description; Android BiometricPrompt). It is never the only proof of identity, and it always has a passcode or password fallback |
@@ -74,8 +74,8 @@ checked. The sources at the end were consulted in October 2026.
   refusal, do not raise the system dialog again.
 - Skip the permission when a system picker does the job: photos (PHPicker on iOS,
   Photo Picker on Android), contacts, files, and nearby devices through a
-  mediated picker. Android 17 apps targeting API 37 need `ACCESS_LOCAL_NETWORK`
-  for local-network access, which a picker avoids.
+  mediated picker. Android 17 apps targeting API 37 may need `ACCESS_LOCAL_NETWORK`
+  for local-network access, which a picker avoids (Android 17 / API 37 behaviour change as of 2026-10; check the current behaviour-changes page).
 - Purpose strings (iOS `NS…UsageDescription`) state what the app does with the
   data in one concrete sentence, in the app's language. Boilerplate invites
   rejection.
@@ -163,15 +163,14 @@ checked. The sources at the end were consulted in October 2026.
 - Use a Live Activity (iOS) or an ongoing notification (Android) only for
   something that ends, like a delivery, a ride or a match. Design the compact
   and expanded layouts and end it when the event does.
-- Android 17, API 37: a `RemoteViews` bitmap larger than roughly 1.5 times the
-  screen's width × height × 4 bytes crashes the process, so supply images at the
-  size they are shown.
+- A `RemoteViews` bitmap that is too large can crash the process, and Android 17
+  tightened the limit (Android 17 / API 37 behaviour change as of 2026-10; check the current behaviour-changes page). Supply images at the size they are shown.
 
 ## 10. Store assets
 
 | Store | Requirement (confirm in the console before exporting) |
 |---|---|
-| App Store | 6.9-inch iPhone screenshots, 1320×2868 or 1290×2796 portrait, from which smaller iPhone classes can be scaled; 13-inch iPad, 2064×2752 or 2048×2732, if the app runs on iPad; up to 10 per class and language; PNG or JPEG with no transparency. The icon is taken from the binary. A preview video is optional |
+| App Store | 6.9-inch iPhone screenshots, 1320×2868 or 1290×2796 portrait, from which smaller iPhone classes can be scaled; 13-inch iPad, 2064×2752 or 2048×2732, if the app runs on iPad; a per-class and per-language maximum (10 at last check); PNG or JPEG, no transparency at last check. The icon is taken from the binary. A preview video is optional |
 | Google Play | 2–8 screenshots per form factor, each side 320–3840 px with an aspect ratio no wider than 2:1; 1080×1920 is a good default; JPEG or 24-bit PNG with no alpha. A 1024×500 feature graphic is mandatory, as is a 512×512 icon |
 
 - **Content:** show the real UI of the submitted build with believable data in
@@ -200,7 +199,7 @@ checked. The sources at the end were consulted in October 2026.
 - Localise screenshots and captions per language and leave room for text 20–30%
   longer than English.
 - Feature graphic: the brand and one sentence, or nothing. Keep anything
-  important about 15% inside the edges, since Play can crop it or overlay a play
+  important well inside the edges (about 15% at last check), since Play can crop it or overlay a play
   button.
 
 ## 11. Forbidden deceptive patterns
@@ -222,7 +221,7 @@ skill, even if asked:
 If a request needs one of these, build the honest version and say why in one
 line.
 
-## Sources (consulted October 2026)
+## Sources (carried from the upstream list dated 2026-10-23, not re-checked)
 
 [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
 (3.1.2, 4.8, 5.1.1(v), 5.6.1) ·
@@ -239,4 +238,4 @@ line.
 
 ## Origin
 
-Written for this skill from the public sources linked in this file.
+Adapted from Mobile Design Studio (MIT; see NOTICE) and rewritten for this skill. Platform and store figures follow that source and are not re-verified.

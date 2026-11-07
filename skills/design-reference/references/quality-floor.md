@@ -6,8 +6,13 @@ item in here; your habit does not.
 
 ## A. Verify in the built result (Impeccable, craft floor)
 
-- **Contrast:** body and placeholder ≥ 4.5:1, large text ≥ 3:1. Secondary text
-  on a coloured surface tinted from the hue or from the foreground; never grey.
+- **Contrast:** body and placeholder ≥ 4.5:1, large text ≥ 3:1 (large means
+  24 px and up, or 18.7 px and up in bold). Measure the pair as composited
+  (transparency, image, state, both themes) and never round 4.49 up to 4.5.
+  Use 3:1 for control borders, action icons and focus indicators. Colour may
+  carry an error or a selection, but not as the only signal: pair it with
+  text, an icon or a shape. Secondary text on a coloured surface tinted from the hue
+  or from the foreground; never grey.
 - **Depth:** a shadow has an offset and a soft blur. A coloured halo with no
   offset is decoration.
 - **Space:** tight groups, generous separation, more space above a heading
@@ -147,8 +152,16 @@ easing.dev or easings.co.
 
 ## D. Mobile and native (UI/UX Pro Max)
 
-Target ≥ 44×44pt (Apple) / 48×48dp (Material), 8px between targets; no
-reliance on hover; press feedback (ripple / highlight); the platform's
+Target ≥ 44×44pt (Apple) / 48×48dp (Material), 8px between targets. The
+WCAG 2.2 AA floor is lower and has its own exceptions: 2.5.8 asks 24×24 CSS px
+on the web, and a smaller target still passes when its spacing leaves a 24px
+circle around it clear of every other target. Under 24×24 with no exception is
+a fail; between 24 and the platform policy is a warn to look at, not a WCAG
+failure. The full rule and the component measurements are in
+`references/mobile-patterns.md`; account, permission, billing and store flows
+are in `references/product-flows-and-store.md`.
+
+No reliance on hover; press feedback (ripple / highlight); the platform's
 standard gesture never redefined; a system gesture never blocked; the primary
 target away from the notch, the Dynamic Island and the gesture bar; swipe with
 a visible affordance; a movement threshold before starting a drag; Dynamic

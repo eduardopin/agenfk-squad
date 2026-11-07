@@ -129,24 +129,22 @@ To generate the complete system in DTCG + CSS/Tailwind: `sumi:tokens`.
 
 ### Product UI execution companion
 
-For native or responsive product UI, use the available `mobile-design-studio`
-skill as the **one** optional design companion: small implementation units,
-mobile ergonomics (touch targets, safe areas, keyboard, text scaling, back),
-state/recovery checks and platform evidence. `design-reference` remains the
-single design-direction source: reuse its approved brief, tokens and
-components; do not run a second branding/direction process or create
-duplicate token files. Read only the companion reference needed for the
-current unit. It is not the route for decks, art, posters or cloud diagrams;
-those keep their dedicated skills.
+For native or responsive product UI, work in small implementation units and
+read only the reference the current unit needs:
+`references/mobile-patterns.md` (measurements, target size, navigation, lists,
+forms, sheets, states, gestures) and `references/product-flows-and-store.md`
+(onboarding, sign-in and passkeys, account deletion, permissions,
+notifications, paywall, review prompt, store assets). `design-reference`
+remains the single design-direction source: reuse its approved brief, tokens
+and components; do not run a second branding or direction process or create
+duplicate token files. These references are not the route for decks, art,
+posters or cloud diagrams; those keep their dedicated skills.
 
-Resolve the companion's directory from the selected skill's original inventory
-path, never from a generated prompt cache or an assumed `~/.claude`
-installation. If the companion is absent or manual-only, do not advertise or
-auto-load it; continue with the project method. Project skills and mandatory
-platform/Figma prerequisites (e.g. the Expo overview, React Native and Figma
-design-to-code/use) still apply; they are not optional competing design
-directions. Keep the two-design-skill ceiling: this method plus one
-companion, never an extra Sumi/UI style stack.
+A mobile skill of the project's own, or a mandatory platform or Figma
+prerequisite (for example the Expo overview, React Native and Figma
+design-to-code/use), still applies and is not a competing design direction.
+Keep the two-design-skill ceiling: this method plus at most one such skill,
+never an extra Sumi/UI style stack.
 
 ## 5. Quality floor (verified in the result, not in the intention)
 
@@ -157,7 +155,9 @@ non-negotiable points:
   tinted from that surface's own hue, never grey.
 - Visible focus on everything interactive; never remove an outline without a
   replacement.
-- Touch target ≥ 44×44 (native) / 24×24 CSS px (web), 8px between targets.
+- Touch target ≥ 44×44 (native) / 48 (Android) as policy; on the web WCAG 2.5.8
+  fails below 24×24 CSS px unless the spacing exception holds, and 44–48 is the
+  comfort goal. 8px between targets (`references/mobile-patterns.md`).
 - `prefers-reduced-motion` respected; animation interruptible; nothing
   keyboard-initiated animates.
 - Responsive down to 320px with no horizontal scroll; safe areas in full-bleed

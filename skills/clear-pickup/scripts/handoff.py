@@ -8,7 +8,8 @@ cleared without one.
     handoff.py auto <session> <transcript> <cwd>
                                              write the automatic handoff; prints its path and sha256
 
-The session id comes from CLAUDE_CODE_SESSION_ID. Reads transcripts and handoff files; writes
+The session id comes from CLAUDE_CODE_SESSION_ID, else PI_SESSION_ID. Transcripts are read in
+Claude Code's shape only. Reads transcripts and handoff files; writes
 only under ~/.claude/squad (0700). The sealed, read-only copy is squad-switch.py's
 sealed_copy, so the watcher and this script share one write.
 """
@@ -21,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -173,11 +175,16 @@ def quote(text):
     return "\n".join("> " + line for line in text.splitlines()) or "> (none)"
 
 
+UNKNOWN_SHAPE = ("UNKNOWN: the transcript is not a Claude Code transcript (no assistant or user "
+                 "records, for example a pi session), so no request or reply could be quoted.")
+
+
 def write_auto(session, transcript, cwd):
     """Writes the handoff of a session cleared without one, from its transcript
     and git, to ~/.claude/squad/handoffs (read-only file). Returns (path, sha256)."""
     asked, _ = last_request(transcript)
     reply = last_reply(transcript)
+    known = any(r.get("type") in ("assistant", "user") for r in records(transcript))
     cards = session_cards(transcript)
     g = git_facts(cwd)
     now = time.localtime()
@@ -190,9 +197,9 @@ def write_auto(session, transcript, cwd):
              "Written automatically when the session was cleared without a handoff. Nothing "
              "here was decided by the session: the request and the last reply are quoted from "
              "its transcript, the rest comes from git.", "",
-             "## Goal", "The owner's last request, verbatim:", "", quote(clip(asked, 1500)), "",
+             "## Goal", "The owner's last request, verbatim:", "", quote(clip(asked, 1500) if known else UNKNOWN_SHAPE), "",
              "## Current state",
-             "Where the session stopped (its last reply):", "", quote(clip(reply, 1500)), ""]
+             "Where the session stopped (its last reply):", "", quote(clip(reply, 1500) if known else UNKNOWN_SHAPE), ""]
     if g:
         lines += ["Dirty in git:", "```", clip(g["status"], 2000) or "nothing", "```",
                   "Last commits:", "```", g["log"], "```", ""]
@@ -220,24 +227,44 @@ def write_auto(session, transcript, cwd):
 
 
 # ---------------------------------------------------------------- is it still the one?
-def handoff_session(path):
+NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+FULL_ID = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-")
+
+
+def read_file(path, limit=2_000_000):
+    """Bytes of a regular file owned by the user, opened without following a symlink (the
+    rule hooks/squad-switch.py read_checked applies to this same folder), else None."""
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            m = SESSION_LINE.search(fh.read(20_000))
+        if not NOFOLLOW and os.path.islink(path):
+            return None
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW | getattr(os, "O_BINARY", 0))
+        with os.fdopen(fd, "rb") as fh:
+            info = os.fstat(fh.fileno())
+            if not stat.S_ISREG(info.st_mode) or (os.name != "nt" and info.st_uid != os.getuid()):
+                return None
+            return fh.read(limit)
     except OSError:
+        return None
+
+
+def handoff_session(path):
+    data = read_file(path, 20_000)
+    if data is None:
         return ""
+    m = SESSION_LINE.search(data.decode("utf-8", errors="replace"))
     if m:
         return m.group(1)
-    m = re.match(r"(" + ID + r")-", os.path.basename(path))    # sealed and automatic copies
-    return m.group(1) if m else ""
+    # only the sealed copies are named <session>-<digest>.md; a project handoff's
+    # YYYYMMDD-HHMMSS prefix is a date, never a session
+    if os.path.dirname(os.path.abspath(path)) == os.path.abspath(COPIES):
+        m = FULL_ID.match(os.path.basename(path))
+        return m.group(1) if m else ""
+    return ""
 
 
 def digest(path):
-    try:
-        with open(path, "rb") as fh:
-            return hashlib.sha256(fh.read()).hexdigest()
-    except OSError:
-        return ""
+    data = read_file(path)
+    return hashlib.sha256(data).hexdigest() if data is not None else ""
 
 
 def picked_by(session, me):
@@ -298,8 +325,10 @@ def check(path, me):
         mtime = os.path.getmtime(path)
     except OSError:
         return {"status": "missing", "session": session}
+    if read_file(path, 1) is None:       # a symlink, or not a regular file of the user's
+        return {"status": "unreadable", "session": ""}
     same = digest(path)
-    files = [f for f in candidates(path) if os.path.abspath(f) != path and digest(f) != same]
+    files = [f for f in candidates(path) if os.path.abspath(f) != path and digest(f) not in (same, "")]
     result = {"status": "current", "session": session, "picked_by": [], "newest": None,
               "live": None, "newer_in_project": []}
     if not session:
@@ -358,7 +387,7 @@ def find_transcript(session):
 
 def parser():
     p = argparse.ArgumentParser(prog="handoff.py", description=__doc__.split("\n\n")[0],
-                                epilog="The session id comes from CLAUDE_CODE_SESSION_ID.")
+                                epilog="The session id comes from CLAUDE_CODE_SESSION_ID, else PI_SESSION_ID.")
     sub = p.add_subparsers(dest="cmd", metavar="{facts,check,claim,auto}")
     sub.add_parser("facts", help="this session: id, transcript, the cards it ran agenfk on")
     sub.add_parser("check", help="is this handoff still the one to pick up? (JSON)").add_argument("file")
@@ -372,7 +401,7 @@ def parser():
 
 def main(argv):
     args = parser().parse_args(argv[1:])
-    me = os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("PI_SESSION_ID") or ""
     if args.cmd == "facts":
         t = find_transcript(me) if me else ""
         print(json.dumps({"session": me or "UNKNOWN", "transcript": t or "UNKNOWN",
@@ -384,7 +413,7 @@ def main(argv):
         return 0
     if args.cmd == "claim":
         if not me:
-            print("handoff.py: no CLAUDE_CODE_SESSION_ID, the pickup stays unrecorded", file=sys.stderr)
+            print("handoff.py: no CLAUDE_CODE_SESSION_ID or PI_SESSION_ID, the pickup stays unrecorded", file=sys.stderr)
             return 1
         claim(args.file, me)
         return 0

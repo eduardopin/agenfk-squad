@@ -73,6 +73,10 @@ python3 -I ~/.claude/skills/clear-pickup/scripts/handoff.py check <file>
 - `current`: record the pickup with `handoff.py claim <file>` and go on (without a session id, `claim` refuses: say the pickup is unrecorded and go on).
 - `superseded`: another session already picked it up, or its author wrote a later one. Do not continue from it. If `live` names a session, that session still runs and owns the work: say so in one line and stop. Otherwise pick up `newest` instead (from step 2), or, if it is null, report that the chain ends there and stop.
 - `stale`: newer handoffs of other sessions sit in the project (`newer_in_project`), so its Next step may already be done. Check the cards it names: all DONE, or its commits already in the default branch, means the handoff is finished; say so. Otherwise name the newer files in one line and ask which one to continue.
+- `missing`: the path is wrong. Re-run step 1 and check what it returns.
+- `unreadable`: the file is a symlink or not a regular file of yours, which the watcher refuses too. Stop the pickup there and say so; do not read it.
+- A `current` whose `session` is empty: the handoff names no readable session, so nothing can chain it to another file. Treat the session as `UNKNOWN`, pick it up, and say that `claim` has nothing to record for it.
+- `facts`, `claim` and `auto` take the session from `CLAUDE_CODE_SESSION_ID`, else `PI_SESSION_ID`; transcripts are parsed in Claude Code's shape only, and `auto` writes `UNKNOWN` for a request and reply it cannot read (pi transcripts are not parsed yet).
 
 `handoff.py auto` writes an automatic handoff for a session cleared without one, in `~/.claude/squad/handoffs/` (read-only, named `<session>-<sha256 prefix>.md`): the owner's last request and the last reply quoted from the transcript, the rest from git. No hook runs it yet, so such a file exists only where someone ran the command. Treat it as a record, not a plan, and check every line of it.
 

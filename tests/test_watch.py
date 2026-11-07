@@ -530,6 +530,10 @@ def test_memory_at_or_above_the_ceiling_denies_the_dispatch_and_names_the_readin
     task = said(run(h, "PreToolUse", "12345678-0072", tr, {
         "tool_name": "Task", "tool_input": {"subagent_type": "developer", "prompt": "card ABC-1"}}, above))
     assert "DISPATCH DENIED" in task and "memory" in task, task
+    # a memory denial is no handoff: no switch armed, nothing ordered, no handoff text
+    st = state(h, "12345678-0072")
+    assert st.get("ctx_level", 0) != 2 and not st.get("ordered"), st
+    assert "Soft stop" not in out and "Soft stop" not in task, (out, task)
 
 
 def test_memory_ceiling_zero_is_off_even_on_a_full_machine():

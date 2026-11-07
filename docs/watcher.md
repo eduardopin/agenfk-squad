@@ -194,7 +194,7 @@ what is missing, with a short brief, in a new sub-session. One redispatch.
 
 ## The dispatch brake
 
-Before any `Agent` or `Task` call from a main session, the watcher checks four
+Before any `Agent` or `Task` call from a main session, the watcher checks five
 ceilings:
 
 | Ceiling | Variable | Default |

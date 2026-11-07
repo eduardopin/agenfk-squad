@@ -259,7 +259,7 @@ MAX_SUBS = env_int("SQUAD_MAX_SUBS", 60)
 MAX_ORCH = env_int("SQUAD_MAX_ORCH", 6)
 MAX_REV = env_int("SQUAD_MAX_REVIEWS", 6)
 MEM_CEIL = env_int("SQUAD_MEM_CEILING", 0)                  # % of memory in use; 0 = no memory brake
-MEMINFO = os.environ.get("SQUAD_MEMINFO") or "/proc/meminfo"
+MEMINFO = os.environ.get("SQUAD_MEMINFO", "/proc/meminfo")
 ORCH_HERE = env_int("SQUAD_ORCH_HERE", 500_000)
 SWITCH_SHELL = env_int("SQUAD_SWITCH_WAIT", 600)            # s: the switch waits for a background shell/monitor
 SWITCH_AGENT = env_int("SQUAD_SWITCH_WAIT_AGENT", 2400)     # s: ...and for a sub-agent still running
@@ -818,7 +818,11 @@ def pre_dispatch(p):
         why = (f"this machine has {used:.0f}% of its memory in use (ceiling {MEM_CEIL}%) and one more "
                "sub-session would start on top of that. Do not dispatch another agent and do not work around "
                "it with another tool: let the running ones finish or ask the owner to free memory, then "
-               "dispatch again. No handoff is needed, the plan stays as it is")
+               "dispatch again. No handoff is needed, the plan stays as it is" + (
+                   ". A light session can also do the card RIGHT HERE with no agent, in its own worktree "
+                   "and branch, `agenfk gatekeeper --item-id <id>` before editing; a review still belongs "
+                   "to the `verifier`, so it waits for the memory to drop"
+                   if ctx < ORCH_HERE and not review_key(p) else ""))
     elif other_orchestrators(session, repo) >= MAX_ORCH:
         cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents in this repository right now"
         if review_key(p):

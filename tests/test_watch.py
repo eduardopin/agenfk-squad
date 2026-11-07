@@ -558,6 +558,16 @@ def test_unreadable_meminfo_never_denies():
         assert "DISPATCH DENIED" not in dispatch(h, "12345678-0074", tr, env=env), path
 
 
+def test_memory_reading_is_none_without_available_or_with_more_available_than_total():
+    h = home()
+    m = watch_module()
+    old_kernel = os.path.join(h, "no-available")
+    with open(old_kernel, "w", encoding="utf-8") as fh:
+        fh.write("MemTotal:       1000 kB\nMemFree:          10 kB\n")
+    assert m.memory_used(old_kernel) is None
+    assert m.memory_used(meminfo(h, 1000, 5000, name="inconsistent")) is None
+    assert m.memory_used(meminfo(h, 1000, 250, name="quarter-free")) == 75.0
+
 def test_memory_ceiling_leaves_other_tools_alone():
     h = home()
     tr = mem_session(h, "12345678-0075")

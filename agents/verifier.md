@@ -76,6 +76,18 @@ green by you, each acceptance criterion with evidence (`file:line` or command
 output), and the reading below. Judge test strength by reading each claimed
 test against the behaviour its criterion names, and by the suite you ran.
 
+### Terraform and CI changes
+
+- Run the project's Terraform gate (fmt, validate, lint, security scan) in each
+  changed root and read the exit code, not the last line.
+- `terraform plan -lock=false` with a read-only role when credentials exist (a
+  read-only role cannot write the lock file); otherwise say the plan was not
+  compared with real state. Read every `destroy` and `must be replaced`.
+- IAM: privilege beyond the card's need. Network: anything newly reachable from
+  the internet. Persistence: data that cannot be rebuilt. Cost: a monthly
+  figure with its source in the PR body. Rollback: written and plausible.
+- Production is read-only for you without exception.
+
 ### Then, what nobody was looking at
 
 - **Regression.** What the diff did not touch but reaches. Read the callers.

@@ -128,6 +128,7 @@ which):
 | Severity | Where | Problem | Fix |
 |---|---|---|---|
 | Blocking | `stacks/export/s3.tf:14` | <problem> | <fix> |
+| High | `stacks/export/iam.tf:30` | <problem> | <fix> |
 | Minor | `README.md` | <problem> | <fix> |
 
 ## Practices
@@ -151,13 +152,19 @@ the merge would break something.
 - a changed money, data or credential path that the PR's tests leave unproven;
 - a false claim in the body (a scan reported green that did not run).
 
+**High**: not a break today, but the author should fix it before the merge: a
+missing timeout or retry on a network call, an error swallowed where a caller
+needs it, a test for the changed behaviour that is missing or cannot fail, an
+IAM grant wider than the change needs without being an exposure, a claim in the
+body that no command backs. It never vetoes a colleague's PR.
+
 **Minor**: everything else worth saying: a gap that fits in a follow-up PR,
 naming, documentation, a test for behaviour the PR did not touch, a `TITLE_*`
 finding, cleanup. Comment and approve.
 
 **Nit**: not worth a comment unless the owner asks.
 
-Verdict: "Approve" when nothing is Blocking, even with Minor comments.
+Verdict: "Approve" when nothing is Blocking, even with High or Minor comments.
 "Request changes" only with a Blocking finding. "Comment" when the review
 needs an answer before deciding. Never request changes for style,
 documentation, naming or the title.
@@ -185,7 +192,7 @@ plain block.
 ```
 
 `scripts/review_comments.py` turns the findings into the payload (it accepts
-`Blocking`/`Minor` or `Bloqueante`/`Menor`; `--lang pt` for a Portuguese
+`Blocking`/`High`/`Minor` or `Bloqueante`/`Alta`/`Menor`; `--lang pt` for a Portuguese
 repository). A finding on a diff line becomes an inline comment; GitHub
 refuses comments outside the diff, so the rest go in the body, under "Outside
 the diff".
@@ -194,8 +201,14 @@ the diff".
 head=$(gh pr view <n> --json headRefOid -q .headRefOid)
 python3 -I "$PR/scripts/review_comments.py" --diff "$TMPDIR/pr-<n>.diff" \
   --findings "$TMPDIR/findings-<n>.json" --commit "$head" \
-  --verdict "<one sentence: the main reason>" > "$TMPDIR/review-<n>.json"
+  --verdict "<one sentence: the main reason>" \
+  --markdown "$TMPDIR/review-<n>.md" > "$TMPDIR/review-<n>.json"
+python3 -I "$PR/../writing/scripts/slop_lint.py" "$TMPDIR/review-<n>.md"
 ```
+
+`--markdown` writes every sentence the review will post (the summary and each
+comment body; `-` sends it to stdout instead of the JSON). `slop_lint.py` must
+pass on it: an inline comment is prose the author reads.
 
 On the owner's own PR (`self_review=yes`) add `--self-review`: the event
 becomes `COMMENT`, because GitHub refuses approval or change requests from the

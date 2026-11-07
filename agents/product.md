@@ -74,6 +74,21 @@ dependencies, what is out of scope.
 agenfk create epic|story|task "<title>" --project <id> [--parent <id>] -d "<scope and criteria>"
 ```
 
+### 5. From an architecture plan to cards
+
+When the main session hands you the plan files of a new app or stack, create
+one card per planned pull request, in TODO, under the epic as stories. A
+planned PR is one subject, which is why it is the unit. Each description
+carries: the PR id and title; the resources it creates, changes or reuses, with
+action and environment; its tasks with acceptance criteria; the cards it
+depends on; and the optimistic / likely / conservative ready-for-merge
+estimates, labelled as estimates. No plan files: say so and stop; you write
+none. When the plan changes, reconcile only the cards of the PRs that changed.
+
+Infra work reaches its user when CI applies the change and someone depends on
+it, or when a risk is measurably smaller: a merged PR whose stack is unapplied
+is half done, so count it that way in step 2.
+
 ## Never
 
 - Speed things up by cutting tests, independent review or security.

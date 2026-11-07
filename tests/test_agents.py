@@ -121,6 +121,87 @@ def test_the_checker_refuses_the_wrong_order_and_an_empty_section():
     assert section_problems(sub) == [], section_problems(sub)
 
 
+def read_agent(name):
+    with open(os.path.join(AGENTS, name + ".md"), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def flat(text):
+    """Lowercase with whitespace collapsed, so a rule survives being re-wrapped."""
+    return re.sub(r"\s+", " ", text).lower()
+
+
+def section(name, title):
+    """The body of one level-2 section of an agent, flattened (subsections included)."""
+    hs, out, on = headings(read_agent(name)), [], False
+    for lvl, t, body in hs:
+        if lvl == 2:
+            on = t == title
+        if on:
+            out.append(body)
+    return flat(" ".join(out))
+
+
+# Each ported rule is pinned by a short phrase, in the section it belongs to.
+PORTED = (
+    # (agent, section, phrase)
+    ("context", "Steps", "only a handoff the main session wrote"),
+    ("context", "Steps", "no commit today"),
+    ("finops", "Steps", "resource arn"),
+    ("finops", "Steps", "metric over 14 days"),
+    ("finops", "Steps", "owner tag"),
+    ("finops", "Steps", "risk of removing it"),
+    ("finops", "Steps", "removal is a card for `infra`"),
+    ("github", "Steps", "fails in seconds"),
+    ("github", "Steps", "billing or permissions"),
+    ("infra", "Steps", "ignoring the os certificate bundle"),
+    ("infra", "Steps", "aws_ca_bundle"),
+    ("infra", "Steps", "never disable verification"),
+    ("infra", "Steps", "observability in the same pr"),
+    ("infra", "Steps", "provisional"),
+    ("infra", "Never", "-upgrade"),
+    ("infra", "Never", "tf_plugin_cache_dir"),
+    ("verifier", "Steps", "run the project's terraform gate"),
+    ("verifier", "Steps", "must be replaced"),
+    ("verifier", "Steps", "terraform plan -lock=false"),
+    ("verifier", "Steps", "read-only role cannot write the lock"),
+    ("verifier", "Steps", "was not compared with real state"),
+    ("product", "Steps", "one card per planned pull request"),
+    ("product", "Steps", "optimistic / likely / conservative"),
+    ("product", "Steps", "unapplied is half done"),
+    ("developer", "Steps", "agenfk verify <id> --plan"),
+    ("developer", "Steps", "do not run the full suite yourself"),
+    ("developer", "Never", "hooks fail open"),
+    ("developer", "Never", "empty stdin"),
+    ("developer", "Never", "invalid json"),
+)
+
+
+def test_every_ported_standing_order_is_pinned_in_its_section():
+    missing = [f"{a} / {s}: {p!r}" for a, s, p in PORTED if p not in section(a, s)]
+    assert not missing, "\n" + "\n".join(missing)
+
+
+def test_the_squad_rules_say_production_is_read_only_and_one_state_means_series():
+    rules = flat(open(os.path.join(ROOT, "CLAUDE.md"), encoding="utf-8").read())
+    assert "production is read-only for every agent" in rules
+    assert "same terraform state in two fronts" in rules and "series" in rules
+
+
+def test_the_ported_rules_carry_no_private_context():
+    private = re.compile(r"zscaler|upwind|herdr|\b[A-Z]{2,}-\d+\b|\b\d{12}\b|/home/|~/dev/|cglab", re.I)
+    hits = []
+    for path in agent_files():
+        for n, line in enumerate(open(path, encoding="utf-8"), 1):
+            if private.search(line):
+                hits.append(f"{os.path.relpath(path, ROOT)}:{n}: {line.strip()}")
+    assert not hits, "\n" + "\n".join(hits)
+
+
+def test_the_verifier_stays_without_a_mutation_round():
+    assert "mutation" not in flat(read_agent("verifier"))
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

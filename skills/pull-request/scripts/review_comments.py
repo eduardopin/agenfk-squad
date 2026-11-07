@@ -2,17 +2,22 @@
 """Turn review findings into a GitHub review with inline comments.
 
     review_comments.py --diff PR.diff --findings FINDINGS.json [--self-review] [--lang en|pt]
+                       [--markdown OUT.md|-]
                        [--event APPROVE|REQUEST_CHANGES|COMMENT] [--verdict TEXT] [--commit SHA]
 
 Prints the JSON for `gh api repos/{owner}/{repo}/pulls/<n>/reviews --input -`.
 It only builds the payload: posting belongs to the owner, who confirms first
 (squad rule 5), on the owner's own PR too.
 
-Each finding is {"severity": "Blocking"|"Minor" (or "Bloqueante"|"Menor"), "path",
+Each finding is {"severity": "Blocking"|"High"|"Minor" (or "Bloqueante"|"Alta"|"Menor"), "path",
 "line", optional "start_line", optional "side": "RIGHT"|"LEFT", "problem", "fix",
 optional "suggestion"}. A finding whose lines fall in a diff hunk becomes an
 inline comment with the problem and the requested fix; GitHub refuses comments
 outside the diff, so the rest go in the review body.
+
+--markdown writes the review text (the summary and every comment body) to OUT.md,
+or to stdout with `-` (then the JSON is not printed), so the writing skill's
+slop_lint.py reads it before GitHub does.
 
 With --self-review the event is always COMMENT: GitHub does not let the author
 approve or request changes on their own PR.
@@ -25,22 +30,25 @@ import re
 import sys
 from pathlib import Path
 
-# A colleague's PR is approved unless something is Blocking. Minor is a comment
-# on the approving review, not a veto. For the verifier: Blocking = FIX_FIRST/REJECT.
-SEVERITY_ALIASES = {"blocking": "Blocking", "bloqueante": "Blocking", "minor": "Minor", "menor": "Minor"}
-SEVERITIES = ("Blocking", "Minor")
+# A colleague's PR is approved unless something is Blocking. High (fix it before
+# the merge) and Minor are comments on the approving review, not a veto. For the verifier: Blocking = FIX_FIRST/REJECT.
+SEVERITY_ALIASES = {"blocking": "Blocking", "bloqueante": "Blocking", "high": "High", "alta": "High",
+                    "minor": "Minor", "menor": "Minor"}
+SEVERITIES = ("Blocking", "High", "Minor")
 TEXT = {
-    "pt": {"Blocking": "Bloqueante", "Minor": "Menor", "fix": "Correção",
+    "pt": {"Blocking": "Bloqueante", "High": "Alta", "Minor": "Menor", "fix": "Correção",
            "Request changes": "Pedir mudanças", "Approve": "Aprovar", "Comment": "Comentar",
            "verdict": "Veredito", "fix_blocking": "Corrija os achados Bloqueantes antes do merge.",
+           "high_ok": "Os comentários Altos não bloqueiam o merge, mas corrija-os antes dele.",
            "minor_ok": "Os comentários Menores não bloqueiam o merge; trate aqui ou num PR seguinte.",
            "self": "Autorrevisão. O GitHub não deixa o autor aprovar nem pedir mudanças no próprio "
                    "PR, então cada achado é um comentário na linha dizendo o que corrigir.",
            "inline": "{n} comentário(s) no diff.", "outside": "Fora do diff",
            "head": "| Severidade | Onde | Problema | Correção |"},
-    "en": {"Blocking": "Blocking", "Minor": "Minor", "fix": "Fix",
+    "en": {"Blocking": "Blocking", "High": "High", "Minor": "Minor", "fix": "Fix",
            "Request changes": "Request changes", "Approve": "Approve", "Comment": "Comment",
            "verdict": "Verdict", "fix_blocking": "Fix the Blocking findings before the merge.",
+           "high_ok": "The High comments do not block the merge, but fix them before it.",
            "minor_ok": "The Minor comments do not block the merge; address them here or in a follow-up.",
            "self": "This is a self-review. GitHub does not let the author approve or request changes "
                    "on their own pull request, so each finding is an inline comment saying what to fix.",
@@ -112,7 +120,7 @@ def _validate(f):
         f["start_line"] = int(f["start_line"])
     f["severity"] = SEVERITY_ALIASES.get(str(f.get("severity") or "").strip().lower(), f.get("severity"))
     if f.get("severity") not in SEVERITIES:
-        raise ValueError(f"severity must be Bloqueante/Blocking or Menor/Minor: {f!r}")
+        raise ValueError(f"severity must be Blocking, High or Minor (Bloqueante, Alta, Menor): {f!r}")
     for key in ("path", "problem", "fix"):
         if not str(f.get(key) or "").strip():
             raise ValueError(f"every finding needs a {key}: {f!r}")
@@ -192,6 +200,8 @@ def build_review(diff, findings, self_review=False, event=None, verdict=None, co
     parts = [f"**{t['verdict']}: {t[label]}.**" + (f" {verdict.strip()}" if verdict else "")]
     if blocking:
         parts.append(t["fix_blocking"])
+    elif any(f["severity"] == "High" for f in findings) and not self_review:
+        parts.append(t["high_ok"])
     elif findings and not self_review:
         parts.append(t["minor_ok"])
     if self_review:
@@ -213,6 +223,15 @@ def build_review(diff, findings, self_review=False, event=None, verdict=None, co
     return review
 
 
+def markdown_text(review):
+    """The review body and every inline comment, headed by where it lands."""
+    parts = [review["body"]]
+    for c in review["comments"]:
+        where = f"{c['path']}:{c['start_line']}-{c['line']}" if c.get("start_line") else f"{c['path']}:{c['line']}"
+        parts.append(f"### {where}\n\n{c['body']}")
+    return "\n\n".join(parts) + "\n"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Build a GitHub review with inline comments from findings.")
     ap.add_argument("--diff", required=True, help="the PR diff (gh pr diff <n>)")
@@ -222,6 +241,7 @@ def main(argv=None):
     ap.add_argument("--verdict", help="one sentence after the verdict label")
     ap.add_argument("--commit", help="PR head SHA the comments refer to")
     ap.add_argument("--lang", choices=("en", "pt"), default="en", help="language of the review text")
+    ap.add_argument("--markdown", help="write the review text here (or - for stdout) for slop_lint.py")
     args = ap.parse_args(argv)
     raw = sys.stdin.read() if args.findings == "-" else Path(args.findings).read_text()
     try:
@@ -230,6 +250,11 @@ def main(argv=None):
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         print(f"invalid findings: {e}", file=sys.stderr)
         return 2
+    if args.markdown == "-":
+        sys.stdout.write(markdown_text(review))
+        return 0
+    if args.markdown:
+        Path(args.markdown).write_text(markdown_text(review))
     print(json.dumps(review, indent=2))
     return 0
 

@@ -66,12 +66,29 @@ From a session's running totals it computes (`handoff_math` in
 
 ### The rule
 
-A main session is ordered to hand off (`PROACTIVE HANDOFF`) when either holds:
+A main session is ordered to hand off (`PROACTIVE HANDOFF`) when any of these holds:
 
 1. **context ≥ `SQUAD_CTX_PCT`% of the window** (default 90%), or
-2. **reread share ≥ `SQUAD_REREAD`%** (default 60%) **and context ≥ floor**.
+2. **reread share ≥ `SQUAD_REREAD`%** (default 60%) **and context ≥ floor**, or
+3. **context ≥ `SQUAD_MAIN_FLOOR`** (default 150k) **and** the session has either
+   burned `SQUAD_MAIN_BURN` weighted tokens (default 15M) or worked for
+   `SQUAD_MAIN_AGE` seconds (default 8 h).
 
 Rule 1 is the wall. Rule 2 is the interesting one.
+
+### Burn and age
+
+The context rules alone let a session run for days below them: a long session
+can sit at 280k for 17 hours, or end at 17M weighted tokens without ever
+reaching the wall. Rule 3 brings the handoff forward for those sessions. The
+order names its reason after the figures, for example `burn 15.2M weighted >=
+15.0M` or `open 9.0 h of work >= 8 h`.
+
+Age is hours of work, not of calendar. The watcher adds the time between two
+measurements of the session only when it is 30 minutes or less, so a night or
+a weekend away from the keyboard does not count. Below the floor neither limit
+applies, because a small context is cheap to carry and a fresh session would
+not be cheaper.
 
 ### Why there is a floor, and why it moves
 

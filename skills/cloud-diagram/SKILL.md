@@ -1,6 +1,6 @@
 ---
 name: cloud-diagram
-description: The squad's standard for cloud architecture diagrams (AWS, OCI, GCP, Azure, Alibaba, Cloudflare): a technical sheet in hand-drawn inline SVG, with groups nested in the provider's convention (cloud → region → VPC → zone → subnet), service icons in the category colours, a service spanning zones drawn as a dashed band, orthogonal arrows that never cross, numbered steps tied to the list, a stamp and a legend, the drawing's status in the stamp (CURRENT as of a date, or PROPOSED), an inventory with a source per node before the geometry, the page chrome dressed in the project's design system (the design-reference sweep), tokens in both themes, a probe that measures overlap, sideways scrolling and the status before delivery, and a .drawio deliverable with a gate (diagram_check.py) when asked for. Use it whenever you draw, redo or review an architecture, infrastructure, network or service-flow diagram for the cloud (in an Artifact, HTML page, doc, ADR, README or proposal), including when it goes with a cost quote (finops) or a design review (infra). It replaces mermaid, exported draw.io or generic boxes.
+description: The squad's standard for cloud architecture diagrams (AWS, OCI, GCP, Azure, Alibaba, Cloudflare): a technical sheet in hand-drawn inline SVG, with groups nested in the provider's convention (cloud → region → VPC → zone → subnet), service icons in the category colours, a service spanning zones drawn as a dashed band, orthogonal arrows that never cross, numbered steps tied to the list, a stamp and a legend, the drawing's status in the stamp (CURRENT as of a date, or PROPOSED), an inventory with a source per node before the geometry, the page chrome dressed in the project's design system (the design-reference sweep), tokens in both themes, a probe (render.py) that measures overlap, edges, steps, sideways scrolling and the status before delivery, and a .drawio deliverable with a gate (diagram_check.py) when asked for. Use it whenever you draw, redo or review an architecture, infrastructure, network or service-flow diagram for the cloud (in an Artifact, HTML page, doc, ADR, README or proposal), including when it goes with a cost quote (finops) or a design review (infra). It replaces mermaid, exported draw.io or generic boxes.
 ---
 
 # cloud-diagram: the squad's architecture sheet
@@ -190,17 +190,24 @@ by category and say so in the legend; do not invent a brand's palette.
 ## 7. Verification (before delivering)
 
 ```bash
-~/.claude/skills/cloud-diagram/scripts/render.sh <page.html> <folder> "1100 400"
+python3 -I ~/.claude/skills/cloud-diagram/scripts/render.py <page.html> --out <folder>
 ```
 
-It writes `shot-<theme>-<width>.png` in both themes and runs the probe: label
-over label, label over icon, balloon over label, arrow cutting a label, arrow
-through an icon, arrow crossing an arrow away from a junction, body scrolling
-sideways, fonts loaded, and the stamp's **Status** cell (CURRENT with a date or
-PROPOSED; without it, or "current" with no date, it fails). Chrome comes from
-`$CHROME` or from `google-chrome`/`chromium` on the PATH. Under 500 px the page
-runs in an iframe of the exact width, because headless Chrome opens no smaller
-window. Exit 1 = it found a problem; exit 2 = no Chrome to render with.
+It opens the page in headless Chromium in both themes, at 1100 and 400 px and in
+every language the page carries, writes `shot-<theme>-<width>-<lang>.png` and
+fails on label over label, label over an icon or across a group line, a balloon
+over either, an edge through a label or an icon, edges that cross or share a
+line, a fork with no junction dot, a diagonal or curved edge, balloons that do
+not match the list, the body scrolling sideways, and the stamp's **Status** cell
+(CURRENT with a date or PROPOSED; without it, or "current" with no date, it
+fails). Every shape is measured where its `transform` draws it. The rules and
+the exit codes (1 = a problem, 2 = usage, 3 = no browser, so the page is
+unverified, 4 = the check crashed) are in `references/probe-rules.md`. The
+browser comes from `--browser`, `$CHROME`, `google-chrome` or `chromium` on the
+PATH, or the Playwright cache. Under 500 px the page runs in an iframe of the
+exact width, because headless Chrome opens no smaller window.
+`scripts/render.sh <page.html> <folder> "1100 400"` is the same probe from the
+shell, without languages or JSON.
 
 The probe measures geometry; the eye measures reading. Open the 1100 px shots
 in both themes and check: group hierarchy readable, nothing cut off, contrast.
@@ -230,7 +237,7 @@ Status       [CURRENT as of YYYY-MM-DD (source) | PROPOSED]
 Diagram      [provider · levels drawn · no. of services · no. of steps]
 Source       [inventory: where each node and number came from]
 System       [design system the page wears, or "neutral sheet"]
-Probe        [render.sh output, the 4 lines]
+Probe        [render.py output, the ok and FAIL lines]
 Shots        [paths light/dark, desktop/phone]
 My labels    [what you named with no source, for the owner to check]
 ```

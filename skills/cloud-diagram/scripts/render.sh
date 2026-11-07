@@ -80,14 +80,14 @@ if "error" in d: print(tag, "ERROR:", d["error"]); sys.exit(1)
 st = d.get("status") or {"ok": False, "reason": "probe output has no status field"}
 # a page where the probe found no diagram measured nothing: that is a problem, not a pass
 none = not d["diagrams"]
-bad = d["body_scrolls_sideways"] or bool(d["past_the_window"]) or not st["ok"] or none
+bad = d["page_scrolls_sideways"] or bool(d["past_viewport"]) or not st["ok"] or none
 probs = [p for g in d["diagrams"] for p in g["problems"]]
-print(f"{tag}  viewport={d['viewport']}  body_scrolls={'YES' if d['body_scrolls_sideways'] else 'no'}"
+print(f"{tag}  viewport={d['viewport']}  body_scrolls={'YES' if d['page_scrolls_sideways'] else 'no'}"
       f"  diagrams={len(d['diagrams'])}  problems={len(probs)}  fonts={', '.join(d['fonts']) or '-'}"
       f"  status={'NO-DIAGRAM' if none else 'ok' if st['ok'] else 'MISSING'}")
 if none: print("   no diagram found: mark the drawing's <svg> with data-diagram (or put it in .dia)")
 if not st["ok"] and not none: print("   status:", st.get("reason"), ("(" + st.get("text", "") + ")") if st.get("text") else "")
-for e in d["past_the_window"]: print("   past the window:", e)
+for e in d["past_viewport"]: print("   past the window:", e)
 for p in probs[:20]: print("   ", " | ".join(p))
 sys.exit(1 if bad or probs else 0)
 PY

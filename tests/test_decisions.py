@@ -7,13 +7,11 @@ under the OS temp dir, and never touches ~/.claude.
 
     python3 tests/test_decisions.py
 """
-import atexit
 import contextlib
 import importlib.util
 import io
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -22,23 +20,15 @@ import threading
 import time
 import types
 
+import _tmpclean  # tests/ is sys.path[0]: removes the HOMEs even with read-only git objects in them
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "hooks", "squad-decisions.py")
 MANIFEST = os.path.join(ROOT, "hooks", "manifest.json")
 
-_HOMES = []
-
-
-@atexit.register
-def _remove_homes():
-    for h in _HOMES:
-        shutil.rmtree(h, ignore_errors=True)
-
 
 def home():
-    h = os.path.realpath(tempfile.mkdtemp(prefix="decisions-"))
-    _HOMES.append(h)
-    return h
+    return os.path.realpath(_tmpclean.mkdtemp(prefix="decisions-"))
 
 
 def env(h, **kw):

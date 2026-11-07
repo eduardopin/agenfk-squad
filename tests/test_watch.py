@@ -7,7 +7,6 @@ fake herdr, and never touches ~/.claude.
 
     python3 tests/test_watch.py
 """
-import atexit
 import datetime
 import json
 import os
@@ -19,15 +18,14 @@ import sys
 import tempfile
 import time
 
+import _tmpclean  # tests/ is sys.path[0]
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "hooks", "squad-watch.py")
 sys.path.insert(0, os.path.join(ROOT, "skills", "session-context", "scripts"))
 import session_context as cx  # noqa: E402
 
 M = 1_000_000
-
-
-_HOMES = []
 
 
 def home(short=False):
@@ -37,17 +35,10 @@ def home(short=False):
     if short and len(tempfile.gettempdir()) > 24:
         root = next((d for d in ("/tmp", os.environ.get("SystemRoot", "C:\\Windows")[:3] + "Temp")
                      if os.path.isdir(d) and os.access(d, os.W_OK)), None)
-    h = tempfile.mkdtemp(prefix="watch-", dir=root)
-    _HOMES.append(h)
-    return h
-
-
-@atexit.register
-def _remove_homes():
-    # every test creates a throwaway HOME; without this /tmp (tmpfs) runs out of inodes
-    # when several sessions run the suite all day long
-    for h in _HOMES:
-        shutil.rmtree(h, ignore_errors=True)
+    # every test creates a throwaway HOME; removed at exit (without that /tmp, a tmpfs, runs out of inodes when
+    # several sessions run the suite all day long, and on Windows the git objects of a test's repository,
+    # which are read-only, kept ignore_errors from removing the HOME)
+    return _tmpclean.mkdtemp(prefix="watch-", dir=root)
 
 
 def sh(path):

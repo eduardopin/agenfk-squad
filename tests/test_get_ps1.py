@@ -14,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 
+import _tmpclean  # tests/ is sys.path[0]
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GET = os.path.join(ROOT, "get.ps1")
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
@@ -26,7 +28,7 @@ with open(os.path.join(ROOT, "hooks", "manifest.json"), encoding="utf-8") as _fh
     MANIFEST = json.load(_fh)
 WANTED = [(h["script"], e) for h in MANIFEST["hooks"] for e in h["events"]]
 
-TMP = tempfile.mkdtemp(prefix="getps-")
+TMP = _tmpclean.mkdtemp(prefix="getps-")      # the clones in it hold read-only git objects: removed at exit
 GITCONFIG = os.path.join(TMP, "gitconfig")        # no global git config of the machine's user
 open(GITCONFIG, "w", encoding="utf-8").close()
 GIT_ENV = {"GIT_CONFIG_GLOBAL": GITCONFIG, "GIT_CONFIG_NOSYSTEM": "1",
@@ -82,7 +84,7 @@ SRC, REFS = build_source()
 
 
 def home(name="home"):
-    return tempfile.mkdtemp(prefix=name + "-", dir=TMP)
+    return tempfile.mkdtemp(prefix=name + "-", dir=TMP)   # under TMP: removed with it
 
 
 def config(h):

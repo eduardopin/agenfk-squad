@@ -18,6 +18,8 @@ import subprocess
 import sys
 import tempfile
 
+import _tmpclean  # tests/ is sys.path[0]
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
@@ -53,7 +55,7 @@ if os.name != "nt" or not POWERSHELL:
     print("skipped: install.ps1 is for Windows (use install.sh elsewhere)")
     sys.exit(0)
 
-TMP = tempfile.mkdtemp(prefix="inst-")
+TMP = _tmpclean.mkdtemp(prefix="inst-")        # every other directory here is under it: removed at exit
 
 
 def build_template():

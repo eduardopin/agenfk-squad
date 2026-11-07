@@ -38,8 +38,11 @@ Two notes on that table.
   [roadmap](../ROADMAP.md).
 - `tester`, `verifier`, `context`, `product`, `github`, `finops` and
   `developer` run on Sonnet on purpose. A fan-out dispatches these agents
-  many times per card, so their model sets most of a card's token bill. `tester`, `verifier` and `context` do mechanical,
-  high-volume work (run the suite, check the evidence, measure); `product`
+  many times per card, so in the private squad's token report their model was
+  the largest line of a card's bill. On oh-my-pi, `sonnet` maps to the
+  `@default` role, not to Sonnet; see
+  [`skills/harness-port/SKILL.md`](../skills/harness-port/SKILL.md).
+  `tester`, `verifier` and `context` do mechanical, high-volume work (run the suite, check the evidence, measure); `product`
   and `github` plan and map; `finops` may not state a number without its
   source. `developer` writes code, so the safeguards there are the card's
   tests, the suite as the gate and the independent `verifier`. The verifier

@@ -7,14 +7,14 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 
 | Request / flow step | Agent | Writes? |
 |---|---|---|
-| Start a feature or epic, prioritise, "how much is left", break down into cards | `product` | no (creates cards in TODO) |
-| More than one agent or session in the same repo; branch/worktree per card; PR stack; "can I merge" | `github` | worktree claim only |
-| IMPLEMENT / IN_PROGRESS: a card becomes code (backend, logic, API, data) | `developer` | yes, 1 card = 1 branch = 1 worktree |
+| Start a feature or epic, prioritise, "how much is left", break down into cards | `product` (Sonnet) | no (creates cards in TODO) |
+| More than one agent or session in the same repo; branch/worktree per card; PR stack; "can I merge" | `github` (Sonnet) | worktree claim only |
+| IMPLEMENT / IN_PROGRESS: a card becomes code (backend, logic, API, data) | `developer` (Sonnet) | yes, 1 card = 1 branch = 1 worktree |
 | Screen, component, landing page, dashboard, design system, tokens, motion, Figma → code, art, poster, banner | `frontend` | yes, same regime |
 | TEST: the card's tests, regression, coverage | `tester` (Sonnet) | test files only |
 | REVIEW / ADVERSARIAL / VERIFY (no mutation step): before every PR | `verifier` (Sonnet) | no |
 | `infra/`, terraform, CI/CD, Dockerfile, cloud | `infra` | yes, stops at `plan` |
-| Cloud cost, token cost, stack decision | `finops` | no |
+| Cloud cost, token cost, stack decision | `finops` (Sonnet) | no |
 | Pricing, margin, unit economics, portfolio | `finance` | no |
 | Positioning, competitors, landing page (copy), outreach | `gtm` | no (drafts only) |
 | Context > 60%, cockpit flashing HANDOFF, loop, "where did I stop", switching cards, closing the day | `context` (Sonnet) | handoff and card comment only |

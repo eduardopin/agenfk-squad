@@ -377,6 +377,40 @@ def test_a_git_ref_source_ships_the_commit_not_the_local_edit():
         assert manifest(out)[0]["source"].startswith("git:"), manifest(out)[0]
 
 
+def test_a_git_ref_or_subdir_that_looks_like_an_option_is_refused():
+    if shutil.which("git") is None:
+        print("skipped: git is not installed")
+        return
+    with workdir() as tmp:
+        repo = tmp / "repo"
+        skill(repo / "skills", "released", "name: released\ndescription: Released text")
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+        for cmd in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "x"], ["tag", "v1"]):
+            subprocess.run(["git", "-C", str(repo), *cmd], check=True, capture_output=True, env=env)
+        empty = tmp / "personal"
+        empty.mkdir()
+        stray = tmp / "stray.tar"
+        r, _ = run(tmp, empty, "--git-repo", str(repo), "--git-ref", "v1", f"--git-subdir=--output={stray}")
+        assert r.returncode != 0 and not stray.exists(), (r.returncode, stray.exists())
+        assert "Traceback" not in r.stderr, r.stderr
+        r, _ = run(tmp, empty, "--git-repo", str(repo), "--git-ref=--git-dir", "--git-subdir", "skills")
+        assert r.returncode != 0 and "Traceback" not in r.stderr, r.stderr
+
+
+def test_a_skill_skipped_on_a_rerun_leaves_no_old_zip_behind():
+    with workdir() as tmp:
+        src = tmp / "src"
+        skill(src, "later-bad", "name: later-bad\ndescription: Fine at first")
+        r, out = run(tmp, src)
+        assert r.returncode == 0 and (out / "skills" / "later-bad.zip").exists(), r.stderr
+        key = "AKIA" + "ABCDEFGHIJKLMNOP"
+        (src / "later-bad" / "notes.md").write_text(f"key {key}\n", encoding="utf-8")
+        r, out = run(tmp, src)
+        assert r.returncode == 1, r.stderr
+        assert not (out / "skills" / "later-bad.zip").exists()
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -210,7 +210,7 @@ the last ten minutes. A dispatch counts as a reviewer when the agent type or
 description matches review, verify, security, audit or adversarial; the card
 is recognised by its id in the brief.
 
-A `DISPATCH DENIED` always says where the work continues. There are four exits:
+A `DISPATCH DENIED` always says where the work continues. There are five exits:
 
 | Situation | Exit | What the session does |
 |---|---|---|

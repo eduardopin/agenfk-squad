@@ -549,7 +549,11 @@ def test_unreadable_meminfo_never_denies():
         fh.write("MemTotal: lots kB\nMemAvailable: none\n")
     empty = os.path.join(h, "empty")
     open(empty, "w", encoding="utf-8").close()
-    for path in (os.path.join(h, "missing"), bad, empty):
+    old_kernel = os.path.join(h, "no-available")       # MemAvailable arrived in Linux 3.14
+    with open(old_kernel, "w", encoding="utf-8") as fh:
+        fh.write("MemTotal:       1000 kB\nMemFree:          10 kB\n")
+    inconsistent = meminfo(h, 1000, 5000, name="inconsistent")
+    for path in (os.path.join(h, "missing"), bad, empty, old_kernel, inconsistent):
         env = {"SQUAD_MEM_CEILING": "1", "SQUAD_MEMINFO": path}
         assert "DISPATCH DENIED" not in dispatch(h, "12345678-0074", tr, env=env), path
 

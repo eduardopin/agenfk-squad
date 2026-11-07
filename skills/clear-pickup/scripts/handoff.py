@@ -347,7 +347,8 @@ def claim(path, me):
     os.makedirs(SQUAD, exist_ok=True)
     with open(PICKUPS, "a", encoding="utf-8") as fh:
         clean = re.sub(r"[\x00-\x1f]", "?", os.path.abspath(path))    # one row per pickup, always
-        fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{session[:8]}\t{me[:8]}\t{clean}\n")
+        who = re.sub(r"[\x00-\x1f]", "?", me[:8])
+        fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{session[:8]}\t{who}\t{clean}\n")
 
 
 def find_transcript(session):

@@ -133,10 +133,15 @@ def flat(text):
 
 def section(name, title):
     """The body of one level-2 section of an agent, flattened (subsections included)."""
-    hs, out, on = headings(read_agent(name)), [], False
+    return section_of(read_agent(name), title)
+
+
+def section_of(text, title):
+    """The body of one level-2 section of a text; any level-1 or level-2 heading ends it."""
+    hs, out, on = headings(text), [], False
     for lvl, t, body in hs:
-        if lvl == 2:
-            on = t == title
+        if lvl <= 2:
+            on = lvl == 2 and t == title
         if on:
             out.append(body)
     return flat(" ".join(out))
@@ -165,6 +170,7 @@ PORTED = (
     ("verifier", "Steps", "must be replaced"),
     ("verifier", "Steps", "terraform plan -lock=false"),
     ("verifier", "Steps", "read-only role cannot write the lock"),
+    ("verifier", "Steps", "unless the owner asks in writing"),
     ("verifier", "Steps", "was not compared with real state"),
     ("product", "Steps", "one card per planned pull request"),
     ("product", "Steps", "optimistic / likely / conservative"),
@@ -185,11 +191,20 @@ def test_every_ported_standing_order_is_pinned_in_its_section():
 def test_the_squad_rules_say_production_is_read_only_and_one_state_means_series():
     rules = flat(open(os.path.join(ROOT, "CLAUDE.md"), encoding="utf-8").read())
     assert "production is read-only for every agent" in rules
-    assert "same terraform state in two fronts" in rules and "series" in rules
+    assert "same terraform state in two fronts" in rules
+    assert "run them in series" in rules
+
+
+# Home paths are built from parts: written out whole, scripts/check_private_paths.py flags this file.
+_USERS = "/Us" + "ers/"
+PRIVATE = re.compile(r"(?i:zscaler|upwind|herdr|/home/|~/dev/|cglab)|\b[A-Z]{2,}-\d+\b|\b\d{12}\b"
+                     r"|" + _USERS + r"|/mnt/[a-z]" + _USERS
+                     + r"|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+                     r"|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}")
 
 
 def test_the_ported_rules_carry_no_private_context():
-    private = re.compile(r"zscaler|upwind|herdr|\b[A-Z]{2,}-\d+\b|\b\d{12}\b|/home/|~/dev/|cglab", re.I)
+    private = PRIVATE
     hits = []
     for path in agent_files():
         for n, line in enumerate(open(path, encoding="utf-8"), 1):
@@ -201,6 +216,20 @@ def test_the_ported_rules_carry_no_private_context():
 def test_the_verifier_stays_without_a_mutation_round():
     assert "mutation" not in flat(read_agent("verifier"))
 
+
+def test_a_level_1_heading_ends_a_section():
+    text = "## Steps\n\nfirst phrase\n\n# Stray\n\nsecond phrase\n"
+    body = section_of(text, "Steps")
+    assert "first phrase" in body and "second phrase" not in body, body
+
+
+def test_the_private_pattern_catches_each_kind_and_spares_a_route():
+    hits = ["/Us" + "ers/bob/x", "/mnt/c" + "/Us" + "ers/bob", "AKIA" + "ABCDEFGHIJKLMNOP",
+            "-----BEGIN RSA " + "PRIVATE KEY-----", "ghp_" + "a" * 36, "github_pat_" + "a" * 40]
+    for text in hits:
+        assert PRIVATE.search(text), text
+    for text in ("GET:/users/42/orders", "never commit a private key"):
+        assert not PRIVATE.search(text), text
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):

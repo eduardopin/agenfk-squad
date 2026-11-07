@@ -86,7 +86,7 @@ test against the behaviour its criterion names, and by the suite you ran.
 - IAM: privilege beyond the card's need. Network: anything newly reachable from
   the internet. Persistence: data that cannot be rebuilt. Cost: a monthly
   figure with its source in the PR body. Rollback: written and plausible.
-- Production is read-only for you without exception.
+- Production is read-only for you unless the owner asks in writing; a plan is the most you run there.
 
 ### Then, what nobody was looking at
 

@@ -45,7 +45,7 @@ EPILOG = """exit codes:
   0  every render passed
   1  the probe found a problem (a FAIL line says which)
   2  usage error or no such page
-  3  no browser found: the page is unverified, not failing
+  3  no browser found, or its sandbox refused and no --no-sandbox was given: unverified, not failing
   4  the check itself crashed: the page is unverified, not failing"""
 MIN_WINDOW = 500
 HEIGHT = 4200
@@ -142,7 +142,8 @@ def judge(result, lang=None):
     if not result.get("fonts"):
         warns.append(("fonts", "no web font loaded; labels measured in a fallback face"))
     if result.get("unsandboxed"):
-        warns.append(("sandbox", "Chromium refused to start sandboxed; this render ran with --no-sandbox"))
+        warns.append(("sandbox", "Chromium refused to start sandboxed; ran with --no-sandbox: "
+                                 + ", ".join(result["unsandboxed"])))
     return fails, warns
 
 
@@ -154,12 +155,18 @@ def run_browser(browser, args, sandbox=True, timeout=TIMEOUT):
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
-def run_sandboxed(browser, args):
-    """Run with the sandbox; fall back to --no-sandbox only when Chromium refuses to start with it.
+class SandboxRefused(Exception):
+    """Chromium would not start sandboxed and --no-sandbox was not asked for."""
 
-    Returns (completed process, whether the fallback was used)."""
+
+def run_sandboxed(browser, args, allow_unsandboxed=False):
+    """Run with the sandbox; run again with --no-sandbox only when the caller opted in.
+
+    Returns (completed process, whether the unsandboxed run was used)."""
     done = run_browser(browser, args)
     if done.returncode != 0 and "sandbox" in done.stderr.lower():
+        if not allow_unsandboxed:
+            raise SandboxRefused()
         return run_browser(browser, args, sandbox=False), True
     return done, False
 
@@ -169,7 +176,7 @@ def last_line(text):
     return lines[-1][:200] if lines else "no output"
 
 
-def render_one(browser, out, theme, width, lang, shots):
+def render_one(browser, out, theme, width, lang, shots, no_sandbox=False):
     tag = f"{theme}-{width}-{lang}"
     page = out / f"preview-{theme}-{lang}.html"
     target = f"{page.as_uri()}#{lang}"
@@ -184,13 +191,19 @@ def render_one(browser, out, theme, width, lang, shots):
         target = frame.as_uri()
     window = f"--window-size={max(width, MIN_WINDOW)},{HEIGHT}"
     result = {}
+    unsandboxed = []
     # A web font fetched through a TLS-inspecting proxy sometimes misses the
     # virtual-time budget; a second attempt measures in the real face.
     for _ in range(ATTEMPTS):
         try:
             if shots:
-                run_sandboxed(browser, [window, f"--screenshot={out / f'shot-{tag}.png'}", target])
-            done, unsandboxed = run_sandboxed(browser, [window, "--dump-dom", target])
+                _, bare = run_sandboxed(browser, [window, f"--screenshot={out / f'shot-{tag}.png'}", target],
+                                        no_sandbox)
+                if bare and "screenshot" not in unsandboxed:
+                    unsandboxed.append("screenshot")
+            done, bare = run_sandboxed(browser, [window, "--dump-dom", target], no_sandbox)
+            if bare and "dump-dom" not in unsandboxed:
+                unsandboxed.append("dump-dom")
         except subprocess.TimeoutExpired:
             return tag, {"error": f"browser timed out after {TIMEOUT}s"}
         found = OUT_RE.findall(done.stdout)
@@ -202,7 +215,7 @@ def render_one(browser, out, theme, width, lang, shots):
         except ValueError as exc:
             return tag, {"error": f"unreadable probe output: {exc}"}
         if unsandboxed:
-            result["unsandboxed"] = True
+            result["unsandboxed"] = unsandboxed
         if result.get("fonts") or "error" in result:
             break
     return tag, result
@@ -229,6 +242,8 @@ def check(argv=None):
     ap.add_argument("--widths", default="1100,400")
     ap.add_argument("--langs", help="default: every language in the page's #i18n block, else en")
     ap.add_argument("--browser")
+    ap.add_argument("--no-sandbox", action="store_true",
+                    help="when Chromium refuses to start sandboxed, run it unsandboxed (WARN) instead of exiting 3")
     ap.add_argument("--no-shots", action="store_true", help="skip the PNG screenshots")
     ap.add_argument("--json", action="store_true", help="print every probe result as JSON")
     a = ap.parse_args(argv)
@@ -270,8 +285,13 @@ def check(argv=None):
 
     jobs = [(t, w, lang) for t in themes for w in widths for lang in langs]
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        results = list(pool.map(lambda j: render_one(browser, out, *j, not a.no_shots),
-                                jobs))
+        try:
+            results = list(pool.map(lambda j: render_one(browser, out, *j, not a.no_shots, a.no_sandbox),
+                                    jobs))
+        except SandboxRefused:
+            print("Chromium cannot start with its sandbox here, so the page is unverified; "
+                  "rerun with --no-sandbox to run it unsandboxed.", file=sys.stderr)
+            return EXIT_NO_BROWSER
 
     failed = False
     for (theme, width, lang), (tag, result) in zip(jobs, results):

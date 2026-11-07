@@ -22,6 +22,7 @@ Flags, all optional:
 | `--widths` | window widths in px (default `1100,400`) |
 | `--langs` | languages to measure, such as `en,pt` (default: every one in the page's `#i18n` block) |
 | `--browser` | path to Chrome or Chromium, ahead of `$CHROME` and the PATH lookup |
+| `--no-sandbox` | when Chromium refuses to start sandboxed, run it unsandboxed and print a `WARN sandbox` naming the runs (screenshot, dump-dom); without it that refusal exits 3 |
 | `--no-shots` | skip the PNG screenshots |
 | `--json` | print every probe result as JSON |
 
@@ -79,7 +80,7 @@ names the svg id, else the first list after the drawing and before the next one.
 
 Warnings never fail the page: `fonts` (no web font loaded, so labels were
 measured in a fallback face) and `sandbox` (Chromium refused to start sandboxed
-and the render ran with `--no-sandbox`).
+and `--no-sandbox` was given, so the render ran unsandboxed).
 
 Languages come from the page's `#i18n` block (`<script type="application/json"
 id="i18n">{"en": {...}, "pt": {...}}</script>`), English first; a page without
@@ -93,7 +94,7 @@ script must switch on the hash.
 | `0` | ok: every render passed |
 | `1` | fail: the probe found a problem; a `FAIL` line says which |
 | `2` | usage error or no such page; checked before a browser is looked for |
-| `3` | no browser found: the page is unverified, not failing. Install one (`npx playwright install chromium`) or point `--browser` or `$CHROME` at it |
+| `3` | no browser found, or Chromium refused its sandbox and `--no-sandbox` was not given. The page is unverified, not failing. Install one (`npx playwright install chromium`), point `--browser` or `$CHROME` at it, or add `--no-sandbox` where the sandbox cannot run |
 | `4` | crash: the check itself broke, and the page is unverified, not failing |
 
 `render.sh` exits 1 on a problem or a page with no diagram, 2 when there is no

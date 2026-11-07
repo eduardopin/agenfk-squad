@@ -719,7 +719,8 @@ def test_render_py_no_sandbox_flag_runs_unsandboxed_and_warns_for_each_run():
         warns = [line for line in r.stdout.splitlines() if line.startswith("WARN sandbox")]
         assert len(warns) == 1 and "screenshot" in warns[0] and "dump-dom" in warns[0], out
         calls = read(log).splitlines()
-        assert len(calls) == 2 and all("--no-sandbox" in c for c in calls), calls
+        # each run is tried sandboxed first, then repeated unsandboxed: screenshot and dump-dom
+        assert sum("--no-sandbox" in c for c in calls) == 2, calls
     finally:
         shutil.rmtree(tmp)
 

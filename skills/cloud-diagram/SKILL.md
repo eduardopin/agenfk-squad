@@ -204,7 +204,8 @@ fails). Every shape is measured where its `transform` draws it. The rules and
 the exit codes (1 = a problem, 2 = usage, 3 = no browser, so the page is
 unverified, 4 = the check crashed) are in `references/probe-rules.md`. The
 browser comes from `--browser`, `$CHROME`, `google-chrome` or `chromium` on the
-PATH, or the Playwright cache. Under 500 px the page runs in an iframe of the
+PATH, or the Playwright cache. If Chromium cannot start its sandbox (containers, CI) the render
+exits 3 and names `--no-sandbox`; pass it only where you accept an unsandboxed browser (a WARN is printed). Under 500 px the page runs in an iframe of the
 exact width, because headless Chrome opens no smaller window.
 `scripts/render.sh <page.html> <folder> "1100 400"` is the same probe from the
 shell, without languages or JSON.

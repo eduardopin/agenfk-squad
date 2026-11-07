@@ -360,11 +360,19 @@ def safe_extract(tar, dest):
 
 def git_source(repo, ref, subdir, tmp):
     """The committed content at a git ref, untouched by local edits."""
-    r = subprocess.run(["git", "-C", str(repo), "rev-parse", ref], capture_output=True, text=True, encoding="utf-8")
+    # A value shaped like an option would reach git as one (--output= writes outside --out).
+    for label, value in (("--git-ref", ref), ("--git-subdir", subdir)):
+        if not value or value.startswith("-"):
+            sys.exit(f"{label} {value!r} is not a ref or path: it may not start with '-'")
+    r = subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "--end-of-options", ref + "^{commit}"],
+                       capture_output=True, text=True, encoding="utf-8")
     sha = r.stdout.strip() if r.returncode == 0 else None
     if not sha:
         sys.exit(f"cannot resolve {ref} in {repo}; run git fetch there first")
-    tar = subprocess.run(["git", "-C", str(repo), "archive", sha, subdir], capture_output=True, check=True).stdout
+    a = subprocess.run(["git", "-C", str(repo), "archive", sha, "--", subdir], capture_output=True)
+    if a.returncode != 0:
+        sys.exit(f"git archive of {subdir} at {ref} failed: {a.stderr.decode('utf-8', 'replace').strip()}")
+    tar = a.stdout
     dest = Path(tmp) / "git-source"
     dest.mkdir()
     with tarfile.open(fileobj=io.BytesIO(tar)) as t:
@@ -448,6 +456,7 @@ def main(argv=None):
             if row["errors"]:
                 skipped += 1
                 manifest.append(row)
+                (out / "skills" / f"{s['name']}.zip").unlink(missing_ok=True)
                 continue
             counts = {}
             entries = list(skill_entries(s["name"], s["dir"], fm, body, counts, rules))
@@ -456,6 +465,7 @@ def main(argv=None):
             if row["errors"]:
                 skipped += 1
                 manifest.append(row)
+                (out / "skills" / f"{s['name']}.zip").unlink(missing_ok=True)
                 continue
             zpath = out / "skills" / f"{s['name']}.zip"
             write_zip(zpath, entries)

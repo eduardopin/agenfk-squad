@@ -67,7 +67,12 @@ The output:
 - A skill is skipped, and the run exits 1, on: no frontmatter; a name outside
   `[a-z0-9-]`, over 64 characters or containing `claude`/`anthropic`; a
   description empty or over 1024 characters; an AWS key, private key, GitHub,
-  Slack or API token in any file.
+  Slack or API token in any file. Those five patterns are the whole secret
+  scan: a JWT, an Azure or GCP key, an AWS secret key or a `password=` line
+  passes it, so read a skill before you export it. A skipped skill's zip from
+  an earlier run in the same `--out` is deleted.
+- `--git-ref` and `--git-subdir` may not start with `-`, so neither reaches
+  git as an option.
 - Zips carry fixed timestamps: an unchanged skill keeps its sha256 between
   exports, so `manifest.json` diffs show what changed.
 

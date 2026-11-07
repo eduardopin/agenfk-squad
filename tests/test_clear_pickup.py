@@ -334,6 +334,15 @@ def test_cli_write_auto_prints_the_path_and_digest():
     assert os.path.isfile(path) and digest[:12] in os.path.basename(path)
 
 
+def test_cli_write_auto_failing_to_write_is_one_line_not_a_traceback():
+    h = home()
+    t = transcript(os.path.join(h, ".claude", "projects", "-p", f"{ME}.jsonl"), [rec("user", "go on")])
+    put(os.path.join(h, ".claude", "squad", "handoffs"), "a file where the folder should be")
+    out = cli(h, "auto", ME, t, h)
+    assert out.returncode == 1 and "Traceback" not in out.stderr, out.stderr
+    assert out.stderr.startswith("handoff.py:") and out.stdout == "", (out.stdout, out.stderr)
+
+
 # ---------------------------------------------------------------- git
 def test_git_facts_do_not_run_the_repository_fsmonitor():
     h = home()

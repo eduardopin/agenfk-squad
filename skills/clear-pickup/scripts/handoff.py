@@ -388,8 +388,12 @@ def main(argv):
         claim(args.file, me)
         return 0
     if args.cmd == "auto":
-        path, digest = write_auto(args.session, args.transcript, args.cwd)
-        print(path, digest)
+        try:
+            path, sha = write_auto(args.session, args.transcript, args.cwd)
+        except OSError as e:
+            print(f"handoff.py: {e}", file=sys.stderr)
+            return 1
+        print(path, sha)
         return 0
     parser().print_usage(sys.stderr)
     return 2

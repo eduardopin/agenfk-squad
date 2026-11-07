@@ -23,7 +23,8 @@ import time
 
 _DIRS = []
 _REGISTERED = []
-PATIENCE = 120      # seconds a directory may stay busy (a child that has not exited yet) before we give up
+PATIENCE = 60       # seconds, for ALL the directories together, that they may stay busy (a child that has not
+                    # exited yet) before we give up: a lock that never lets go must not cost this much per directory
 
 
 def _writable(path):
@@ -58,10 +59,11 @@ def _rmtree_once(path):
         shutil.rmtree(path, onerror=_on_error)
 
 
-def rmtree(path, patience=None):
-    """Remove path and everything under it, or return False after `patience` seconds (default PATIENCE)
-    with something left. A tree that is already gone is True."""
-    end = time.time() + (PATIENCE if patience is None else patience)
+def rmtree(path, patience=None, deadline=None):
+    """Remove path and everything under it, or return False once `deadline` (a time.time() value) or, without
+    one, `patience` seconds (default PATIENCE) have passed with something left. At least one attempt is made
+    whatever the clock says. A tree that is already gone is True."""
+    end = deadline if deadline is not None else time.time() + (PATIENCE if patience is None else patience)
     delay = 0.05
     while True:
         try:
@@ -77,8 +79,11 @@ def rmtree(path, patience=None):
 
 
 def _remove_all():
+    """One deadline for every tracked directory, not one per directory: the CI job that runs a test file has
+    a timeout, and dozens of directories stuck behind the same lock would each wait out their own."""
+    deadline = time.time() + PATIENCE
     for path in reversed(_DIRS):
-        if not rmtree(path):
+        if not rmtree(path, deadline=deadline):
             print(f"warning: could not remove {path} (a file in it is still in use)", file=sys.stderr)
     del _DIRS[:]
 

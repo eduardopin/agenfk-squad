@@ -90,6 +90,28 @@ def test_a_directory_that_stays_busy_is_reported_not_hidden():
         _tmpclean.rmtree(top, patience=5)
 
 
+def test_many_stuck_directories_give_up_within_one_shared_budget():
+    import io
+    import time
+    dirs = [tempfile.mkdtemp(prefix="tmpclean-stuck-") for _ in range(20)]
+    saved = (_tmpclean._DIRS[:], _tmpclean.PATIENCE, _tmpclean._rmtree_once, sys.stderr)
+    _tmpclean._DIRS[:] = dirs
+    _tmpclean.PATIENCE = 1.0                                    # the whole budget; per directory it would be 20 s
+    _tmpclean._rmtree_once = lambda path: None                  # the removal never takes: a lock that never lets go
+    sys.stderr = err = io.StringIO()
+    t0 = time.time()
+    try:
+        _tmpclean._remove_all()
+        took = time.time() - t0
+    finally:
+        _tmpclean._DIRS[:], _tmpclean.PATIENCE, _tmpclean._rmtree_once, sys.stderr = saved
+        for d in dirs:
+            _tmpclean.rmtree(d, patience=5)
+    assert took < 5, "20 stuck directories took %.1f s: the patience is spent per directory" % took
+    assert err.getvalue().count("could not remove") == 20, err.getvalue()
+    assert not any(os.path.lexists(d) for d in dirs)
+
+
 CHILD = r"""
 import os, stat, sys
 sys.path.insert(0, {tests!r})

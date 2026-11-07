@@ -506,6 +506,7 @@ CASES = {
     "clean": ("", {}, set()),
     "label-overlap": ('<text x="70" y="170">Alpha2</text>', {}, {"label-overlap"}),
     "label-on-icon": ('<text x="62" y="130">Over</text>', {}, {"label-on-icon"}),
+    "label-partly-on-icon": ('<text x="70" y="145">Partially over</text>', {}, {"label-on-icon"}),
     "label-on-border": ('<text x="8" y="200">Straddle</text>', {}, {"label-on-border"}),
     "band-label-may-cross": (AZ + '<rect class="grp g-svc" x="60" y="200" width="480" height="50"/>'
                              '<text x="285" y="230" text-anchor="middle">Service</text>', {}, set()),
@@ -578,7 +579,7 @@ def test_probe_a_clean_drawing_reports_nothing():
 
 
 def test_probe_label_rules():
-    expect("label-overlap", "label-on-icon", "label-on-border")
+    expect("label-overlap", "label-on-icon", "label-partly-on-icon", "label-on-border")
 
 
 def test_probe_label_across_a_group_line_is_allowed_only_inside_a_band():
@@ -673,6 +674,56 @@ def test_render_py_usage_errors_exit_2_before_it_looks_for_a_browser():
         shutil.rmtree(tmp)
 
 
+def _sandbox_stub(tmp):
+    """A browser that refuses to start sandboxed, and logs every call; with --no-sandbox it answers."""
+    log = os.path.join(tmp, "calls.log")
+    probe = json.dumps({"lang": "en", "fonts": ["x"], "status": {"ok": True},
+                        "diagrams": [{"id": "d", "problems": [], "texts": 1, "icons": 1, "edges": 1}]})
+    path = os.path.join(tmp, "stub-browser")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"#!{sys.executable}\nimport sys\n"
+                f"open({log!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                "if '--no-sandbox' not in sys.argv:\n"
+                "    sys.stderr.write('No usable sandbox! Update your kernel\\n')\n"
+                "    sys.exit(1)\n"
+                "if '--dump-dom' in sys.argv:\n"
+                f"    print('<pre id=\"probe-out\" hidden>' + {probe!r} + '</pre>')\n")
+    os.chmod(path, 0o755)
+    return path, log
+
+
+def test_render_py_sandbox_failure_exits_3_naming_the_flag_and_never_retries_unsandboxed():
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        stub, log = _sandbox_stub(tmp)
+        page = fixture_page(tmp, diagrams=drawing("d"))
+        r = run_render(page, "--out", os.path.join(tmp, "out"), "--browser", stub, "--themes", "light",
+                       "--widths", "1100", "--langs", "en", env=bare_env(tmp))
+        assert r.returncode == 3 and "--no-sandbox" in r.stderr and "sandbox" in r.stderr, (
+            r.returncode, r.stdout + r.stderr)
+        assert len(r.stderr.strip().splitlines()) == 1, r.stderr
+        assert "--no-sandbox" not in read(log), "the browser was started unsandboxed without being asked"
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_render_py_no_sandbox_flag_runs_unsandboxed_and_warns_for_each_run():
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        stub, log = _sandbox_stub(tmp)
+        page = fixture_page(tmp, diagrams=drawing("d"))
+        r = run_render(page, "--out", os.path.join(tmp, "out"), "--browser", stub, "--themes", "light",
+                       "--widths", "1100", "--langs", "en", "--no-sandbox", env=bare_env(tmp))
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, (r.returncode, out)
+        warns = [line for line in r.stdout.splitlines() if line.startswith("WARN sandbox")]
+        assert len(warns) == 1 and "screenshot" in warns[0] and "dump-dom" in warns[0], out
+        calls = read(log).splitlines()
+        assert len(calls) == 2 and all("--no-sandbox" in c for c in calls), calls
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_render_py_finds_the_browser_in_order_and_prefers_the_newest_playwright_build():
     mod = render_module()
     tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
@@ -723,7 +774,7 @@ def test_render_py_judge_turns_probe_output_into_fail_and_warn_lines():
     assert [r for r, _ in mod.judge(dict(good, lang="en"), "pt")[0]] == ["language-not-applied"]
     assert mod.judge(dict(good, lang="pt-BR"), "pt")[0] == []
     assert mod.judge({k: v for k, v in good.items() if k != "lang"}, "en")[0] == [], "no lang attribute reads as en"
-    warns = mod.judge(dict(good, fonts=[], unsandboxed=True), "en")
+    warns = mod.judge(dict(good, fonts=[], unsandboxed=["screenshot", "dump-dom"]), "en")
     assert warns[0] == [] and [r for r, _ in warns[1]] == ["fonts", "sandbox"], warns
 
 

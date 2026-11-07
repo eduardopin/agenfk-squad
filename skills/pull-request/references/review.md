@@ -172,8 +172,8 @@ documentation, naming or the title.
 In the `verifier`: a Blocking finding fixable on the branch → FIX_FIRST; a
 Blocking finding on the automatic REJECT list (committed secret, real network
 or model in the suite, a test removed without an argument, a path forbidden
-for the card's type) → REJECT; no Blocking finding → SHIP, with the High and Minor
-ones as warnings.
+for the card's type) → REJECT; no Blocking finding → SHIP, with the High and
+Minor ones as warnings.
 
 ## 6. Build the review (post only with the owner)
 

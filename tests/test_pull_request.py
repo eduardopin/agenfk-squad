@@ -582,10 +582,11 @@ def test_markdown_flag_writes_the_review_text_for_the_slop_lint():
                             capture_output=True, text=True)
     assert helped.returncode == 0 and "--markdown" in helped.stdout, helped
     slop = os.path.join(ROOT, "skills", "writing", "scripts", "slop_lint.py")
-    if os.path.exists(slop):
-        lint = subprocess.run([sys.executable, "-I", "-B", slop, out], capture_output=True, text=True)
-        assert lint.returncode == 0, lint  # the review text ships clean: no ERROR from the linter
-        assert "Traceback" not in lint.stderr, lint.stderr
+    # this repository ships the writing skill, so a missing linter fails instead of skipping the check
+    assert os.path.exists(slop), "skills/writing/scripts/slop_lint.py is missing"
+    lint = subprocess.run([sys.executable, "-I", "-B", slop, out], capture_output=True, text=True)
+    assert lint.returncode == 0, lint  # the review text ships clean: no ERROR from the linter
+    assert "Traceback" not in lint.stderr, lint.stderr
 
 
 def test_review_reference_documents_the_three_levels_and_the_lint_step():
@@ -594,6 +595,14 @@ def test_review_reference_documents_the_three_levels_and_the_lint_step():
         doc = fh.read()
     assert "**High**:" in doc and doc.index("**Blocking**:") < doc.index("**High**:") < doc.index("**Minor**:"), "High level"
     assert "--markdown" in doc and "slop_lint.py" in doc, "lint step"
+
+
+def test_skill_md_names_the_high_level_and_its_warning_wording():
+    """SKILL.md must agree with references/review.md: High is a level, and SHIP carries High and Minor as warnings."""
+    with open(os.path.join(SKILL, "SKILL.md"), encoding="utf-8") as fh:
+        doc = fh.read()
+    assert "**High**:" in doc and doc.index("**Blocking**:") < doc.index("**High**:") < doc.index("**Minor**:"), "High level"
+    assert "the High and Minor ones as warnings" in doc.replace("\n", " "), "warning wording"
 
 
 # --- body rules, one by one ---------------------------------------------------

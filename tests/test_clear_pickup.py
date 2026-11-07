@@ -289,6 +289,23 @@ def test_claim_cannot_forge_a_pickup_row():
     assert len(rows) == 1 and rows[0].count("\t") == 3
 
 
+def test_two_sessions_claiming_one_handoff_both_keep_their_row():
+    h = home()
+    p = handoff(os.path.join(hdir(h), "x.md"), OLD)
+    m = lib()
+    m.claim(p, NEXT)
+    m.claim(p, ME)
+    rows = read(os.path.join(h, ".claude", "squad", "pickups.log")).splitlines()
+    assert [r.split("\t")[2] for r in rows] == [NEXT[:8], ME[:8]], rows
+
+
+def test_a_session_id_with_a_tab_cannot_forge_a_column():
+    h = home()
+    p = handoff(os.path.join(hdir(h), "x.md"), OLD)
+    lib().claim(p, "ab\tcd\nef")
+    rows = read(os.path.join(h, ".claude", "squad", "pickups.log")).splitlines()
+    assert len(rows) == 1 and rows[0].count("\t") == 3, rows
+
 # ---------------------------------------------------------------- the command line
 def test_cli_check_prints_json_and_claim_records():
     h = home()

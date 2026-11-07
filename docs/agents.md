@@ -36,10 +36,17 @@ Two notes on that table.
   the limit on writing is a rule in the prompt, and it is weaker than a
   missing tool. Tightening this with per-agent permission rules is on the
   [roadmap](../ROADMAP.md).
-- `tester`, `verifier` and `context` run on Sonnet on purpose. Their work is
-  mechanical and high-volume (run the suite, check the evidence, measure), a cheaper model
-  does it well, and a reviewer on a different model than the author shares
-  fewer of its blind spots.
+- `tester`, `verifier`, `context`, `product`, `github`, `finops` and
+  `developer` run on Sonnet on purpose. A fan-out dispatches these agents
+  many times per card, so their model sets most of a card's token bill. `tester`, `verifier` and `context` do mechanical,
+  high-volume work (run the suite, check the evidence, measure); `product`
+  and `github` plan and map; `finops` may not state a number without its
+  source. `developer` writes code, so the safeguards there are the card's
+  tests, the suite as the gate and the independent `verifier`. The verifier
+  now runs on the same model as the developer, so it no longer brings a
+  different model's blind spots: what it brings is a clean context. When a
+  card needs a stronger model, the orchestrator passes `model` on that
+  dispatch, which overrides the frontmatter for one run.
 
 ## Rules that apply to every agent
 

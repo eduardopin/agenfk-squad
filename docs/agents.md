@@ -18,14 +18,14 @@ is advice; an agent with no `Edit` and no `Write` cannot edit files. Read the
 
 | Agent | Flow step | Tools | Writes? | Model |
 |---|---|---|---|---|
-| [`product`](#product) | TODO | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (creates cards through `agenfk`) | inherit |
-| [`github`](#github) | before IMPLEMENT, at VERIFY | Read, Grep, Glob, Bash, Write | Worktree claims only | inherit |
-| [`developer`](#developer) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes | inherit |
+| [`product`](#product) | TODO | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (creates cards through `agenfk`) | Sonnet |
+| [`github`](#github) | before IMPLEMENT, at VERIFY | Read, Grep, Glob, Bash, Write | Worktree claims only | Sonnet |
+| [`developer`](#developer) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes | Sonnet |
 | [`frontend`](#frontend) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch | Yes | inherit |
 | [`infra`](#infra) | IMPLEMENT | Read, Grep, Glob, Edit, Write, Bash | Yes, stops at `plan` | inherit |
 | [`tester`](#tester) | TEST | Read, Grep, Glob, Edit, Write, Bash | Test files only | Sonnet |
 | [`verifier`](#verifier) | REVIEW, ADVERSARIAL, VERIFY | Read, Grep, Glob, Bash | No | Sonnet |
-| [`finops`](#finops) | before a stack or cloud decision | Read, Grep, Glob, Bash, WebFetch, WebSearch | No | inherit |
+| [`finops`](#finops) | before a stack or cloud decision | Read, Grep, Glob, Bash, WebFetch, WebSearch | No | Sonnet |
 | [`finance`](#finance) | on request | Read, Grep, Glob, Bash, WebFetch, WebSearch | No | inherit |
 | [`gtm`](#gtm) | on request | Read, Grep, Glob, Bash, WebFetch, WebSearch | No (drafts only) | inherit |
 | [`context`](#context) | any time | Read, Grep, Glob, Bash, Write | Handoffs and card comments only | Sonnet |
@@ -36,10 +36,21 @@ Two notes on that table.
   the limit on writing is a rule in the prompt, and it is weaker than a
   missing tool. Tightening this with per-agent permission rules is on the
   [roadmap](../ROADMAP.md).
-- `tester`, `verifier` and `context` run on Sonnet on purpose. Their work is
-  mechanical and high-volume (run the suite, check the evidence, measure), a cheaper model
-  does it well, and a reviewer on a different model than the author shares
-  fewer of its blind spots.
+- `tester`, `verifier`, `context`, `product`, `github`, `finops` and
+  `developer` run on Sonnet on purpose. A fan-out dispatches these agents
+  many times per card, so their model sets much of a card's bill: in the
+  private squad's sub-agent log for 2026-10-09 to 2026-11-05 (848 runs,
+  391M weighted tokens), the verifier alone was 38%. On oh-my-pi, `sonnet` maps to the
+  `@default` role, not to Sonnet; see
+  [`skills/harness-port/SKILL.md`](../skills/harness-port/SKILL.md).
+  `tester`, `verifier` and `context` do mechanical, high-volume work (run the suite, check the evidence, measure); `product`
+  and `github` plan and map; `finops` may not state a number without its
+  source. `developer` writes code, so the safeguards there are the card's
+  tests, the suite as the gate and the independent `verifier`. The verifier
+  now runs on the same model as the developer, so it no longer brings a
+  different model's blind spots: what it brings is a clean context. When a
+  card needs a stronger model, the orchestrator passes `model` on that
+  dispatch, which overrides the frontmatter for one run.
 
 ## Rules that apply to every agent
 

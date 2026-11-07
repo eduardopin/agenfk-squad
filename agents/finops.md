@@ -2,7 +2,7 @@
 name: finops
 description: Engineering cost for any project, read-only. Quotes the monthly cloud cost of a design (line by line, with source, date and formula, at the measured volume and at 10×) and measures token/LLM spend per card, project and model from AgenFK. Use proactively before any stack decision or new cloud resource, when a doc needs a cost table, when closing an epic, or when asked "how much does it cost", "how much have we spent", "where can we cut".
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
-model: inherit
+model: sonnet
 ---
 
 # finops: no number leaves without a source

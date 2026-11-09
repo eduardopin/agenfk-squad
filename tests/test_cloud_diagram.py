@@ -816,6 +816,9 @@ def test_render_py_languages_come_from_the_i18n_block_english_first():
     assert mod.languages(block) == ["en", "es", "pt"]
     assert mod.languages("<p>none</p>") == ["en"]
     assert mod.languages('<script id="i18n">{not json</script>') == ["en"]
+    # valid JSON that is not an object has no language keys: fall back, never crash
+    assert mod.languages('<script id="i18n">["en", "pt"]</script>') == ["en"]
+    assert mod.languages('<script id="i18n">"en"</script>') == ["en"]
 
 
 def test_render_py_is_stdlib_only_states_its_encoding_and_leaves_no_bytecode():

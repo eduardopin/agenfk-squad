@@ -105,9 +105,10 @@ def languages(source):
     """The languages the page's #i18n block carries, English first; just en without one."""
     m = re.search(r'<script[^>]*id="i18n"[^>]*>(.*?)</script>', source, re.S)
     try:
-        langs = list(json.loads(m.group(1)).keys()) if m else []
+        block = json.loads(m.group(1)) if m else {}
     except ValueError:
-        langs = []
+        block = {}
+    langs = list(block) if isinstance(block, dict) else []
     langs = [lang for lang in langs if re.fullmatch(r"[a-z]{2}", lang)]
     return sorted(langs, key=lambda lang: (lang != "en", lang)) or ["en"]
 

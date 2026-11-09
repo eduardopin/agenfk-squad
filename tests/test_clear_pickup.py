@@ -282,6 +282,10 @@ def test_shared_copies_folder_never_makes_a_handoff_stale():
 
 
 def test_claim_cannot_forge_a_pickup_row():
+    if os.name == "nt":
+        # Windows refuses a tab or a newline in a path, so no handoff path can forge a row there.
+        print("skipped: Windows paths cannot hold a tab or a newline")
+        return
     h = home()
     p = handoff(os.path.join(h, "a\tb\nc", "x.md"), OLD)
     lib().claim(p, NEXT)

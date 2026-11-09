@@ -11,6 +11,7 @@ stripped from the page copy and Chrome resolves no host name.
 """
 import json
 import os
+import pathlib
 import re
 import shlex
 import shutil
@@ -828,10 +829,15 @@ def test_render_py_judge_turns_probe_output_into_fail_and_warn_lines():
 
 def test_render_py_prepare_sets_the_theme_wraps_a_fragment_and_injects_the_probe_last():
     mod = render_module()
-    page = mod.prepare('<html lang="en" data-theme="dark" class="x"><head></head><body><p>hi</p></body></html>',
-                       "light", "/tmp/somewhere", "/*probe*/")
+    base = tempfile.mkdtemp(prefix="cloud-diagram-")   # absolute on every OS, which as_uri() needs
+    try:
+        page = mod.prepare('<html lang="en" data-theme="dark" class="x"><head></head><body><p>hi</p></body></html>',
+                           "light", base, "/*probe*/")
+        uri = pathlib.Path(base).as_uri()
+    finally:
+        shutil.rmtree(base)
     assert page.count("data-theme=") == 1 and 'data-theme="light"' in page and 'lang="en"' in page, page
-    assert '<base href="file:///tmp/somewhere/">' in page, page
+    assert f'<base href="{uri}/">' in page, page
     assert page.index("/*probe*/") > page.index("<p>hi</p>") and page.rstrip().endswith("</body></html>"), page
     frag = mod.prepare("<svg></svg>", "dark", None, "/*probe*/")
     assert frag.startswith("<!doctype html>") and 'data-theme="dark"' in frag and "<svg></svg>" in frag, frag

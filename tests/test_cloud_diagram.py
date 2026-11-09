@@ -354,7 +354,7 @@ def test_render_help_exits_0_and_a_dash_page_goes_after_double_dash():
         env = _no_chrome_env(tmp)         # help needs no browser and no tool on PATH
         for flag in ("-h", "--help"):
             r = subprocess.run([BASH, RENDER, flag], capture_output=True, text=True, env=env, timeout=60)
-            assert r.returncode == 0 and "render.sh [--] <page.html>" in r.stdout and "status=NO-DIAGRAM" in r.stdout, (
+            assert r.returncode == 0 and "render.sh [--no-sandbox] [--] <page.html>" in r.stdout and "status=NO-DIAGRAM" in r.stdout, (
                 flag, r.returncode, r.stdout + r.stderr)
             assert not r.stdout.lstrip().startswith("#!"), r.stdout
         shutil.copy(TEMPLATE, os.path.join(tmp, "-page.html"))
@@ -679,7 +679,8 @@ def _sandbox_stub(tmp, refuse_screenshot=False):
 
     refuse_screenshot makes --screenshot fail for a reason that is not the sandbox."""
     log = os.path.join(tmp, "calls.log")
-    probe = json.dumps({"lang": "en", "fonts": ["x"], "status": {"ok": True},
+    probe = json.dumps({"lang": "en", "fonts": ["x"], "status": {"ok": True}, "viewport": "1100x4200",
+                        "page_scrolls_sideways": False, "past_viewport": [],
                         "diagrams": [{"id": "d", "problems": [], "texts": 1, "icons": 1, "edges": 1}]})
     path = os.path.join(tmp, "stub-browser")
     with open(path, "w", encoding="utf-8") as f:
@@ -722,6 +723,30 @@ def test_render_py_fails_when_the_screenshot_run_fails_for_a_reason_other_than_t
         out = r.stdout + r.stderr
         assert r.returncode == 1 and "FAIL" in out and "Failed to write the screenshot" in out, (
             r.returncode, out)
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_render_sh_is_sandboxed_by_default_refuses_without_the_flag_and_runs_unsandboxed_with_it():
+    if os.name == "nt":
+        raise Skip("bash and a stub Chrome cannot run on Windows")
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        stub, log = _sandbox_stub(tmp)
+        page = fixture_page(tmp, diagrams=drawing("d"))
+        env = {**os.environ, "CHROME": stub}
+        r = subprocess.run([BASH, RENDER, page, os.path.join(tmp, "out"), "1100"], capture_output=True,
+                           text=True, timeout=120, env=env)
+        assert r.returncode == 4 and "--no-sandbox" in r.stderr, (r.returncode, r.stdout + r.stderr)
+        assert "--no-sandbox" not in read(log), "render.sh started Chromium unsandboxed without being asked"
+        os.remove(log)
+        r = subprocess.run([BASH, RENDER, "--no-sandbox", page, os.path.join(tmp, "out2"), "1100"],
+                           capture_output=True, text=True, timeout=120, env=env)
+        assert r.returncode == 0 and "WARN sandbox" in r.stderr, (r.returncode, r.stdout + r.stderr)
+        calls = read(log).splitlines()
+        # sandboxed first, then the same run unsandboxed: screenshot and dump-dom, light and dark
+        assert sum("--no-sandbox" in c for c in calls) == 4 and len(calls) == 8, calls
+        assert all("--no-sandbox" not in c for c in calls[0::2]), calls
     finally:
         shutil.rmtree(tmp)
 

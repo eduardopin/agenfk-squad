@@ -98,4 +98,9 @@ script must switch on the hash.
 | `4` | crash: the check itself broke, and the page is unverified, not failing |
 
 `render.sh` exits 1 on a problem or a page with no diagram, 2 when there is no
-Chrome, 3 on a usage error.
+Chrome, 3 on a usage error, 4 when Chromium refused to start sandboxed and
+`--no-sandbox` was not given. Its sandbox rule is `render.py`'s: Chromium starts
+sandboxed; `render.sh --no-sandbox <page.html>` repeats a refused run
+unsandboxed and prints a `WARN sandbox` line, and without the flag the refusal
+exits 4 with a message naming it. Its code 3 is a usage error, not a missing
+browser, which is why the sandbox refusal takes 4 and not `render.py`'s 3.

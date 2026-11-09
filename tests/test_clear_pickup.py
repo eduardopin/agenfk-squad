@@ -466,6 +466,10 @@ if __name__ == "__main__":
                 fn()
                 print("ok ", name)
     finally:
+        # sealed handoffs are 0400, and Windows will not delete a read-only file
+        for root, dirs, files in os.walk(RUN_TMP):
+            for f in files:
+                os.chmod(os.path.join(root, f), 0o600)
         shutil.rmtree(RUN_TMP, ignore_errors=True)
     assert not os.path.exists(RUN_TMP), f"left behind: {RUN_TMP}"
     print("ok  nothing is left in the temporary directory after the run")

@@ -725,8 +725,8 @@ def test_render_py_fails_when_the_screenshot_run_fails_for_a_reason_other_than_t
         r = run_render(page, "--out", os.path.join(tmp, "out"), "--browser", stub, "--themes", "light",
                        "--widths", "1100", "--langs", "en", "--no-sandbox", env=bare_env(tmp))
         out = r.stdout + r.stderr
-        assert r.returncode == 1 and "FAIL" in out and "Failed to write the screenshot" in out, (
-            r.returncode, out)
+        assert r.returncode == 1 and "FAIL screenshot:" in out and "Failed to write the screenshot" in out \
+            and "probe-did-not-run" not in out, (r.returncode, out)
     finally:
         shutil.rmtree(tmp)
 

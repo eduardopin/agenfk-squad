@@ -118,7 +118,8 @@ def judge(result, lang=None):
 
     lang is the language the render asked for; the page must have switched to it."""
     if "error" in result:
-        return [("probe-did-not-run", result["error"].splitlines()[0][:200])], []
+        rule = result.get("rule") or "probe-did-not-run"
+        return [(rule, result["error"].splitlines()[0][:200])], []
     fails, warns = [], []
     # A page with no lang at all cannot show it switched; English is the unmarked default.
     shown = (result.get("lang") or "").lower() or ("en" if lang == "en" else "")
@@ -201,8 +202,8 @@ def render_one(browser, out, theme, width, lang, shots, no_sandbox=False):
                 shot, bare = run_sandboxed(browser, [window, f"--screenshot={out / f'shot-{tag}.png'}", target],
                                            no_sandbox)
                 if shot.returncode != 0:
-                    return tag, {"error": f"screenshot failed; browser exit {shot.returncode}: "
-                                          f"{last_line(shot.stderr)}"}
+                    return tag, {"rule": "screenshot",
+                                 "error": f"browser exit {shot.returncode}: {last_line(shot.stderr)}"}
                 if bare and "screenshot" not in unsandboxed:
                     unsandboxed.append("screenshot")
             done, bare = run_sandboxed(browser, [window, "--dump-dom", target], no_sandbox)

@@ -77,6 +77,7 @@ names the svg id, else the first list after the drawing and before the next one.
 | `language-not-applied` | the render asked for a language (`#pt`) and the page kept another one, so its labels were not measured |
 | `no-diagram` | no diagram on the page |
 | `probe-did-not-run` | the probe left no result (script error, timeout) |
+| `screenshot` | the screenshot run exited non-zero for a reason other than the sandbox, so no PNG was written and the page is not measured; the line carries the browser's last stderr line |
 
 Warnings never fail the page: `fonts` (no web font loaded, so labels were
 measured in a fallback face) and `sandbox` (Chromium refused to start sandboxed

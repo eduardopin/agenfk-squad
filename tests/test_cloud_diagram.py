@@ -674,8 +674,10 @@ def test_render_py_usage_errors_exit_2_before_it_looks_for_a_browser():
         shutil.rmtree(tmp)
 
 
-def _sandbox_stub(tmp):
-    """A browser that refuses to start sandboxed, and logs every call; with --no-sandbox it answers."""
+def _sandbox_stub(tmp, refuse_screenshot=False):
+    """A browser that refuses to start sandboxed, and logs every call; with --no-sandbox it answers.
+
+    refuse_screenshot makes --screenshot fail for a reason that is not the sandbox."""
     log = os.path.join(tmp, "calls.log")
     probe = json.dumps({"lang": "en", "fonts": ["x"], "status": {"ok": True},
                         "diagrams": [{"id": "d", "problems": [], "texts": 1, "icons": 1, "edges": 1}]})
@@ -683,6 +685,9 @@ def _sandbox_stub(tmp):
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"#!{sys.executable}\nimport sys\n"
                 f"open({log!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                + ("if any(a.startswith('--screenshot') for a in sys.argv):\n"
+                   "    sys.stderr.write('Failed to write the screenshot\\n')\n"
+                   "    sys.exit(1)\n" if refuse_screenshot else "") +
                 "if '--no-sandbox' not in sys.argv:\n"
                 "    sys.stderr.write('No usable sandbox! Update your kernel\\n')\n"
                 "    sys.exit(1)\n"
@@ -703,6 +708,20 @@ def test_render_py_sandbox_failure_exits_3_naming_the_flag_and_never_retries_uns
             r.returncode, r.stdout + r.stderr)
         assert len(r.stderr.strip().splitlines()) == 1, r.stderr
         assert "--no-sandbox" not in read(log), "the browser was started unsandboxed without being asked"
+    finally:
+        shutil.rmtree(tmp)
+
+
+def test_render_py_fails_when_the_screenshot_run_fails_for_a_reason_other_than_the_sandbox():
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        stub, _ = _sandbox_stub(tmp, refuse_screenshot=True)
+        page = fixture_page(tmp, diagrams=drawing("d"))
+        r = run_render(page, "--out", os.path.join(tmp, "out"), "--browser", stub, "--themes", "light",
+                       "--widths", "1100", "--langs", "en", "--no-sandbox", env=bare_env(tmp))
+        out = r.stdout + r.stderr
+        assert r.returncode == 1 and "FAIL" in out and "Failed to write the screenshot" in out, (
+            r.returncode, out)
     finally:
         shutil.rmtree(tmp)
 

@@ -197,8 +197,11 @@ def render_one(browser, out, theme, width, lang, shots, no_sandbox=False):
     for _ in range(ATTEMPTS):
         try:
             if shots:
-                _, bare = run_sandboxed(browser, [window, f"--screenshot={out / f'shot-{tag}.png'}", target],
-                                        no_sandbox)
+                shot, bare = run_sandboxed(browser, [window, f"--screenshot={out / f'shot-{tag}.png'}", target],
+                                           no_sandbox)
+                if shot.returncode != 0:
+                    return tag, {"error": f"screenshot failed; browser exit {shot.returncode}: "
+                                          f"{last_line(shot.stderr)}"}
                 if bare and "screenshot" not in unsandboxed:
                     unsandboxed.append("screenshot")
             done, bare = run_sandboxed(browser, [window, "--dump-dom", target], no_sandbox)

@@ -88,7 +88,9 @@ def hdir(h):
 
 
 def cli(h, *args, session=ME, cwd=None):
-    env = {**os.environ, "HOME": h, "USERPROFILE": h, "CLAUDE_CODE_SESSION_ID": session}
+    # drop the caller's own PI_SESSION_ID: session="" must mean no session, even run from pi
+    env = {k: v for k, v in os.environ.items() if k != "PI_SESSION_ID"}
+    env.update(HOME=h, USERPROFILE=h, CLAUDE_CODE_SESSION_ID=session)
     return subprocess.run([sys.executable, "-I", LIB, *args], env=env, cwd=cwd,
                           capture_output=True, text=True)
 
@@ -336,6 +338,13 @@ def test_cli_help_exits_zero_and_names_every_command():
         assert out.returncode == 0, (args, out.stderr)
     out = cli(h, "--help")
     assert all(w in out.stdout for w in ("facts", "check", "claim")), out.stdout
+
+
+def test_a_handoff_removed_between_the_read_and_the_stat_is_skipped():
+    m = lib()
+    gone = os.path.join(home(), "gone.md")  # read as ours, then removed before the stat
+    m.handoff_session = lambda f: NEXT
+    assert m.newest_of(NEXT, [gone], 0, set()) is None
 
 
 def test_cli_claim_without_a_session_refuses_and_a_bad_command_fails():

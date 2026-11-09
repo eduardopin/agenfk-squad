@@ -303,7 +303,10 @@ def newest_of(session, files, after, skip):
     for f in files:
         if f in skip or not handoff_session(f).startswith(session[:8]):
             continue
-        t = os.path.getmtime(f)
+        try:
+            t = os.path.getmtime(f)
+        except OSError:  # another session removed it between the glob and the stat
+            continue
         if t > after and (best is None or t > best[0]):
             best = (t, f)
     return best

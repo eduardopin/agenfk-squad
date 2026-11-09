@@ -791,7 +791,7 @@ def test_render_py_finds_the_browser_in_order_and_prefers_the_newest_playwright_
         exe("pw", "chromium-999", "chrome-linux", "chrome")
         assert mod.find_browser(None, env=bare, home=tmp) == new, "revision 1134 beats 1129 and 999 (numeric, not text)"
         assert old != new
-        on_path = exe("bin", "chromium")
+        on_path = exe("bin", "chromium.exe" if os.name == "nt" else "chromium")
         assert mod.find_browser(None, env=bare, home=tmp) == on_path, "PATH comes before the Playwright cache"
         env_chrome = exe("env", "chrome")
         assert mod.find_browser(None, env={**bare, "CHROME": env_chrome}, home=tmp) == env_chrome

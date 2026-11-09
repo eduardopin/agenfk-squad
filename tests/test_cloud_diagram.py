@@ -479,8 +479,11 @@ def bare_env(tmp):
     """No browser anywhere: an empty PATH, an empty HOME and an empty Playwright cache."""
     for d in ("bin", "home", "cache"):
         os.makedirs(os.path.join(tmp, d), exist_ok=True)
-    return {"PATH": os.path.join(tmp, "bin"), "HOME": os.path.join(tmp, "home"),
-            "PLAYWRIGHT_BROWSERS_PATH": os.path.join(tmp, "cache")}
+    # Start from the real environment: Windows Python will not start without SystemRoot and friends.
+    env = {**os.environ, "PATH": os.path.join(tmp, "bin"), "HOME": os.path.join(tmp, "home"),
+           "USERPROFILE": os.path.join(tmp, "home"), "PLAYWRIGHT_BROWSERS_PATH": os.path.join(tmp, "cache")}
+    env.pop("CHROME", None)
+    return env
 
 
 def fixture_page(tmp, name="page.html", diagrams=""):

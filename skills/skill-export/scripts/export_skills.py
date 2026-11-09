@@ -493,7 +493,7 @@ def main(argv=None):
             data = zpath.read_bytes()
             if len(data) > SKILL_WARN:
                 row["warnings"].append(f"zip is {len(data) // 1024} KiB; large uploads may be refused")
-            row.update(zip=str(zpath.relative_to(out)), bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+            row.update(zip=zpath.relative_to(out).as_posix(), bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
             plugin_entries += [(f"skills/{a}", b) for a, b in entries]
             manifest.append(row)
 

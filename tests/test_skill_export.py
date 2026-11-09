@@ -48,10 +48,10 @@ def load_script():
 def skill(root, name, head, body="Body.\n", extra=None):
     d = root / name
     d.mkdir(parents=True)
-    (d / "SKILL.md").write_text(f"---\n{head}\n---\n{body}", encoding="utf-8")
+    (d / "SKILL.md").write_text(f"---\n{head}\n---\n{body}", encoding="utf-8", newline="\n")
     for rel, text in (extra or {}).items():
         (d / rel).parent.mkdir(parents=True, exist_ok=True)
-        (d / rel).write_text(text, encoding="utf-8")
+        (d / rel).write_text(text, encoding="utf-8", newline="\n")
     return d
 
 
@@ -155,6 +155,7 @@ def test_account_ids_guids_and_sso_instance_become_placeholders():
         with zipfile.ZipFile(out / "skills" / "deploy.zip") as z:
             assert frontmatter_of(z, "deploy")["description"] == "Deploy to [AWS_ACCOUNT_ID]"
         assert manifest(out)[0]["redacted"] == {"aws-account-id": 2, "guid": 1, "sso-instance": 1}
+        assert manifest(out)[0]["zip"] == "skills/deploy.zip"
         assert (out / "INSTALL.md").is_file()
 
 
@@ -196,7 +197,7 @@ def test_skill_the_org_already_delivers_is_not_exported():
         skill(src, "notes", "name: notes\ndescription: Take notes")
         org = tmp / "synced" / "manifest.json"
         org.parent.mkdir()
-        org.write_text(json.dumps({"skills": [{"name": "runbook"}]}), encoding="utf-8")
+        org.write_text(json.dumps({"skills": [{"name": "runbook"}]}), encoding="utf-8", newline="\n")
         r, out = run(tmp, src, "--org-manifest", str(org))
         assert r.returncode == 0, r.stderr
         assert not (out / "skills" / "runbook.zip").exists()
@@ -256,7 +257,7 @@ def test_a_symlink_out_of_the_skill_is_refused_by_name():
         return
     with workdir() as tmp:
         outside = tmp / "outside.txt"
-        outside.write_text("private\n", encoding="utf-8")
+        outside.write_text("private\n", encoding="utf-8", newline="\n")
         src = tmp / "src"
         d = skill(src, "linky", "name: linky\ndescription: Links out")
         os.symlink(outside, d / "ref.txt")
@@ -351,7 +352,7 @@ def test_a_skill_without_frontmatter_is_skipped():
         src = tmp / "src"
         d = src / "bare"
         d.mkdir(parents=True)
-        (d / "SKILL.md").write_text("# no frontmatter\n", encoding="utf-8")
+        (d / "SKILL.md").write_text("# no frontmatter\n", encoding="utf-8", newline="\n")
         r, out = run(tmp, src)
         assert r.returncode == 1
         assert any("no frontmatter" in e for e in manifest(out)[0]["errors"])
@@ -369,7 +370,7 @@ def test_a_git_ref_source_ships_the_commit_not_the_local_edit():
         for cmd in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "x"], ["tag", "v1"]):
             subprocess.run(["git", "-C", str(repo), *cmd], check=True, capture_output=True, env=env)
         (repo / "skills" / "released" / "SKILL.md").write_text(
-            "---\nname: released\ndescription: Local edit\n---\n", encoding="utf-8")
+            "---\nname: released\ndescription: Local edit\n---\n", encoding="utf-8", newline="\n")
         empty = tmp / "personal"
         empty.mkdir()
         r, out = run(tmp, empty, "--git-repo", str(repo), "--git-ref", "v1", "--git-subdir", "skills")
@@ -407,7 +408,7 @@ def test_a_skill_skipped_on_a_rerun_leaves_no_old_zip_behind():
         r, out = run(tmp, src)
         assert r.returncode == 0 and (out / "skills" / "later-bad.zip").exists(), r.stderr
         key = "AKIA" + "ABCDEFGHIJKLMNOP"
-        (src / "later-bad" / "notes.md").write_text(f"key {key}\n", encoding="utf-8")
+        (src / "later-bad" / "notes.md").write_text(f"key {key}\n", encoding="utf-8", newline="\n")
         r, out = run(tmp, src)
         assert r.returncode == 1, r.stderr
         assert not (out / "skills" / "later-bad.zip").exists()
@@ -447,7 +448,7 @@ def test_a_refused_skill_leaves_no_plugin_zip_from_an_earlier_run():
         r, out = run(tmp, src)
         plugin = out / "plugin" / "exported-skills.zip"
         assert r.returncode == 0 and plugin.exists(), r.stderr
-        (src / "later-bad" / "notes.md").write_text("key " + "AKIA" + "ABCDEFGHIJKLMNOP\n", encoding="utf-8")
+        (src / "later-bad" / "notes.md").write_text("key " + "AKIA" + "ABCDEFGHIJKLMNOP\n", encoding="utf-8", newline="\n")
         r, out = run(tmp, src)
         assert r.returncode == 1 and not plugin.exists(), r.stderr
 
@@ -459,7 +460,7 @@ def test_a_skill_the_org_starts_delivering_loses_its_old_zip():
         r, out = run(tmp, src)
         assert (out / "skills" / "synced-later.zip").exists(), r.stderr
         org = tmp / "org.json"
-        org.write_text(json.dumps({"skills": [{"name": "synced-later"}]}), encoding="utf-8")
+        org.write_text(json.dumps({"skills": [{"name": "synced-later"}]}), encoding="utf-8", newline="\n")
         r2, out = run(tmp, src, "--org-manifest", str(org))
         assert r2.returncode == 0, r2.stderr
         assert not (out / "skills" / "synced-later.zip").exists(), r2.stdout

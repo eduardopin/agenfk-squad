@@ -155,7 +155,7 @@ non-negotiable points:
   tinted from that surface's own hue, never grey.
 - Visible focus on everything interactive; never remove an outline without a
   replacement.
-- Touch target ≥ 44×44 (native) / 48 (Android) as policy; on the web WCAG 2.5.8
+- Touch target ≥ 44×44 pt (iOS) / 48×48 dp (Android) as policy; on the web WCAG 2.5.8
   fails below 24×24 CSS px unless the spacing exception holds, and 44–48 is the
   comfort goal. 8px between targets (`references/mobile-patterns.md`).
 - `prefers-reduced-motion` respected; animation interruptible; nothing

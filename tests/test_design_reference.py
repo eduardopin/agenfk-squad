@@ -1078,6 +1078,8 @@ def test_target_size_rule_separates_wcag_minimum_from_platform_and_comfort_targe
     # The floor and the skill's own quality list state the same numbers, so they cannot drift apart.
     for name, text in (("quality-floor.md", floor), ("SKILL.md", md)):
         assert "2.5.8" in text and "24×24" in text, f"{name} does not state WCAG 2.5.8 at 24×24"
+    # The skill's floor line names each platform's unit, as mobile-patterns.md does.
+    assert "44×44 pt" in md and "48×48 dp" in md, "SKILL.md states the platform targets without pt and dp"
     assert "references/mobile-patterns.md" in floor, "the floor sends mobile work to the patterns"
 
 

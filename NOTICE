@@ -31,7 +31,11 @@ them at length; each is credited where it is used.
 
 The structure, section order, tables and source list of two design-reference
 references (mobile-patterns.md, product-flows-and-store.md) are adapted from
-Mobile Design Studio, rewritten here; no upstream prose is copied.
+Mobile Design Studio 0.8.0, received as the release archive
+mobile-design-studio-skill-v0.8.0.zip on 2026-10-23 (sha256
+72c2189047960d04313552f61afbb288c69a7e11faee08a572219f83a74ae6e2); it has
+no public repository. They are rewritten here and quote none of it at length.
+The copyright line below is the one in the upstream LICENSE.
 
   Mobile Design Studio  Copyright (c) 2026 Mobile Design Studio contributors
                         MIT License.

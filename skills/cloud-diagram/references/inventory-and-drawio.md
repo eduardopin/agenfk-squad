@@ -32,7 +32,7 @@ application's state: where the data lives, what is stateless):
   carried out.
 
 Before and after are two sheets on the same page, each with its own Status.
-The probe (`render.sh`) and `diagram_check.py` fail a drawing with no status,
+The probe (`render.py`, or `render.sh` on a shell-only path) and `diagram_check.py` fail a drawing with no status,
 and "current" with no date.
 
 ## Audience

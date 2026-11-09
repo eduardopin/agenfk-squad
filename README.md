@@ -268,6 +268,7 @@ Then open a project that has an AgenFK board and ask for something:
 | `design-reference` | One design method: direction before code, a verifiable quality floor, the patterns that give away AI-generated UI, motion with rules |
 | `journey-qa` | Agentic QA of a running product: personas drive the web app through Playwright, an observer checks business rules with independent oracles, every observation lands in a hash-chained evidence ledger; also reviews ADRs, Terraform plans and Kubernetes manifests (`scripts/jqa.mjs`, Node 20+) |
 | `skill-trial` | Blind headless trials of a skill or hook change: N fresh `claude -p` sessions in a bubblewrap jail with a stub `gh`, no user hooks and no MCP, a check per trial, one PASS/FAIL/N/A table with cost and wall time (`scripts/trial.sh`, `scenarios/smoke`) |
+| `skill-export` | Zips skills for a one-time admin upload to claude.ai (Team/Enterprise) and ChatGPT (Business/Enterprise), so people without GitHub or Claude Code get them: strict-YAML frontmatter, secrets refused, account ids, GUIDs and the e-mail domains and strings you list redacted (`scripts/export_skills.py`, Python 3.10, stdlib only) |
 | `vendor/canvas-design`, `vendor/algorithmic-art` | Third-party skills by Anthropic, Apache-2.0, redistributed unmodified (see [NOTICE](NOTICE)) |
 
 Evidence-tool adoption decisions, exclusions and limits:

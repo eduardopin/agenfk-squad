@@ -755,6 +755,23 @@ def test_render_sh_is_sandboxed_by_default_refuses_without_the_flag_and_runs_uns
         shutil.rmtree(tmp)
 
 
+def test_render_sh_fails_when_the_screenshot_run_fails_for_a_reason_other_than_the_sandbox():
+    if os.name == "nt":
+        raise Skip("bash and a stub Chrome cannot run on Windows")
+    tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
+    try:
+        stub, _ = _sandbox_stub(tmp, refuse_screenshot=True)
+        page = fixture_page(tmp, diagrams=drawing("d"))
+        r = subprocess.run([BASH, RENDER, "--no-sandbox", page, os.path.join(tmp, "out"), "1100"],
+                           capture_output=True, text=True, timeout=120, env={**os.environ, "CHROME": stub})
+        out = r.stdout + r.stderr
+        assert r.returncode == 1 and "FAIL screenshot: [light 1100px] browser exit 1: Failed to write the screenshot" in out, (
+            r.returncode, out)
+        assert "FAIL screenshot: [dark 1100px]" in out, out
+    finally:
+        shutil.rmtree(tmp)
+
+
 def test_render_py_no_sandbox_flag_runs_unsandboxed_and_warns_for_each_run():
     tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
     try:

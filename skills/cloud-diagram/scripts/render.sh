@@ -49,6 +49,7 @@ fi
 # Run Chromium sandboxed; only when it refuses to start so, and --no-sandbox was given,
 # run it again unsandboxed (WARN once per run). stdout is the browser's, stderr is kept.
 unsandboxed_warned=0
+LAST_ERR=""
 chrome_run() {
   local err rc
   err=$(mktemp) || exit 2
@@ -62,9 +63,10 @@ chrome_run() {
     fi
     [ "$unsandboxed_warned" -eq 1 ] || echo "WARN sandbox: Chromium refused to start sandboxed; running with --no-sandbox" >&2
     unsandboxed_warned=1
-    "$CHROME" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 "$@" 2>/dev/null
+    "$CHROME" --headless=new --no-sandbox --hide-scrollbars --force-device-scale-factor=1 "$@" 2>"$err"
     rc=$?
   fi
+  LAST_ERR=$(grep -v '^[[:space:]]*$' "$err" | tail -n 1 | cut -c1-200)
   rm -f "$err"
   return $rc
 }
@@ -94,7 +96,9 @@ for theme in light dark; do
 HTML
     fi
     chrome_run --window-size="$(( w < 500 ? 500 : w )),4200" --virtual-time-budget=6000 \
-      --screenshot="$OUT/shot-$theme-$w.png" "file://$target" >/dev/null
+      --screenshot="$OUT/shot-$theme-$w.png" "file://$target" >/dev/null || {
+        printf 'FAIL screenshot: [%s %spx] browser exit %s: %s\n' "$theme" "$w" "$?" "${LAST_ERR:-no output}"
+        rc=1; }
     chrome_run --window-size="$(( w < 500 ? 500 : w )),4200" --virtual-time-budget=6000 --dump-dom "file://$target" \
       | python3 -I -c '
 import sys, re, html

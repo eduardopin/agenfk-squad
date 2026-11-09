@@ -103,5 +103,6 @@ Chrome, 3 on a usage error, 4 when Chromium refused to start sandboxed and
 `--no-sandbox` was not given. Its sandbox rule is `render.py`'s: Chromium starts
 sandboxed; `render.sh --no-sandbox <page.html>` repeats a refused run
 unsandboxed and prints a `WARN sandbox` line, and without the flag the refusal
-exits 4 with a message naming it. Its code 3 is a usage error, not a missing
+exits 4 with a message naming it. A screenshot run that fails for another reason
+prints `FAIL screenshot: [<theme> <width>px] ...` and makes the exit code 1. Its code 3 is a usage error, not a missing
 browser, which is why the sandbox refusal takes 4 and not `render.py`'s 3.

@@ -703,6 +703,9 @@ def _sandbox_stub(tmp, refuse_screenshot=False):
 
 
 def test_render_py_sandbox_failure_exits_3_naming_the_flag_and_never_retries_unsandboxed():
+    if os.name == "nt":
+        # the stub Chrome is a script with a shebang, and Windows starts only real executables (WinError 193)
+        raise Skip("a script stub cannot stand in for Chrome on Windows")
     tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
     try:
         stub, log = _sandbox_stub(tmp)
@@ -718,6 +721,9 @@ def test_render_py_sandbox_failure_exits_3_naming_the_flag_and_never_retries_uns
 
 
 def test_render_py_fails_when_the_screenshot_run_fails_for_a_reason_other_than_the_sandbox():
+    if os.name == "nt":
+        # the stub Chrome is a script with a shebang, and Windows starts only real executables (WinError 193)
+        raise Skip("a script stub cannot stand in for Chrome on Windows")
     tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
     try:
         stub, _ = _sandbox_stub(tmp, refuse_screenshot=True)
@@ -773,6 +779,9 @@ def test_render_sh_fails_when_the_screenshot_run_fails_for_a_reason_other_than_t
 
 
 def test_render_py_no_sandbox_flag_runs_unsandboxed_and_warns_for_each_run():
+    if os.name == "nt":
+        # the stub Chrome is a script with a shebang, and Windows starts only real executables (WinError 193)
+        raise Skip("a script stub cannot stand in for Chrome on Windows")
     tmp = tempfile.mkdtemp(prefix="cloud-diagram-")
     try:
         stub, log = _sandbox_stub(tmp)
@@ -808,8 +817,10 @@ def test_render_py_finds_the_browser_in_order_and_prefers_the_newest_playwright_
         exe("pw", "chromium-999", "chrome-linux", "chrome")
         assert mod.find_browser(None, env=bare, home=tmp) == new, "revision 1134 beats 1129 and 999 (numeric, not text)"
         assert old != new
-        on_path = exe("bin", "chromium.exe" if os.name == "nt" else "chromium")
-        assert mod.find_browser(None, env=bare, home=tmp) == on_path, "PATH comes before the Playwright cache"
+        if os.name != "nt":
+            # Windows: a text stub is no executable for PATH lookup; the $CHROME leg below pins the order there
+            on_path = exe("bin", "chromium")
+            assert mod.find_browser(None, env=bare, home=tmp) == on_path, "PATH comes before the Playwright cache"
         env_chrome = exe("env", "chrome")
         assert mod.find_browser(None, env={**bare, "CHROME": env_chrome}, home=tmp) == env_chrome
         explicit = exe("explicit", "chrome")

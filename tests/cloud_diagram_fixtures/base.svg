@@ -1,0 +1,12 @@
+<svg id="{{ID}}" data-diagram viewBox="0 0 600 300" width="600" height="300" role="img" aria-label="Fixture drawing">
+<defs><symbol id="{{ID}}-i" viewBox="0 0 48 48"><rect width="48" height="48"/></symbol></defs>
+<rect class="grp g-cloud" x="20" y="20" width="560" height="260"/>
+<text x="50" y="40">Cloud</text>
+<use href="#{{ID}}-i" x="60" y="100" width="48" height="48"/>
+<text x="84" y="170" text-anchor="middle">Alpha</text>
+<use href="#{{ID}}-i" x="300" y="100" width="48" height="48"/>
+<text x="324" y="170" text-anchor="middle">Beta</text>
+<path class="ar" d="M108 124H300"/>
+<g class="st" data-s="1"><circle cx="204" cy="124" r="11"/><text x="204" y="128" text-anchor="middle">1</text></g>
+{{EXTRA}}
+</svg>

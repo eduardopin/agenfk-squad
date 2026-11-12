@@ -1020,7 +1020,8 @@ def test_skill_names_the_sweep_and_every_reference_it_points_to():
                  "references/quality-floor.md", "`cloud-diagram`"):
         assert term in md, term
     for doc in ("SKILL.md", "references/design-system-sweep.md", "references/tokens-and-components.md",
-                "references/identity-and-pieces.md", "references/quality-floor.md"):
+                "references/identity-and-pieces.md", "references/quality-floor.md",
+                "references/mobile-patterns.md", "references/product-flows-and-store.md"):
         for ref in re.findall(r"`((?:references|scripts)/[\w.-]+)", read(os.path.join(SKILL, doc))):
             assert os.path.exists(os.path.join(SKILL, ref)), f"{doc} names {ref}, which does not exist"
 
@@ -1038,6 +1039,75 @@ def test_build_list_is_not_swallowed_by_the_companion_subsection():
     companion = [s for s in subs if s.startswith("Product UI execution companion\n")]
     assert len(companion) == 1, [s.splitlines()[0] for s in subs]
     assert not re.search(r"(?m)^- ", companion[0]), "a bullet sits under the companion subsection"
+
+
+MOBILE = ("references/mobile-patterns.md", "references/product-flows-and-store.md")
+
+
+def headings(doc):
+    return [h.strip() for h in re.findall(r"(?m)^#{1,3} (.+)$", read(os.path.join(SKILL, doc)))]
+
+
+def test_mobile_references_exist_are_named_and_keep_their_sections():
+    md = read(os.path.join(SKILL, "SKILL.md"))
+    patterns, flows = (headings(d) for d in MOBILE)
+    for doc in MOBILE:
+        assert os.path.isfile(os.path.join(SKILL, doc)), doc
+        assert f"`{doc}`" in md, f"SKILL.md does not point to {doc}"
+    for title in ("Reference measurements", "Target size", "Global navigation", "Top bar and title",
+                  "Lists and rows", "Forms", "Buttons and action hierarchy", "Bottom sheets, modals and dialogs",
+                  "Search and filters", "Operation states", "Transient feedback", "Gestures",
+                  "Tablet, foldable and landscape", "Localised microcopy"):
+        assert any(title in h for h in patterns), (title, patterns)
+    for title in ("Onboarding", "Sign in and create an account", "Delete the account", "Permissions",
+                  "Notifications", "Paywall and subscriptions", "Review prompt", "Settings and privacy",
+                  "Widgets and Live Activities", "Store assets", "Forbidden deceptive patterns"):
+        assert any(title in h for h in flows), (title, flows)
+
+
+def test_target_size_rule_separates_wcag_minimum_from_platform_and_comfort_targets():
+    patterns = read(os.path.join(SKILL, "references/mobile-patterns.md"))
+    floor = read(os.path.join(SKILL, "references/quality-floor.md"))
+    md = read(os.path.join(SKILL, "SKILL.md"))
+    section = re.search(r"(?ms)^## Target size\n(.*?)^## ", patterns)
+    assert section, "mobile-patterns.md has a '## Target size' section"
+    rule = section.group(1)
+    for phrase in ("WCAG 2.2", "2.5.8", "24×24 CSS px", "spacing", "2.5.5", "44×44", "48×48",
+                   "exception", "not a universal WCAG requirement"):
+        assert phrase in rule, f"target-size rule lacks {phrase!r}"
+    # The floor and the skill's own quality list state the same numbers, so they cannot drift apart.
+    for name, text in (("quality-floor.md", floor), ("SKILL.md", md)):
+        assert "2.5.8" in text and "24×24" in text, f"{name} does not state WCAG 2.5.8 at 24×24"
+    # The skill's floor line names each platform's unit, as mobile-patterns.md does.
+    assert "44×44 pt" in md and "48×48 dp" in md, "SKILL.md states the platform targets without pt and dp"
+    assert "references/mobile-patterns.md" in floor, "the floor sends mobile work to the patterns"
+
+
+def test_contrast_rules_the_mobile_audit_adds_are_in_the_floor():
+    floor = read(os.path.join(SKILL, "references/quality-floor.md"))
+    for phrase in ("4.49", "not as the only signal", "3:1 for control borders"):
+        assert phrase in floor, f"quality-floor.md lacks {phrase!r}"
+
+
+def test_skill_md_stays_within_the_limits_and_has_no_dangling_skill_pointer():
+    md = read(os.path.join(SKILL, "SKILL.md"))
+    assert len(md.splitlines()) < 500, len(md.splitlines())
+    desc = re.search(r"(?ms)^description: (.*?)^---", md).group(1)
+    assert len(desc.strip()) < 1024, len(desc.strip())   # the loader limit other skills here are held to
+    # mobile-design-studio is not shipped here: the companion section must point at the references that are.
+    assert "mobile-design-studio" not in md
+    companion = re.search(r"(?ms)^### Product UI execution companion\n(.*?)^## ", md).group(1)
+    for doc in MOBILE:
+        assert doc in companion, f"the companion section does not name {doc}"
+
+
+def test_mobile_references_carry_no_tooling_brand_or_portuguese():
+    bad = re.compile(r"\.mjs\b|\bPlaywright\b|\bSTATE\.md\b|\bherdr\b|\bMyles\b|\bhorizon-ds\b|CG/lab", re.I)
+    jira = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
+    for doc in MOBILE:
+        for n, line in enumerate(read(os.path.join(SKILL, doc)).splitlines(), 1):
+            assert not bad.search(line) and not jira.search(line), f"{doc}:{n}: {line.strip()[:80]}"
+            assert not re.search(r"\bR\$|pt-BR", line), f"{doc}:{n}: locale-specific text: {line.strip()[:80]}"
 
 
 def test_no_private_context_and_no_portuguese_prose_in_the_skill():

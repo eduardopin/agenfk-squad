@@ -106,6 +106,9 @@ See [watcher.md](watcher.md#the-handoff-arithmetic) for the arithmetic.
 | `SQUAD_CTX_BASE` | 40,000 | Context of a fresh session that has just read a handoff. Used for the payback and for the minimum floor (2 × this) |
 | `SQUAD_CTX_WARN` | 0 (off) | Absolute context, in tokens, for an informational notice |
 | `SQUAD_CTX_HANDOFF` | 0 (off) | Absolute context, in tokens, that orders a handoff. Off by default; the percentage rules apply |
+| `SQUAD_MAIN_FLOOR` | 150,000 | Context, in tokens, below which the burn and age rules never fire. Above it, a fresh session would not cost more than carrying on |
+| `SQUAD_MAIN_BURN` | 15,000,000 | Weighted burn at which a main session above the floor is ordered to hand off, whatever its context |
+| `SQUAD_MAIN_AGE` | 28,800 (8 h) | Seconds of work at which a main session above the floor is ordered to hand off. A gap of more than 30 minutes between two measurements is not counted as work |
 
 ## Sub-sessions
 
@@ -128,6 +131,8 @@ denial after 3 identical calls in a row.
 | `SQUAD_MAX_ORCH` | 6 | Sessions that may orchestrate sub-agents at the same time, across the machine |
 | `SQUAD_ORCH_HERE` | 500,000 | With no orchestrator slot: below this context the card is implemented in the session itself; at or above it, handoff with the plan |
 | `SQUAD_MAX_REVIEWS` | 6 | Reviewer dispatches allowed for the same card. The next one is denied |
+| `SQUAD_MEM_CEILING` | 0 (off) | Percent of host memory in use (MemTotal minus MemAvailable) at or above which a new dispatch is denied. The denial names the reading and the ceiling |
+| `SQUAD_MEMINFO` | `/proc/meminfo` | File the memory reading comes from. A missing or malformed file never denies |
 
 ## The review gate
 

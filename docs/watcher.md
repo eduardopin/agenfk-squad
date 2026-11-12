@@ -66,12 +66,29 @@ From a session's running totals it computes (`handoff_math` in
 
 ### The rule
 
-A main session is ordered to hand off (`PROACTIVE HANDOFF`) when either holds:
+A main session is ordered to hand off (`PROACTIVE HANDOFF`) when any of these holds:
 
 1. **context ≥ `SQUAD_CTX_PCT`% of the window** (default 90%), or
-2. **reread share ≥ `SQUAD_REREAD`%** (default 60%) **and context ≥ floor**.
+2. **reread share ≥ `SQUAD_REREAD`%** (default 60%) **and context ≥ floor**, or
+3. **context ≥ `SQUAD_MAIN_FLOOR`** (default 150k) **and** the session has either
+   burned `SQUAD_MAIN_BURN` weighted tokens (default 15M) or worked for
+   `SQUAD_MAIN_AGE` seconds (default 8 h).
 
 Rule 1 is the wall. Rule 2 is the interesting one.
+
+### Burn and age
+
+The context rules alone let a session run for days below them: a long session
+can sit at 280k for 17 hours, or end at 17M weighted tokens without ever
+reaching the wall. Rule 3 brings the handoff forward for those sessions. The
+order names its reason after the figures, for example `burn 15.2M weighted >=
+15.0M` or `open 9.0 h of work >= 8 h`.
+
+Age is hours of work, not of calendar. The watcher adds the time between two
+measurements of the session only when it is 30 minutes or less, so a night or
+a weekend away from the keyboard does not count. Below the floor neither limit
+applies, because a small context is cheap to carry and a fresh session would
+not be cheaper.
 
 ### Why there is a floor, and why it moves
 
@@ -177,7 +194,7 @@ what is missing, with a short brief, in a new sub-session. One redispatch.
 
 ## The dispatch brake
 
-Before any `Agent` or `Task` call from a main session, the watcher checks four
+Before any `Agent` or `Task` call from a main session, the watcher checks five
 ceilings:
 
 | Ceiling | Variable | Default |
@@ -186,13 +203,14 @@ ceilings:
 | Sub-sessions spawned by this session | `SQUAD_MAX_SUBS` | 60 |
 | Sessions orchestrating at the same time, per repository | `SQUAD_MAX_ORCH` | 6 |
 | Reviewer dispatches for the same card | `SQUAD_MAX_REVIEWS` | 6 (the 7th is denied) |
+| Host memory in use, percent | `SQUAD_MEM_CEILING` | 0 (off) |
 
 A session counts as orchestrating while it has a sub-session with activity in
 the last ten minutes. A dispatch counts as a reviewer when the agent type or
 description matches review, verify, security, audit or adversarial; the card
 is recognised by its id in the brief.
 
-A `DISPATCH DENIED` always says where the work continues. There are four exits:
+A `DISPATCH DENIED` always says where the work continues. There are five exits:
 
 | Situation | Exit | What the session does |
 |---|---|---|
@@ -200,6 +218,7 @@ A `DISPATCH DENIED` always says where the work continues. There are four exits:
 | No orchestrator slot, implementation, context < `SQUAD_ORCH_HERE` (500k) | **Do it right here** | Implements the card in the main session, without an agent and without a handoff. This is the one authorised exception to the dispatch rule. The review still belongs to the `verifier`. |
 | No orchestrator slot, implementation, context ≥ `SQUAD_ORCH_HERE` | **Handoff with the plan** | As above; the fresh session, with a clean context, implements directly. |
 | No orchestrator slot, reviewer | **Wait for the slot** | Carries on with whatever does not depend on the verdict. The watcher sends `SLOT FREE` when a slot opens. The session never approves its own code. |
+| Memory at the ceiling | **Wait** | Lets the running agents finish, or asks the owner to free memory, then dispatches again. No handoff: the plan does not change. |
 | Seventh reviewer on the same card | **Owner's decision on how to fix** | Comments on the card with what keeps failing and takes the choice of how to fix it (another approach, or split the card) to the owner; never whether to ship with the defect. |
 
 The session must not work around a denial with another tool or another agent

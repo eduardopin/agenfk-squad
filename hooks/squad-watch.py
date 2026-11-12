@@ -81,7 +81,9 @@ Thresholds, by environment variable:
   SQUAD_CTX_BASE      (40000)   context of a fresh session, for the payback
   The main session's handoff (level 2) is arithmetic, with no judgement by the agent:
       context >= SQUAD_CTX_PCT (90)% of the window, OR
-      reread >= SQUAD_REREAD (60)% AND context >= floor
+      reread >= SQUAD_REREAD (60)% AND context >= floor, OR
+      context >= SQUAD_MAIN_FLOOR (150000) AND (weighted burn >= SQUAD_MAIN_BURN (15000000)
+      OR hours of work >= SQUAD_MAIN_AGE (28800 s; a gap over 30 min between turns is left out))
       (reread = 0.1*cache-read / weighted burn, the cockpit's REREAD %; minimum floor 2*CTX_BASE)
   The floor weighs the burn: SQUAD_REREAD_FLOOR (50)% of the window once the burn
   has reached SQUAD_BURN_FULL (50)% of the session budget (CLAUDE_SESSION_BUDGET,
@@ -104,6 +106,9 @@ Thresholds, by environment variable:
                                 in the session itself; from here up, handoff with
                                 the plan and a new session
   SQUAD_MAX_REVIEWS   (6)       reviewer dispatches for the same card
+  SQUAD_MEM_CEILING   (0)       % of host memory in use (MemTotal - MemAvailable) at or above
+                                which a new dispatch is denied; 0 = off
+  SQUAD_MEMINFO       (/proc/meminfo)  where that is read; unreadable never denies
   SQUAD_CARRY_MAX     (3)       stops in a row without progress before carry on lets go
   SQUAD_CARRY_CAP     (200)     carry-on holds per goal
   SQUAD_CARRY_AGE     (43200)   seconds without progress after which an explicit goal expires
@@ -121,6 +126,7 @@ A denied dispatch is never just a "no": the message says where the work continue
   no orchestrator slot, reviewer     carry on with whatever does not depend on the
                                      verdict; the watcher announces SLOT FREE when
                                      there is a slot
+  memory at the ceiling              wait or finish what runs; no handoff, nothing to carry
   7th reviewer on the same card      the owner chooses how to fix it (never whether to ship the defect)
 
 Review gate (main session only): `agenfk verify <id>` (or the MCP validate_progress)
@@ -242,10 +248,18 @@ BURN_WARN = env_int("SQUAD_SUB_BURN", 2_000_000)
 MAIN_WARN = env_int("SQUAD_CTX_WARN", 0)         # 0 = no absolute threshold; only the % of the window applies
 MAIN_HANDOFF = env_int("SQUAD_CTX_HANDOFF", 0)
 MAIN_CEIL = env_int("SQUAD_CTX_CEILING", 800_000)
+# A long session can stay below the context line for days. Above a floor of context, where a fresh
+# session would not be dearer, accumulated burn and hours of work bring the handoff forward.
+MAIN_BURN = env_int("SQUAD_MAIN_BURN", 15_000_000)
+MAIN_AGE = env_int("SQUAD_MAIN_AGE", 8 * 3600)
+MAIN_FLOOR = env_int("SQUAD_MAIN_FLOOR", 150_000)
+ACTIVE_GAP = 1800      # seconds between two measurements that still count as work
 MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 90), 10), 100)       # % of the window at which the handoff goes out regardless
 MAX_SUBS = env_int("SQUAD_MAX_SUBS", 60)
 MAX_ORCH = env_int("SQUAD_MAX_ORCH", 6)
 MAX_REV = env_int("SQUAD_MAX_REVIEWS", 6)
+MEM_CEIL = env_int("SQUAD_MEM_CEILING", 0)                  # % of memory in use; 0 = no memory brake
+MEMINFO = os.environ.get("SQUAD_MEMINFO", "/proc/meminfo")
 ORCH_HERE = env_int("SQUAD_ORCH_HERE", 500_000)
 SWITCH_SHELL = env_int("SQUAD_SWITCH_WAIT", 600)            # s: the switch waits for a background shell/monitor
 SWITCH_AGENT = env_int("SQUAD_SWITCH_WAIT_AGENT", 2400)     # s: ...and for a sub-agent still running
@@ -574,6 +588,19 @@ def figures(c, ctx):
     return (f"reread {c['share']:.0%}, each turn rereads {k(c['toll'])} weighted tokens, {pay}")
 
 
+def handoff_reason(ctx, due, burn, age):
+    """Why the main session hands off now, or "" when it does not. due: the context rules already fired."""
+    if due:
+        return "context"
+    if ctx < MAIN_FLOOR:
+        return ""
+    if burn >= MAIN_BURN:
+        return f"burn {k(burn)} weighted >= {k(MAIN_BURN)}"
+    if age >= MAIN_AGE:
+        return f"open {age / 3600:.1f} h of work >= {MAIN_AGE / 3600:g} h"
+    return ""
+
+
 def cx_share():
     return ctx_lib().REREAD_SHARE
 
@@ -749,6 +776,27 @@ def plan(resume_how, brief=""):
                 "the same pickup in a new session opened in the card's worktree."))
 
 
+def memory_used(path=None):
+    """Percent of memory in use (MemTotal - MemAvailable), or None when the file
+    cannot be read or makes no sense: a broken reading must never stop the work."""
+    total = avail = None
+    try:
+        with open(path or MEMINFO, encoding="utf-8") as fh:
+            for row in fh:
+                key, _, rest = row.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    val = int(rest.split()[0])
+                    if key == "MemTotal":
+                        total = val
+                    else:
+                        avail = val
+    except (OSError, ValueError, IndexError):
+        return None
+    if not total or total <= 0 or avail is None or not 0 <= avail <= total:
+        return None
+    return 100.0 * (total - avail) / total
+
+
 def pre_dispatch(p):
     """The orchestrator's brake: when dispatching one more agent is the mistake.
     Every denial goes out with the path along which the work continues."""
@@ -766,6 +814,15 @@ def pre_dispatch(p):
         handoff = True
         why = (f"this session has already dispatched {st['subs']} sub-sessions (ceiling {MAX_SUBS}). " + plan(
             "The new session, with the count reset, dispatches that plan.", brief))
+    elif MEM_CEIL > 0 and (used := memory_used()) is not None and used >= MEM_CEIL:
+        why = (f"this machine has {used:.0f}% of its memory in use (ceiling {MEM_CEIL}%) and one more "
+               "sub-session would start on top of that. Do not dispatch another agent and do not work around "
+               "it with another tool: let the running ones finish or ask the owner to free memory, then "
+               "dispatch again. No handoff is needed, the plan stays as it is" + (
+                   ". A light session can also do the card RIGHT HERE with no agent, in its own worktree "
+                   "and branch, `agenfk gatekeeper --item-id <id>` before editing; a review still belongs "
+                   "to the `verifier`, so it waits for the memory to drop"
+                   if ctx < ORCH_HERE and not review_key(p) else ""))
     elif other_orchestrators(session, repo) >= MAX_ORCH:
         cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents in this repository right now"
         if review_key(p):
@@ -2147,7 +2204,13 @@ def post_tool(p):
             else:
                 # The decision is this arithmetic and nothing else: level 2 = handoff, level 1 = notice with no action.
                 pct = 100.0 * ctx / window
-                level = (2 if (pct >= MAIN_PCT or c["due"] or (MAIN_HANDOFF and ctx >= MAIN_HANDOFF))
+                # hours of work, not of calendar: a gap over ACTIVE_GAP is a night or a weekend
+                gap = now - st.get("seen", now)
+                st["active"] = st.get("active", 0) + (gap if gap <= ACTIVE_GAP else 0)
+                st["seen"] = now
+                why = handoff_reason(ctx, pct >= MAIN_PCT or c["due"] or bool(MAIN_HANDOFF and ctx >= MAIN_HANDOFF),
+                                     c["burn"], st["active"])
+                level = (2 if why
                          else 1 if (ctx >= c["floor_min"] or (MAIN_WARN and ctx >= MAIN_WARN)) else 0)
                 # the level went up, or it keeps growing after the alert: reminds every 50k
                 again = level == 2 and ctx >= st.get("alert_ctx", 0) + 50_000
@@ -2156,7 +2219,7 @@ def post_tool(p):
                     if level == 2:
                         st.setdefault("alert_ts", now)
                     head = (f"context {k(ctx)}/{k(window)} ({pct:.0f}%), burn {c['burn_pct']:.0f}% of the "
-                            f"budget, {figures(c, ctx)}")
+                            f"budget, {figures(c, ctx)}" + (f", {why}" if why != "context" and level == 2 else ""))
                     if level == 2:
                         out.append(
                             f"[squad-watch] PROACTIVE HANDOFF — {head}. When you close the step in progress, without "

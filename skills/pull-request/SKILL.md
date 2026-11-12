@@ -183,15 +183,16 @@ and body with `pr_check.py --files`, and judge four axes.
 | Risk of applying against risk of not applying | Which side is bigger, and does a revert undo the merge? |
 
 Severity is narrow on purpose. **Blocking**: breakage, a security exposure or
-a regression risk (the exact list is in the reference). **Minor**: everything
-else worth saying; a comment, not a veto. Never block on style, documentation,
-naming or the title.
+a regression risk (the exact list is in the reference). **High**: not a break
+today; fix it before the merge, never a veto. **Minor**: everything else worth
+saying; a comment, not a veto. Never block on style, documentation, naming or
+the title.
 
 In the squad the `verifier` reviews: a Blocking finding fixable on the branch
 becomes **FIX_FIRST**; a Blocking finding that hits its automatic REJECT
 (committed secret, real network in the suite, a test removed without an
 argument, a forbidden path) becomes **REJECT**; with no Blocking finding,
-**SHIP** with the Minor ones as warnings. Check each finding in the code
+**SHIP** with the High and Minor ones as warnings. Check each finding in the code
 before writing it.
 
 `scripts/review_comments.py` builds the review payload with inline comments.

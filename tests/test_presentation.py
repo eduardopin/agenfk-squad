@@ -339,12 +339,14 @@ esac
 # Stands in for Chrome: logs its arguments and each page's <base>, answers the
 # measurement and writes the PDF and PNG it is asked for. It opens what it is
 # handed through cygpath -u, so a path Chrome for Windows could not open fails.
-# Like the real one, it leaves a file of its own in its temp dir (TEMP, as Chrome
-# for Windows reads it; TMPDIR elsewhere) on every run.
 FAKE_CHROME = r"""#!/usr/bin/env bash
 log="@LOG@"
 printf '%s\n' "$@" >> "$log"
-t=$(cygpath -u "${TEMP:-${TMPDIR:-/tmp}}"); : > "$t/fake-chrome-$$.tmp"
+# What the real Chrome does: scratch in the temp directory it was started with,
+# outside its profile (a socket dir; on Windows a <uuid>.tmp file).
+t=$(cygpath -u "${TMPDIR:-/tmp}")
+@SOCKCHECK@
+mkdir "$t/.com.google.Chrome.$$" && : > "$t/$$.tmp" && echo "scratch" >> "$log"
 for a in "$@"; do
   case "$a" in
     file://*) u=${a#file://}; case "$u" in /[A-Za-z]:*) u=${u#/} ;; esac
@@ -378,7 +380,8 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
             return path
         log = os.path.join(tmp, "chrome.log")
         fake_chrome = FAKE_CHROME.replace("@LOG@", log.replace("\\", "/")) \
-            .replace("@MEASURED@", " ".join(f"{s}=0" for s in ids)).replace("@IDS@", " ".join(ids))
+            .replace("@MEASURED@", " ".join(f"{s}=0" for s in ids)).replace("@IDS@", " ".join(ids)) \
+            .replace("@SOCKCHECK@", "")
         nowhere = {var: os.path.join(tmp, "nowhere") for var in WINDOWS_CHROME_DIRS}
 
         def run(env, *chrome_arg):
@@ -386,15 +389,17 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
                 os.remove(log)
             out = os.path.join(tmp, "out")
             shutil.rmtree(out, ignore_errors=True)
-            # the temp dir the export is given: its work dir and what Chrome leaves go with it
-            temp = os.path.join(tmp, "temp")
-            shutil.rmtree(temp, ignore_errors=True)
-            os.makedirs(temp)
             pdf, pngs = os.path.join(out, "deck.pdf"), os.path.join(out, "png")
+            # The run's own temp directory: it must come out empty, whatever Chrome wrote to it.
+            scratch = os.path.join(tmp, "scratch")
+            shutil.rmtree(scratch, ignore_errors=True)
+            os.makedirs(scratch)
             r = export(TEMPLATE, "--pdf", pdf, "--png-dir", pngs, *chrome_arg,
-                       env={**(env or {}), "TMPDIR": temp, "TEMP": temp, "TMP": temp})
+                       env={**(env or {}), "TMPDIR": scratch, "TEMP": scratch, "TMP": scratch})
             assert r.returncode == 0, said(r)
-            assert not os.listdir(temp), f"the export left {sorted(os.listdir(temp))} in its TMPDIR"
+            assert os.listdir(scratch) == [], f"the export left {os.listdir(scratch)} in its TMPDIR"
+            assert read(log).splitlines().count("scratch") == len(ids) + 2, \
+                "the fake Chrome did not write its scratch, so the check above proves nothing"
             assert pages(pdf) == len(ids) and len(os.listdir(pngs)) == len(ids), said(r)
             lines = read(log).splitlines()
             urls = [a for a in lines if a.startswith("file:")]
@@ -415,7 +420,7 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
             tools = os.path.join(tmp, "tools")
             os.makedirs(tools)
             for t in ("bash", "env", "grep", "sed", "awk", "wc", "tr", "cut", "head", "cat",
-                      "mkdir", "mktemp", "rm", "dirname", "basename", "sleep"):
+                      "mkdir", "mktemp", "rm", "dirname", "basename"):
                 assert shutil.which(t), f"{t} is not on the PATH"
                 os.symlink(shutil.which(t), os.path.join(tools, t))
             fakes = os.path.join(tmp, "fakes")
@@ -444,6 +449,62 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
             assert all(u.startswith("file:///") and not re.match(r"file:///[A-Za-z]:", u) for u in urls), urls
             assert files["--print-to-pdf="] == [pdf], files
             assert all(f.startswith(tmp + "/") for f in files["--screenshot="]), files
+    finally:
+        shutil.rmtree(tmp)
+
+
+# Chrome's unix socket (<TMPDIR>/.com.google.Chrome.XXXXXX/SingletonSocket) must fit in sun_path:
+# the real Chrome aborts over this length, measured as 66 characters of TMPDIR on Linux.
+SOCKET_CHECK = r'''p="$t/.com.google.Chrome.XXXXXX/SingletonSocket"
+[ ${#p} -le 108 ] || { echo "[1:1:FATAL:process_singleton_posix.cc:313] Socket path too long: $p." >&2; exit 1; }'''
+
+
+def test_a_long_tmpdir_still_exports_and_a_chrome_failure_says_why():
+    """A TMPDIR long enough that Chrome's socket fits under it but not under a directory
+    nested inside it must not break the export (the first scratch fix did), and the
+    run must leave nothing in it. When Chrome dies, its fatal line reaches the user.
+    POSIX only: Chrome for Windows uses named pipes, with no length limit."""
+    if WINDOWS:
+        raise Skip("Chrome for Windows has no socket path limit")
+    ids = slides(read(TEMPLATE))
+    tmp = tempfile.mkdtemp(prefix="lt-")
+    try:
+        long_tmp = tmp
+        if len(long_tmp) < 62:  # pad the path to 62 characters
+            long_tmp = os.path.join(tmp, "p" * (62 - len(tmp) - 1))
+            os.makedirs(long_tmp)
+        assert 62 <= len(long_tmp) <= 66, f"cannot build a 62..66 character TMPDIR from {tmp}"
+
+        def write(path, text):
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            os.chmod(path, 0o755)
+            return path
+        log = os.path.join(tmp, "chrome.log")
+        fakes = os.path.join(tmp, "fakes")
+        os.makedirs(fakes)
+        write(os.path.join(fakes, "cygpath"), FAKE_CYGPATH)
+        fake = write(os.path.join(fakes, "chrome"), FAKE_CHROME.replace("@LOG@", log)
+                     .replace("@MEASURED@", " ".join(f"{s}=0" for s in ids)).replace("@IDS@", " ".join(ids))
+                     .replace("@SOCKCHECK@", SOCKET_CHECK))
+        env = {"PATH": fakes + os.pathsep + os.environ["PATH"],
+               "TMPDIR": long_tmp, "TEMP": long_tmp, "TMP": long_tmp}
+        before = os.listdir(long_tmp)
+        out = os.path.join(tmp, "out")
+        r = export(TEMPLATE, "--pdf", os.path.join(out, "deck.pdf"), "--png-dir", os.path.join(out, "png"),
+                   "--chrome", fake, env=env)
+        assert r.returncode == 0, said(r)
+        assert read(log).splitlines().count("scratch") == len(ids) + 2, "the fake Chrome did not run its checks"
+        assert sorted(os.listdir(long_tmp)) == sorted(before), \
+            f"the export left {set(os.listdir(long_tmp)) - set(before)} in its TMPDIR"
+
+        # Chrome dies: the reason is not swallowed.
+        dying = write(os.path.join(fakes, "dying"),
+                      "#!/usr/bin/env bash\necho '[1:1:FATAL:x.cc:1] Socket path too long: /x' >&2\nexit 1\n")
+        r = export(TEMPLATE, "--measure", "--chrome", dying, env=env)
+        assert r.returncode == 1 and "Chrome returned no measurement" in r.stderr, said(r)
+        assert "FATAL:x.cc:1] Socket path too long" in r.stderr and "hint:" in r.stderr, said(r)
+        assert sorted(os.listdir(long_tmp)) == sorted(before), os.listdir(long_tmp)
     finally:
         shutil.rmtree(tmp)
 
@@ -507,16 +568,17 @@ addEventListener("load", function(){
 @needs_chrome
 def test_any_arrow_changes_slide_and_the_rails_agree():
     tmp = tempfile.mkdtemp(prefix="presentation-")
+    scratch = None
     try:
         deck = variant(tmp, "probe.html", lambda h: h.replace("</body>", KEY_PROBE + "</body>"))
-        # Chrome leaves temporary files of its own in its temp dir: one inside tmp, removed with it
-        temp = os.path.join(tmp, "temp")
-        os.makedirs(temp)
+        # Chrome writes scratch into its temp directory too, so it gets one of its own, removed below.
+        # Short on purpose: its unix socket path must stay under about 100 characters.
+        scratch = tempfile.mkdtemp(prefix="c-")
         r = subprocess.run([chrome(), "--headless", "--disable-gpu", "--no-first-run",
                             f"--user-data-dir={tmp}/profile", "--window-size=1440,830",
                             "--virtual-time-budget=5000", "--dump-dom", pathlib.Path(deck).as_uri() + "#2"],
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
-                           env={**os.environ, "TMPDIR": temp, "TEMP": temp, "TMP": temp})
+                           env={**os.environ, "TMPDIR": scratch, "TEMP": scratch, "TMP": scratch})
         m = re.search(r"<pre id=\"probe\">PROBE (.*?) END</pre>", r.stdout)
         assert m, "the probe did not run: " + r.stdout[-300:]
         n = len(slides(read(TEMPLATE)))
@@ -531,6 +593,8 @@ def test_any_arrow_changes_slide_and_the_rails_agree():
         assert got == expected, "\n".join(f"{a} != {b}" for a, b in zip(got, expected) if a != b) or got
     finally:
         shutil.rmtree(tmp)
+        if scratch:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 @needs_chrome

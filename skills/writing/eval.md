@@ -101,10 +101,15 @@ script runs: the memory block at the end of this file runs from memory instead.
 
 29. Are banned words, filler phrases and empty adverbs removed rather than
     replaced with synonyms, except where they are quoted as examples?
-30. Are binary contrasts, colon reveals, negative listings, rhetorical setups and
-    throat-clearing gone?
+30. Are binary contrasts, colon reveals, negative listings, rhetorical setups,
+    "imagine a world" openers, patronizing analogies and throat-clearing gone,
+    in headings too?
 31. Are faux-insight setups, shallow -ing analysis, fake-strong verbs, synonym
     cycling and robotic rhythm fixed?
+31a. Are paired synonyms, by-gerund chains, "allows you to", "ensures that",
+    vague "This" openers, invented concept labels and listicles in prose gone?
+31b. Does every "every", "always" and "never" carry a count, a condition or a
+    rule, with no sweeping claim nobody measured?
 32. Is importance puffery replaced with the plain fact, and weasel attribution
     either given a named source or cut, or flagged to the user when no source
     exists?
@@ -116,13 +121,17 @@ script runs: the memory block at the end of this file runs from memory instead.
     metaphor?
 36. Are summary-recap and generic-optimism endings cut, so the text ends on a
     concrete point, takeaway or next action?
+36a. Does the text take the position the evidence supports, or say plainly what
+    is unknown, with no "on the one hand, on the other hand" draw?
+36b. Is each claim stated once, and no metaphor used more than twice?
 37. Is chatbot residue gone, including from the message that accompanies the file?
 38. Is every guess either sourced or removed, with no knowledge-limit disclaimer
     left in?
 
 ## Mechanical
 
-39. Zero em and en dashes, unless the writer's sample uses them?
+39. Zero em and en dashes, unless the writer's sample uses them? No unicode
+    arrows in prose, and no semicolon stitching two sentences?
 40. Straight quotes, sentence-case headings, no emoji?
 41. Bold only for a defined term or a warning label?
 42. No list where two sentences of prose read better, and no bold-label list?

@@ -7,14 +7,14 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
 
 | Request / flow step | Agent | Writes? |
 |---|---|---|
-| Start a feature or epic, prioritise, "how much is left", break down into cards | `product` | no (creates cards in TODO) |
-| More than one agent or session in the same repo; branch/worktree per card; PR stack; "can I merge" | `github` | worktree claim only |
-| IMPLEMENT / IN_PROGRESS: a card becomes code (backend, logic, API, data) | `developer` | yes, 1 card = 1 branch = 1 worktree |
+| Start a feature or epic, prioritise, "how much is left", break down into cards | `product` (Sonnet) | no (creates cards in TODO) |
+| More than one agent or session in the same repo; branch/worktree per card; PR stack; "can I merge" | `github` (Sonnet) | worktree claim only |
+| IMPLEMENT / IN_PROGRESS: a card becomes code (backend, logic, API, data) | `developer` (Sonnet) | yes, 1 card = 1 branch = 1 worktree |
 | Screen, component, landing page, dashboard, design system, tokens, motion, Figma → code, art, poster, banner | `frontend` | yes, same regime |
 | TEST: the card's tests, regression, coverage | `tester` (Sonnet) | test files only |
 | REVIEW / ADVERSARIAL / VERIFY (no mutation step): before every PR | `verifier` (Sonnet) | no |
 | `infra/`, terraform, CI/CD, Dockerfile, cloud | `infra` | yes, stops at `plan` |
-| Cloud cost, token cost, stack decision | `finops` | no |
+| Cloud cost, token cost, stack decision | `finops` (Sonnet) | no |
 | Pricing, margin, unit economics, portfolio | `finance` | no |
 | Positioning, competitors, landing page (copy), outreach | `gtm` | no (drafts only) |
 | Context > 60%, cockpit flashing HANDOFF, loop, "where did I stop", switching cards, closing the day | `context` (Sonnet) | handoff and card comment only |
@@ -32,7 +32,7 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
    dispatching two or more agents in the same repo, `github` delivers the map
    (session → worktree → branch → card), the table of fronts and the path of each
    worktree. One `developer`/`frontend` per card, in the same message, each
-   in its own worktree. Ceiling ~6 fronts. Same file in two fronts = run them in series.
+   in its own worktree. Ceiling ~6 fronts. Same file in two fronts, or the same Terraform state in two fronts = run them in series.
    Parallel is the default: the watcher orders FAN OUT for a goal with 2+ open cards and nothing running.
 4. **Whoever writes does not approve.** REVIEW, ADVERSARIAL and VERIFY go to the
    `verifier` in a clean context: pass the card and the branch, not the
@@ -67,7 +67,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
      brief. Read the return handoff, check in git what actually got done and
      dispatch only what is MISSING, with a short brief, in a new sub-session. 1 redispatch.
    - **DISPATCH DENIED** (orchestrator context ≥ 800k, 60 sub-sessions in the
-     session, 6 sessions orchestrating at the same time, 7th reviewer on the same card):
+     session, 6 sessions orchestrating at the same time, host memory at `SQUAD_MEM_CEILING` when set,
+     7th reviewer on the same card):
      do not work around it with another tool or another agent type, and do not
      repeat the dispatch. The denial says where the work continues; do what
      it says:
@@ -81,6 +82,8 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
        dispatch rule; the review still belongs to the `verifier`.
      - *no reviewer slot*: carry on with whatever does not depend on the verdict and dispatch
        when `SLOT FREE` arrives. Never approve your own code.
+     - *memory at the ceiling*: dispatch nothing; let the running agents finish or ask the owner
+       to free memory, then dispatch again. No handoff.
      - *7th reviewer*: comment on the card and take the choice of how to fix it (another approach,
        split the card) to the owner; never propose shipping with the defect.
      The stop is soft: only the new dispatch is denied, the task in progress finishes.
@@ -148,6 +151,10 @@ Source: the `agenfk-squad` repository (linked into `~/.claude/` by `install.sh`)
     after the colon, never a `<placeholder>`). The watcher
     refuses any other stop while the delivery is open (docs/watcher.md, "Carrying
     a delivery to the end").
+14. **Production is read-only for every agent** unless the owner asks in
+    writing. Agents work with read-only credentials, and in doubt about the
+    environment they pick staging. A plan is shown before any apply, and the
+    apply is the owner's.
 
 ## Response modes
 

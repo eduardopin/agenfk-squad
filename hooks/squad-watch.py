@@ -106,6 +106,9 @@ Thresholds, by environment variable:
                                 in the session itself; from here up, handoff with
                                 the plan and a new session
   SQUAD_MAX_REVIEWS   (6)       reviewer dispatches for the same card
+  SQUAD_MEM_CEILING   (0)       % of host memory in use (MemTotal - MemAvailable) at or above
+                                which a new dispatch is denied; 0 = off
+  SQUAD_MEMINFO       (/proc/meminfo)  where that is read; unreadable never denies
   SQUAD_CARRY_MAX     (3)       stops in a row without progress before carry on lets go
   SQUAD_CARRY_CAP     (200)     carry-on holds per goal
   SQUAD_CARRY_AGE     (43200)   seconds without progress after which an explicit goal expires
@@ -123,6 +126,7 @@ A denied dispatch is never just a "no": the message says where the work continue
   no orchestrator slot, reviewer     carry on with whatever does not depend on the
                                      verdict; the watcher announces SLOT FREE when
                                      there is a slot
+  memory at the ceiling              wait or finish what runs; no handoff, nothing to carry
   7th reviewer on the same card      the owner chooses how to fix it (never whether to ship the defect)
 
 Review gate (main session only): `agenfk verify <id>` (or the MCP validate_progress)
@@ -254,6 +258,8 @@ MAIN_PCT = min(max(env_int("SQUAD_CTX_PCT", 90), 10), 100)       # % of the wind
 MAX_SUBS = env_int("SQUAD_MAX_SUBS", 60)
 MAX_ORCH = env_int("SQUAD_MAX_ORCH", 6)
 MAX_REV = env_int("SQUAD_MAX_REVIEWS", 6)
+MEM_CEIL = env_int("SQUAD_MEM_CEILING", 0)                  # % of memory in use; 0 = no memory brake
+MEMINFO = os.environ.get("SQUAD_MEMINFO", "/proc/meminfo")
 ORCH_HERE = env_int("SQUAD_ORCH_HERE", 500_000)
 SWITCH_SHELL = env_int("SQUAD_SWITCH_WAIT", 600)            # s: the switch waits for a background shell/monitor
 SWITCH_AGENT = env_int("SQUAD_SWITCH_WAIT_AGENT", 2400)     # s: ...and for a sub-agent still running
@@ -770,6 +776,27 @@ def plan(resume_how, brief=""):
                 "the same pickup in a new session opened in the card's worktree."))
 
 
+def memory_used(path=None):
+    """Percent of memory in use (MemTotal - MemAvailable), or None when the file
+    cannot be read or makes no sense: a broken reading must never stop the work."""
+    total = avail = None
+    try:
+        with open(path or MEMINFO, encoding="utf-8") as fh:
+            for row in fh:
+                key, _, rest = row.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    val = int(rest.split()[0])
+                    if key == "MemTotal":
+                        total = val
+                    else:
+                        avail = val
+    except (OSError, ValueError, IndexError):
+        return None
+    if not total or total <= 0 or avail is None or not 0 <= avail <= total:
+        return None
+    return 100.0 * (total - avail) / total
+
+
 def pre_dispatch(p):
     """The orchestrator's brake: when dispatching one more agent is the mistake.
     Every denial goes out with the path along which the work continues."""
@@ -787,6 +814,15 @@ def pre_dispatch(p):
         handoff = True
         why = (f"this session has already dispatched {st['subs']} sub-sessions (ceiling {MAX_SUBS}). " + plan(
             "The new session, with the count reset, dispatches that plan.", brief))
+    elif MEM_CEIL > 0 and (used := memory_used()) is not None and used >= MEM_CEIL:
+        why = (f"this machine has {used:.0f}% of its memory in use (ceiling {MEM_CEIL}%) and one more "
+               "sub-session would start on top of that. Do not dispatch another agent and do not work around "
+               "it with another tool: let the running ones finish or ask the owner to free memory, then "
+               "dispatch again. No handoff is needed, the plan stays as it is" + (
+                   ". A light session can also do the card RIGHT HERE with no agent, in its own worktree "
+                   "and branch, `agenfk gatekeeper --item-id <id>` before editing; a review still belongs "
+                   "to the `verifier`, so it waits for the memory to drop"
+                   if ctx < ORCH_HERE and not review_key(p) else ""))
     elif other_orchestrators(session, repo) >= MAX_ORCH:
         cap = f"there are already {MAX_ORCH} or more sessions orchestrating sub-agents in this repository right now"
         if review_key(p):

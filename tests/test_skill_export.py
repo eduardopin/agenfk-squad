@@ -12,9 +12,11 @@ import importlib.util
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -29,13 +31,42 @@ FAKE_GUID = "11111111-2222-3333-4444-555555555555"
 FAKE_GUID_DIGITS = "11111111-2222-3333-4444-123456789012"
 
 
+def _rmtree(path, until):
+    """Removes path; None once it is gone, else why it is not. Plain rmtree leaves it on Windows: a
+    read-only file is not deleted (the attribute is cleared and the delete tried again), and a file a
+    child process still holds is retried until `until`, a time.monotonic()."""
+    errors = []
+
+    def writable(func, p, _exc):
+        try:
+            if os.name == "nt" and not os.path.islink(p):
+                os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            errors.append(f"{p}: {exc}")
+
+    handler = {"onexc": writable} if sys.version_info >= (3, 12) else {"onerror": writable}
+    while True:
+        errors.clear()
+        shutil.rmtree(path, **handler)
+        if not os.path.lexists(path):
+            return None
+        if time.monotonic() >= until:
+            return errors[0] if errors else "still there"
+        time.sleep(0.25)
+
+
 @contextlib.contextmanager
 def workdir():
     tmp = tempfile.mkdtemp(prefix="skill-export-test-")
     try:
         yield Path(tmp)
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        why = _rmtree(tmp, time.monotonic() + 60)
+        if why:
+            print(f"warning: could not remove {tmp}: {why}", file=sys.stderr)
 
 
 def load_script():

@@ -339,9 +339,12 @@ esac
 # Stands in for Chrome: logs its arguments and each page's <base>, answers the
 # measurement and writes the PDF and PNG it is asked for. It opens what it is
 # handed through cygpath -u, so a path Chrome for Windows could not open fails.
+# Like the real one, it leaves a file of its own in its temp dir (TEMP, as Chrome
+# for Windows reads it; TMPDIR elsewhere) on every run.
 FAKE_CHROME = r"""#!/usr/bin/env bash
 log="@LOG@"
 printf '%s\n' "$@" >> "$log"
+t=$(cygpath -u "${TEMP:-${TMPDIR:-/tmp}}"); : > "$t/fake-chrome-$$.tmp"
 for a in "$@"; do
   case "$a" in
     file://*) u=${a#file://}; case "$u" in /[A-Za-z]:*) u=${u#/} ;; esac
@@ -383,9 +386,15 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
                 os.remove(log)
             out = os.path.join(tmp, "out")
             shutil.rmtree(out, ignore_errors=True)
+            # the temp dir the export is given: its work dir and what Chrome leaves go with it
+            temp = os.path.join(tmp, "temp")
+            shutil.rmtree(temp, ignore_errors=True)
+            os.makedirs(temp)
             pdf, pngs = os.path.join(out, "deck.pdf"), os.path.join(out, "png")
-            r = export(TEMPLATE, "--pdf", pdf, "--png-dir", pngs, *chrome_arg, env=env)
+            r = export(TEMPLATE, "--pdf", pdf, "--png-dir", pngs, *chrome_arg,
+                       env={**(env or {}), "TMPDIR": temp, "TEMP": temp, "TMP": temp})
             assert r.returncode == 0, said(r)
+            assert not os.listdir(temp), f"the export left {sorted(os.listdir(temp))} in its TMPDIR"
             assert pages(pdf) == len(ids) and len(os.listdir(pngs)) == len(ids), said(r)
             lines = read(log).splitlines()
             urls = [a for a in lines if a.startswith("file:")]
@@ -406,7 +415,7 @@ def test_under_git_bash_chrome_gets_windows_paths_and_file_urls():
             tools = os.path.join(tmp, "tools")
             os.makedirs(tools)
             for t in ("bash", "env", "grep", "sed", "awk", "wc", "tr", "cut", "head", "cat",
-                      "mkdir", "mktemp", "rm", "dirname", "basename"):
+                      "mkdir", "mktemp", "rm", "dirname", "basename", "sleep"):
                 assert shutil.which(t), f"{t} is not on the PATH"
                 os.symlink(shutil.which(t), os.path.join(tools, t))
             fakes = os.path.join(tmp, "fakes")
@@ -500,10 +509,14 @@ def test_any_arrow_changes_slide_and_the_rails_agree():
     tmp = tempfile.mkdtemp(prefix="presentation-")
     try:
         deck = variant(tmp, "probe.html", lambda h: h.replace("</body>", KEY_PROBE + "</body>"))
+        # Chrome leaves temporary files of its own in its temp dir: one inside tmp, removed with it
+        temp = os.path.join(tmp, "temp")
+        os.makedirs(temp)
         r = subprocess.run([chrome(), "--headless", "--disable-gpu", "--no-first-run",
                             f"--user-data-dir={tmp}/profile", "--window-size=1440,830",
                             "--virtual-time-budget=5000", "--dump-dom", pathlib.Path(deck).as_uri() + "#2"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                           env={**os.environ, "TMPDIR": temp, "TEMP": temp, "TMP": temp})
         m = re.search(r"<pre id=\"probe\">PROBE (.*?) END</pre>", r.stdout)
         assert m, "the probe did not run: " + r.stdout[-300:]
         n = len(slides(read(TEMPLATE)))

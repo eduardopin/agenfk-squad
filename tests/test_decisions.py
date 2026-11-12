@@ -29,10 +29,41 @@ MANIFEST = os.path.join(ROOT, "hooks", "manifest.json")
 _HOMES = []
 
 
+def _rmtree(path, until):
+    """Removes path; None once it is gone, else why it is not. Plain rmtree leaves it on Windows: git
+    writes its objects read-only and Windows will not delete a read-only file (the attribute is cleared
+    and the delete tried again), and a child process that has not exited yet still holds its files or
+    its working directory there (the whole removal is tried again until `until`, a time.monotonic())."""
+    errors = []
+
+    def writable(func, p, _exc):
+        try:
+            if os.name == "nt" and not os.path.islink(p):
+                os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            errors.append(f"{p}: {exc}")
+
+    handler = {"onexc": writable} if sys.version_info >= (3, 12) else {"onerror": writable}
+    while True:
+        errors.clear()
+        shutil.rmtree(path, **handler)
+        if not os.path.lexists(path):
+            return None
+        if time.monotonic() >= until:
+            return errors[0] if errors else "still there"
+        time.sleep(0.25)
+
+
 @atexit.register
 def _remove_homes():
+    until = time.monotonic() + 60
     for h in _HOMES:
-        shutil.rmtree(h, ignore_errors=True)
+        why = _rmtree(h, until)
+        if why:
+            print(f"warning: could not remove {h}: {why}", file=sys.stderr)
 
 
 def home():

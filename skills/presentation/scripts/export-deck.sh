@@ -115,13 +115,29 @@ WINDIRS
 }
 CHROME_BIN=$(resolve_chrome) || exit 2
 
-WORK="$(mktemp -d)"
-# Cleanup must never change the exit code: on Windows Chrome can still hold the profile.
-trap 'rm -rf "$WORK" 2>/dev/null || true' EXIT
+# Chrome writes temporary files of its own (.com.google.Chrome.* on Linux, <guid>.tmp on
+# Windows) and leaves some behind on every run, so it gets $WORK as its temp dir and they
+# go with it. The name is short: Chrome puts its singleton socket in a directory under
+# its temp dir, and a socket path over ~104 characters (macOS's TMPDIR is ~50) kills it.
+TMP_BASE=${TMPDIR:-/tmp}
+WORK="$(mktemp -d "${TMP_BASE%/}/deck.XXXXXX")"
+# Cleanup must never change the exit code: on Windows Chrome can still hold the profile
+# for a moment after it exits, so the removal is tried again for a few seconds.
+cleanup() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    rm -rf "$WORK" 2>/dev/null || true
+    [ -e "$WORK" ] || return 0
+    sleep 0.5 2>/dev/null || true
+  done
+  return 0
+}
+trap cleanup EXIT
 DECK_ABS="$(cd "$(dirname "$DECK")" && pwd)/$(basename "$DECK")"
 
 # Throwaway profile: never touches the user's Chrome profile.
-chrome() { "$CHROME_BIN" --headless --disable-gpu --no-first-run --no-default-browser-check \
+chrome() { TMPDIR="$WORK" TEMP="$(native_path "$WORK")" TMP="$(native_path "$WORK")" \
+  "$CHROME_BIN" --headless --disable-gpu --no-first-run --no-default-browser-check \
   --user-data-dir="$(native_path "$WORK/profile")" "$@" 2>/dev/null; }
 
 # render_variant <classes> <out>: a copy of the deck with classes on <html> and

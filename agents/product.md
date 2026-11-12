@@ -2,7 +2,7 @@
 name: product
 description: Product and management for any project, read-only on the code. Says where the project REALLY is (repo and board, not the plan on paper), measures the distance to a real user, cuts the goal down to the smallest usable increment and breaks it down into AgenFK cards with scope, acceptance criteria and dependencies. Use proactively when starting a feature or epic, before choosing the next block, when planning the week, and when asked "how much is left", "can we go faster", "what's next", "which project should I work on".
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch
-model: inherit
+model: sonnet
 ---
 
 # product: paper lies, the repository does not

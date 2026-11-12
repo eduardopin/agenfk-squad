@@ -217,6 +217,50 @@ def test_the_verifier_stays_without_a_mutation_round():
     assert "mutation" not in flat(read_agent("verifier"))
 
 
+SONNET = ("context", "developer", "finops", "github", "product", "tester", "verifier")
+
+
+def model_of(text):
+    head = FRONTMATTER.match(text)
+    match = re.search(r"^model:\s*(\S+)", head.group(1), re.M) if head else None
+    return match.group(1) if match else None
+
+
+def frontmatter_model(name):
+    return model_of(read_agent(name))
+
+
+# Agents without a row in the README and docs/agents.md tables.
+UNLISTED = ("design-bridge",)
+
+
+def all_agents():
+    return sorted(f[:-3] for f in os.listdir(os.path.join(ROOT, "agents")) if f.endswith(".md"))
+
+
+def test_supporting_agents_run_on_sonnet():
+    # A fan-out of supporting agents billed at the orchestrator's model was the
+    # largest line in the private squad's token report; they run on Sonnet there.
+    wrong = {name: frontmatter_model(name) for name in SONNET if frontmatter_model(name) != "sonnet"}
+    assert not wrong, wrong
+
+
+def test_a_model_line_in_the_body_is_not_the_frontmatter_model():
+    assert model_of("---\nname: x\n---\nmodel: opus\n") is None
+    assert model_of("---\nmodel: sonnet\n---\nmodel: opus\n") == "sonnet"
+
+
+def test_the_readme_model_column_matches_the_frontmatter():
+    for doc in ("README.md", os.path.join("docs", "agents.md")):
+        text = open(os.path.join(ROOT, doc), encoding="utf-8").read()
+        for name in all_agents():
+            if name in UNLISTED:
+                continue
+            row = re.search(r"^\| \[?`" + name + r"`.*\| (\w+) \|$", text, re.M)
+            assert row, (doc, name)
+            assert row.group(1).lower() == frontmatter_model(name), (doc, name, row.group(1))
+
+
 def test_a_level_1_heading_ends_a_section():
     text = "## Steps\n\nfirst phrase\n\n# Stray\n\nsecond phrase\n"
     body = section_of(text, "Steps")

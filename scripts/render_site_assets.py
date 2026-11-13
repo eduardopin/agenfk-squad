@@ -130,9 +130,10 @@ def render_terminal(message: str) -> None:
         pad = 16 if width > 300 else 12
         top = pad + FONT
         height = top + (len(lines) - 1) * LINE + pad + 4
+        HEAD_CLASS = ' class="h"'  # outside the f-string: Python 3.10 refuses backslashes there
         nodes = "".join(
             f'<text x="{pad}" y="{top + index * LINE}"'
-            f'{" class=\"h\"" if index == 0 else ""}>{html.escape(line)}</text>'
+            f"{HEAD_CLASS if index == 0 else ''}>{html.escape(line)}</text>"
             for index, line in enumerate(lines)
         )
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">

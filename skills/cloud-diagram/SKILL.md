@@ -205,8 +205,9 @@ the exit codes (1 = a problem, 2 = usage, 3 = no browser, so the page is
 unverified, 4 = the check crashed) are in `references/probe-rules.md`. The
 browser comes from `--browser`, `$CHROME`, `google-chrome` or `chromium` on the
 PATH, or the Playwright cache. If Chromium cannot start its sandbox (containers, CI) the render
-exits 3 and names `--no-sandbox`; pass it only where you accept an unsandboxed browser (a WARN is printed). Under 500 px the page runs in an iframe of the
-exact width, because headless Chrome opens no smaller window.
+exits 3 and names `--no-sandbox`; pass it only where you accept an unsandboxed browser (a WARN is printed). Every width runs in an iframe of that
+exact width: headless Chrome opens no window under 500 px, and a window's size can
+reach the page after the probe has already measured a 0 px viewport.
 `scripts/render.sh <page.html> <folder> "1100 400"` is the same probe from the
 shell, without languages or JSON.
 

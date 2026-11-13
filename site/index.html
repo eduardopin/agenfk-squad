@@ -3,75 +3,99 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <title>AgenFK Squad — guardrails for parallel Claude Code sessions</title>
-  <meta name="description" content="Twelve role-limited agents and a Python watcher for context budgets, independent review, dispatch limits, and a one-at-a-time merge queue.">
-  <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#f4f1eb" media="(prefers-color-scheme: light)">
+  <meta name="description" content="Twelve role-limited Claude Code agents and a Python watcher for context budgets, independent review, dispatch limits and a one-at-a-time merge queue.">
   <link rel="canonical" href="https://eduardopin.github.io/agenfk-squad/">
+  <meta name="theme-color" content="#f3f3f0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#101214" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AgenFK Squad">
+  <meta property="og:locale" content="en_US">
   <meta property="og:url" content="https://eduardopin.github.io/agenfk-squad/">
   <meta property="og:title" content="AgenFK Squad — guardrails for parallel Claude Code sessions">
   <meta property="og:description" content="Keep context, review, dispatch, and merges from becoming shared blind spots.">
   <meta property="og:image" content="https://eduardopin.github.io/agenfk-squad/og.png">
-  <meta property="og:image:width" content="1280">
-  <meta property="og:image:height" content="640">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="AgenFK Squad: guardrails for parallel Claude Code sessions">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="AgenFK Squad — guardrails for parallel Claude Code sessions">
   <meta name="twitter:description" content="Keep context, review, dispatch, and merges from becoming shared blind spots.">
   <meta name="twitter:image" content="https://eduardopin.github.io/agenfk-squad/og.png">
+  <meta name="twitter:image:alt" content="AgenFK Squad: guardrails for parallel Claude Code sessions">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&amp;family=Martian+Mono:wdth,wght@75..112.5,100..800&amp;display=swap">
+  <link rel="stylesheet" href="assets/pin-open-1.0.0.css">
   <link rel="stylesheet" href="styles.css">
   <script src="script.js" defer></script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "AgenFK Squad",
+  "description": "A squad of Claude Code agents and a watcher hook that keeps parallel sessions within budget, independently reviewed and merging one at a time.",
+  "url": "https://eduardopin.github.io/agenfk-squad/",
+  "codeRepository": "https://github.com/eduardopin/agenfk-squad",
+  "programmingLanguage": ["Python", "Markdown"],
+  "runtimePlatform": "Claude Code",
+  "license": "https://github.com/eduardopin/agenfk-squad/blob/beta/LICENSE",
+  "isBasedOn": "https://github.com/cglab-public/agenfk",
+  "author": {"@id": "https://eduardopin.github.io/eduardopin/#person", "@type": "Person", "name": "Eduardo Pin", "url": "https://eduardopin.github.io/eduardopin/"}
+}
+  </script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
+  <a class="sq-skip" href="#main">Skip to content</a>
+  <p class="po-visually-hidden" aria-live="polite" aria-atomic="true" data-copy-status></p>
 
-  <header class="site-header">
-    <div class="shell header-inner">
-      <a class="brand" href="#top" aria-label="AgenFK Squad home">
-        <span class="brand-mark" aria-hidden="true">A/</span>
-        <span>agenfk-squad</span>
-      </a>
-      <nav aria-label="Primary navigation">
-        <a href="#problem">Problem</a>
-        <a href="#system">System</a>
-        <a href="#agents">Agents</a>
-        <a href="#install">Install</a>
-      </nav>
-      <a class="header-link" href="https://github.com/eduardopin/agenfk-squad">GitHub <span aria-hidden="true">↗</span></a>
+  <header class="po-header">
+    <div class="po-shell po-header__inner">
+      <a class="po-brand" href="#top"><img src="favicon.svg" width="28" height="28" alt=""><span>agenfk-squad</span></a>
+      <nav class="po-nav" aria-label="Primary navigation"><a href="#problem">Problem</a><a href="#system">System</a><a href="#agents">Agents</a><a href="#install">Install</a></nav>
+      <a class="po-header__gh" href="https://github.com/eduardopin/agenfk-squad"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></svg><span>GitHub</span></a>
     </div>
   </header>
 
   <main id="main">
-    <section class="hero shell" id="top" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Twelve agents. Python hooks. One local merge queue.</p>
-        <h1 id="hero-title">Parallel Claude Code, with someone watching the blind spots.</h1>
-        <p class="hero-lede">AgenFK Squad keeps context budgets visible, dispatches bounded, reviews independent, and merges moving through the default branch one at a time.</p>
-        <div class="hero-actions">
-          <a class="button button-primary" href="#install">Try the squad</a>
-          <a class="button button-secondary" href="https://github.com/eduardopin/agenfk-squad/blob/beta/docs/architecture.md">Read the architecture</a>
+    <section class="po-hero sq-hero" id="top" aria-labelledby="hero-title">
+      <div class="po-art" aria-hidden="true"><div class="po-art__haze"></div><svg viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false"><defs><path id="tr-p0" d="M-20 150 H520 L580 210 H1220" pathLength="100"/><path id="tr-p1" d="M-20 330 H380 L460 410 H820 L860 370 H1220" pathLength="100"/><path id="tr-p2" d="M-20 500 H640 L700 440 H1220" pathLength="100"/><linearGradient id="tr-band" gradientUnits="userSpaceOnUse" x1="0" x2="1200"><stop offset="0" stop-color="currentColor" stop-opacity="0"/><stop offset=".5" stop-color="currentColor" stop-opacity=".1"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient><linearGradient id="tr-line" gradientUnits="userSpaceOnUse" x1="0" x2="1200"><stop offset="0" stop-color="currentColor" stop-opacity=".12"/><stop offset=".25" stop-color="currentColor" stop-opacity=".5"/><stop offset=".5" stop-color="currentColor" stop-opacity=".19"/><stop offset=".75" stop-color="currentColor" stop-opacity=".33"/><stop offset="1" stop-color="currentColor" stop-opacity=".09"/></linearGradient></defs><use href="#tr-p0" class="band" stroke="url(#tr-band)"/><use href="#tr-p1" class="band" stroke="url(#tr-band)"/><use href="#tr-p2" class="band" stroke="url(#tr-band)"/><use href="#tr-p0" class="line" stroke="url(#tr-line)"/><use href="#tr-p1" class="line" stroke="url(#tr-line)"/><use href="#tr-p2" class="line" stroke="url(#tr-line)"/><use href="#tr-p0" class="trail trail-1"/><use href="#tr-p1" class="trail trail-2"/><use href="#tr-p2" class="trail trail-3"/></svg><div class="po-art__veil"></div></div>
+      <div class="po-shell po-hero__grid sq-hero__grid">
+        <div class="po-hero__copy">
+          <p class="po-label po-hero__eyebrow">Twelve agents. Python hooks. One local merge queue.</p>
+          <h1 class="po-display sq-display-l" id="hero-title">Parallel Claude Code, with someone watching the blind spots.</h1>
+          <p class="po-hero__lede">AgenFK Squad keeps context budgets visible, dispatches bounded, reviews independent, and merges moving through the default branch one at a time.</p>
+          <div class="po-hero__actions">
+            <a class="po-btn po-btn--star" href="https://github.com/eduardopin/agenfk-squad"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.8l2.8 5.7 6.3.9-4.6 4.4 1.1 6.2L12 17.1 6.4 20l1.1-6.2L2.9 9.4l6.3-.9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Star on GitHub</span></a>
+            <a class="po-btn po-btn--primary" href="#install">Try the squad</a>
+            <a class="po-btn po-btn--ghost" href="https://github.com/eduardopin/agenfk-squad/blob/beta/docs/architecture.md">Read the architecture</a>
+            <a class="sq-stars" href="https://github.com/eduardopin/agenfk-squad"><img src="https://img.shields.io/github/stars/eduardopin/agenfk-squad?style=flat&amp;label=stars" width="76" height="20" alt="GitHub stars for agenfk-squad"></a>
+          </div>
+          <div class="po-install" data-install>
+            <div class="po-install__bar"><span class="po-label">shell</span></div>
+            <pre tabindex="0" role="region" aria-label="Install command"><code><span class="prompt">$ </span>curl -fsSL https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.sh | sh</code></pre>
+          </div>
+          <ul class="sq-facts" aria-label="Project facts">
+            <li>Static Markdown agents</li>
+            <li>Python standard library hooks</li>
+            <li>Built on AgenFK</li>
+          </ul>
         </div>
-        <ul class="hero-facts" aria-label="Project facts">
-          <li>Static Markdown agents</li>
-          <li>Python standard library hooks</li>
-          <li>Built on AgenFK</li>
-        </ul>
-      </div>
 
-      <figure class="hero-terminal">
-        <div class="terminal-bar" aria-hidden="true">
-          <span></span><span></span><span></span>
-          <b>squad-watch · PostToolUse</b>
-        </div>
-        <img src="img/watcher-terminal.svg" width="1440" height="416" alt="Example squad-watch hook output from a synthetic transcript at an artificial 550 thousand tokens of context">
-        <figcaption>Example output from the hook over a synthetic transcript with an artificial 550k context value, generated in a throwaway home.</figcaption>
-      </figure>
+        <figure class="po-install sq-demo">
+            <div class="po-install__bar"><span class="po-label">squad-watch · PostToolUse</span></div>
+            <picture>
+              <source media="(max-width: 719px)" srcset="img/watcher-terminal-narrow.svg" width="288" height="588">
+              <img src="img/watcher-terminal.svg" width="440" height="365" fetchpriority="high" alt="Example squad-watch hook output from a synthetic transcript at an artificial 550 thousand tokens of context">
+            </picture>
+          <figcaption>Example output from the hook over a synthetic transcript with an artificial 550k context value, generated in a throwaway home.</figcaption>
+        </figure>
+      </div>
     </section>
 
     <section class="problem-section" id="problem" aria-labelledby="problem-title">
-      <div class="shell">
+      <div class="po-shell">
         <div class="section-heading split-heading">
           <div>
             <p class="kicker">The failure pattern</p>
@@ -110,14 +134,14 @@
       </div>
     </section>
 
-    <section class="system-section shell" id="system" aria-labelledby="system-title">
+    <section class="system-section po-shell" id="system" aria-labelledby="system-title">
       <div class="section-heading centered-heading">
         <p class="kicker">How it fits together</p>
         <h2 id="system-title">Prompts define the jobs. Hooks enforce the traffic rules.</h2>
         <p>AgenFK owns the card and evidence. The squad owns role boundaries. The watcher owns context, dispatch, session switches with herdr, and merge turns.</p>
       </div>
 
-      <div class="diagram-wrap">
+      <div class="diagram-wrap" tabindex="0" role="region" aria-label="Architecture diagram">
         <svg class="architecture-diagram" viewBox="0 0 1040 590" role="img" aria-labelledby="diagram-title diagram-desc">
           <title id="diagram-title">AgenFK Squad architecture</title>
           <desc id="diagram-desc">An owner prompt is routed to a main Claude Code session, which dispatches limited agents. AgenFK gates code and evidence. A watcher observes the main and agent sessions, switches sessions automatically with herdr, and serializes merges through a queue.</desc>
@@ -221,7 +245,7 @@
     </section>
 
     <section class="agents-section" id="agents" aria-labelledby="agents-title">
-      <div class="shell">
+      <div class="po-shell">
         <div class="section-heading split-heading">
           <div>
             <p class="kicker">The twelve agents</p>
@@ -248,20 +272,20 @@
       </div>
     </section>
 
-    <section class="message-section shell" aria-labelledby="message-title">
+    <section class="message-section po-shell" aria-labelledby="message-title">
       <div class="message-copy">
         <p class="kicker">The watcher speaks in exits</p>
         <h2 id="message-title">A refusal is only useful if work knows where to go.</h2>
         <p>This is example output from <code>hooks/squad-watch.py</code> over a synthetic transcript with an artificial 550k context value in a throwaway home.</p>
       </div>
-      <div class="terminal-block">
-        <div class="terminal-bar" aria-hidden="true"><span></span><span></span><span></span><b>watcher output</b></div>
+      <div class="po-install terminal-block">
+        <div class="po-install__bar"><span class="po-label">watcher output</span></div>
         <pre tabindex="0" role="region" aria-label="Synthetic proactive handoff message"><code>[squad-watch] PROACTIVE HANDOFF — context 550k/1.0M (55%), burn 60% of the budget, reread 90%, each turn rereads 55k weighted tokens, a new session pays for itself in 1.2 turn(s). When you close the step in progress, without asking permission and without starting a new front: (1) record on the card what was decided (`agenfk comment &lt;id&gt; "PAUSE: done X, remaining Y, next Z"`); (2) write the handoff with mode A of the `clear-pickup` skill (ground truth by command, short, UNKNOWN for whatever you did not verify; under Next step, what remains of the current request, in order); (3) end your reply with the handoff path and stop. Tell the owner: `/clear` and then `/clear-pickup pickup`.</code></pre>
       </div>
     </section>
 
     <section class="install-section" id="install" aria-labelledby="install-title">
-      <div class="shell install-grid">
+      <div class="po-shell install-grid">
         <div>
           <p class="kicker">Install</p>
           <h2 id="install-title">Put the squad at the user level.</h2>
@@ -269,16 +293,14 @@
           <p class="requirements"><strong>Needs git, curl, bash and Python 3.10 or newer;</strong> the installer warns if Claude Code or AgenFK are missing. Developed and run daily on Linux; macOS is untested; WSL behaves like Linux when Claude Code runs inside WSL. Windows 10/11 has its own installer and CI job.</p>
           <p><a href="https://github.com/eduardopin/agenfk-squad/blob/beta/docs/installation.md">Read manual installation, Windows, and uninstall details <span aria-hidden="true">→</span></a></p>
         </div>
-        <div class="install-command">
-          <div class="terminal-bar" aria-hidden="true"><span></span><span></span><span></span><b>shell</b></div>
-          <pre tabindex="0" role="region" aria-label="Installation command"><code id="install-code">curl -fsSL https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.sh | sh</code></pre>
-          <p class="visually-hidden" aria-live="polite" aria-atomic="true" data-copy-status></p>
-          <noscript><p>Select the command above to copy it.</p></noscript>
-        </div>
+        <div class="po-install" data-install>
+            <div class="po-install__bar"><span class="po-label">shell</span></div>
+            <pre tabindex="0" role="region" aria-label="Installation command"><code><span class="prompt">$ </span>curl -fsSL https://raw.githubusercontent.com/eduardopin/agenfk-squad/main/get.sh | sh</code></pre>
+          </div>
       </div>
     </section>
 
-    <section class="help-section shell" id="help" aria-labelledby="help-title">
+    <section class="help-section po-shell" id="help" aria-labelledby="help-title">
       <div class="section-heading centered-heading">
         <p class="kicker">Help wanted</p>
         <h2 id="help-title">The first machine is documented. The next data point could be yours.</h2>
@@ -308,18 +330,21 @@
     </section>
   </main>
 
-  <footer class="site-footer">
-    <div class="shell footer-inner">
-      <div>
-        <a class="brand" href="#top" aria-label="AgenFK Squad home"><span class="brand-mark" aria-hidden="true">A/</span><span>agenfk-squad</span></a>
-        <p>An independent companion to AgenFK.</p>
-      </div>
-      <nav aria-label="Footer navigation">
-        <a href="https://github.com/eduardopin/agenfk-squad">Repository</a>
-        <a href="https://github.com/eduardopin/agenfk-squad/issues">Issues</a>
-        <a href="https://github.com/eduardopin/agenfk-squad/blob/beta/LICENSE">License</a>
-        <a href="https://github.com/cglab-public/agenfk">AgenFK</a>
-      </nav>
+  <section class="po-cross" aria-labelledby="cross-title">
+    <div class="po-shell">
+      <h2 class="po-label po-cross__head" id="cross-title">More from Eduardo Pin</h2>
+      <ul class="po-cross__list">
+        <li class="po-cross__item sq-cross--rust"><a href="https://eduardopin.github.io/eduardopin/"><img src="img/marks/eduardopin.svg" width="28" height="28" alt=""><strong>Eduardo Pin</strong><span>Cloud, platform, SRE, FinOps and DevSecOps work.</span></a></li>
+        <li class="po-cross__item sq-cross--green"><a href="https://eduardopin.github.io/agenfk-squad/" aria-current="page"><img src="favicon.svg" width="28" height="28" alt=""><strong>agenfk-squad</strong><span>Guardrails for parallel Claude Code sessions.</span></a></li>
+        <li class="po-cross__item sq-cross--amber"><a href="https://eduardopin.github.io/agentcenter/"><img src="img/marks/agentcenter.svg" width="28" height="28" alt=""><strong>AgentCenter</strong><span>Resource monitor for AI coding sessions on Linux.</span></a></li>
+        <li class="po-cross__item sq-cross--violet"><a href="https://eduardopin.github.io/aws-iac-enterprise-library/"><img src="img/marks/aws-iac.svg" width="28" height="28" alt=""><strong>AWS IaC Library</strong><span>58 reusable Terraform modules for AWS.</span></a></li>
+      </ul>
+    </div>
+  </section>
+  <footer class="po-footer">
+    <div class="po-shell po-footer__inner">
+      <p>An independent companion to AgenFK.</p>
+      <nav aria-label="Footer navigation"><a href="https://github.com/eduardopin/agenfk-squad">Repository</a><a href="https://github.com/eduardopin/agenfk-squad/issues">Issues</a><a href="https://github.com/eduardopin/agenfk-squad/blob/beta/LICENSE">License</a><a href="https://github.com/cglab-public/agenfk">AgenFK</a><a href="https://eduardopin.github.io/eduardopin/">Eduardo Pin</a></nav>
     </div>
   </footer>
 </body>

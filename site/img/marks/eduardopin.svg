@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img">
+  <title>Eduardo Pin</title>
+  <rect width="64" height="64" rx="8" fill="#172426"/>
+  <path d="M13 13h38v38H13z" fill="none" stroke="#ef8f64" stroke-width="4"/>
+  <path d="M23 23h19v6H29v4h11v6H29v4h13v6H23z" fill="#f2efe7"/>
+</svg>

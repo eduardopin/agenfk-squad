@@ -83,18 +83,17 @@ for theme in light dark; do
         echo "</body></html>"; } > "$page"
     fi
     { echo "<script>"; cat "$HERE/probe.js"; echo "</script>"; } >> "$page"
-    target="$page"
-    # headless Chrome opens no window narrower than 500px: below that the page runs
-    # in an iframe of the exact width and the probe posts its result to the frame
-    if [ "$w" -lt 500 ]; then
-      target="$OUT/frame-$theme-$w.html"
-      cat > "$target" <<HTML
+    # every width runs in an iframe of that exact width and the probe posts its result
+    # to the frame: headless Chrome opens no window under 500px, and a window's size
+    # reaches a top-level page asynchronously, so under --virtual-time-budget a page
+    # that fetches nothing can be probed at a 0px viewport before the size lands
+    target="$OUT/frame-$theme-$w.html"
+    cat > "$target" <<HTML
 <!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#888}iframe{display:block;border:0;width:${w}px;height:4200px}</style></head><body>
 <iframe src="$(basename "$page")"></iframe>
 <script>addEventListener("message",e=>{if(e.data&&e.data.probe){const p=document.createElement("pre");p.id="probe-out";p.hidden=true;p.textContent=e.data.probe;document.body.appendChild(p)}})</script>
 </body></html>
 HTML
-    fi
     chrome_run --window-size="$(( w < 500 ? 500 : w )),4200" --virtual-time-budget=6000 \
       --screenshot="$OUT/shot-$theme-$w.png" "file://$target" >/dev/null || {
         printf 'FAIL screenshot: [%s %spx] browser exit %s: %s\n' "$theme" "$w" "$?" "${LAST_ERR:-no output}"

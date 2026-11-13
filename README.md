@@ -2,11 +2,15 @@
 
 # agenfk-squad
 
+[![Website](https://img.shields.io/badge/website-eduardopin.github.io%2Fagenfk--squad-0b6b50)](https://eduardopin.github.io/agenfk-squad/) [![GitHub stars](https://img.shields.io/github/stars/eduardopin/agenfk-squad?style=flat&label=stars)](https://github.com/eduardopin/agenfk-squad)
+
+Website: https://eduardopin.github.io/agenfk-squad/
+
 **Keep parallel Claude Code sessions within budget, independently reviewed, and moving through the default branch one at a time.**
 
 A squad of Claude Code agents, and a watcher that keeps them honest, built on [AgenFK](https://github.com/cglab-public/agenfk).
 
-<a href="https://eduardopin.github.io/agenfk-squad/"><img src="site/img/watcher-terminal.svg" width="900" alt="Example squad-watch hook output from a synthetic transcript at an artificial 550 thousand tokens of context"></a>
+<a href="https://eduardopin.github.io/agenfk-squad/"><img src="site/img/watcher-terminal.svg" width="660" alt="Example squad-watch hook output from a synthetic transcript at an artificial 550 thousand tokens of context"></a>
 
 [See how the squad works](https://eduardopin.github.io/agenfk-squad/) · [Read the architecture](docs/architecture.md) · [Try the installer](#quickstart)
 

@@ -16,8 +16,9 @@ The browser is, in order: --browser, $CHROME, google-chrome,
 google-chrome-stable, chromium or chromium-browser on PATH, then the newest
 Chromium in the Playwright cache ($PLAYWRIGHT_BROWSERS_PATH or
 ~/.cache/ms-playwright). Without one the page is unverified, not failing: the
-script says so and exits 3. Pages under 500 px run inside an iframe of the exact
-width, because headless Chrome will not open a window that narrow. Labels are
+script says so and exits 3. Every page runs inside an iframe of the exact width:
+headless Chrome opens no window under 500 px, and a window's size can reach the
+page after the probe has measured a 0 px viewport. Labels are
 measured in every language the page's #i18n block carries, since a translated
 label is usually longer than the English one.
 """
@@ -182,15 +183,18 @@ def render_one(browser, out, theme, width, lang, shots, no_sandbox=False):
     tag = f"{theme}-{width}-{lang}"
     page = out / f"preview-{theme}-{lang}.html"
     target = f"{page.as_uri()}#{lang}"
-    if width < MIN_WINDOW:
-        frame = out / f"frame-{tag}.html"
-        frame.write_text(
-            '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#888}'
-            f'iframe{{display:block;border:0;width:{width}px;height:{HEIGHT}px}}</style></head><body>'
-            f'<iframe src="{html.escape(target)}"></iframe><script>addEventListener(\'message\',function(e){{'
-            'if(e.data&&e.data.probe){var p=document.createElement("pre");p.id="probe-out";p.hidden=true;'
-            'p.textContent=e.data.probe;document.body.appendChild(p)}})</script></body></html>', encoding="utf-8")
-        target = frame.as_uri()
+    # Every width runs in an iframe of that exact width. The window's size reaches a top-level
+    # page asynchronously, and under --virtual-time-budget a page that fetches nothing can run
+    # the probe before it lands: the probe then reads a 0 px viewport and every box is past it.
+    # The iframe's width is CSS, laid out before the page loads; the window is only the canvas.
+    frame = out / f"frame-{tag}.html"
+    frame.write_text(
+        '<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#888}'
+        f'iframe{{display:block;border:0;width:{width}px;height:{HEIGHT}px}}</style></head><body>'
+        f'<iframe src="{html.escape(target)}"></iframe><script>addEventListener(\'message\',function(e){{'
+        'if(e.data&&e.data.probe){var p=document.createElement("pre");p.id="probe-out";p.hidden=true;'
+        'p.textContent=e.data.probe;document.body.appendChild(p)}})</script></body></html>', encoding="utf-8")
+    target = frame.as_uri()
     window = f"--window-size={max(width, MIN_WINDOW)},{HEIGHT}"
     result = {}
     unsandboxed = []

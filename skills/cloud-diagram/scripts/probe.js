@@ -1,7 +1,7 @@
 // cloud-diagram probe. render.py and render.sh inject it into the page they render; it measures
 // what a reader's eye misses and writes the result as JSON into a hidden pre element with the id
-// probe-out, for --dump-dom to read. Inside an iframe (widths under 500 px) it also posts the
-// result to the parent frame. The rules are in references/probe-rules.md.
+// probe-out, for --dump-dom to read. Inside an iframe (render.py and render.sh frame every width)
+// it also posts the result to the parent frame. The rules are in references/probe-rules.md.
 //
 // A diagram is any svg[data-diagram], .dia svg or svg#dia. Inside it, the probe reads:
 //   <text>                    labels (those in a badge and in <defs> are skipped)

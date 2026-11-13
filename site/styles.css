@@ -96,6 +96,7 @@ main h3 { margin: 0 0 var(--space-2); font-size: 18px; line-height: 1.3; font-we
 .message-copy h2 { margin-bottom: var(--space-4); }
 .message-copy > p:last-child { margin: 0; color: var(--ink-muted); }
 .terminal-block pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.po-install[data-install] pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Install */
 .install-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-7); align-items: center; }
